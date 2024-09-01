@@ -1,5 +1,5 @@
 # hexfetch
-Fetching HEX API with Golang
+Fetching HEX Pulsechain API with Golang
 
 
 ## Usage
