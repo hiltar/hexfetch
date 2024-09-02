@@ -11,10 +11,10 @@ import (
 
 
 type ApiResp struct {
-	HexPrice         float64 `json:"price_Pulsechain"`
+	HexPrice      float64 `json:"price_Pulsechain"`
 	TSharePrice   float64 `json:"tsharePrice_Pulsechain"`
 	TShareRateHEX float64 `json:"tshareRateHEX_Pulsechain"`
-	TSharePayout float64 `json:"payoutPerTshare_Pulsechain"`
+	TSharePayout  float64 `json:"payoutPerTshare_Pulsechain"`
 }
 
 
