@@ -13,7 +13,8 @@ go mod init hexfetch
 go build
 ./hexfetch <T-Shares>
 ```
-Alternatively, add alias into .bashrc: `alias hexfetch="~/hexfetch/hexfetch <T-Shares>"`
+Alternatively, add alias into .bashrc: `alias hexfetch="~/hexfetch/hexfetch <T-Shares>"`  
+Run `hexfetch`
 
 Output:
 ```
