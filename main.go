@@ -45,7 +45,6 @@ func main() {
 		"T-Share Price":   apiresponse.TSharePrice,
 		"T-Share Rate":    apiresponse.TShareRateHEX,
 		"T-Share Payout":  TSharesPayout,
-		"TShares":         TShares,
 	}
 
 	const filename = "saved_hexdata.json"
