@@ -14,7 +14,7 @@ go build
 ./hexfetch <T-Shares>
 ```
 Alternatively, add alias into .bashrc: `alias hexfetch="~/hexfetch/hexfetch <T-Shares>"`  
-Use new .bashrc: `source ~/.bashrc`
+Use new .bashrc: `source ~/.bashrc`  
 Run `hexfetch`
 
 Output:
