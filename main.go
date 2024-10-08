@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strconv"
+	"path/filepath"
 	"os"
 )
 
@@ -47,7 +48,8 @@ func main() {
 		"T-Share Payout":  TSharesPayout,
 	}
 
-	const filename = "saved_hexdata.json"
+	homepath := os.Getenv("HOME")
+	filename := filepath.Join(homepath, "hexfetch", "saved_hexdata.json")
 	savedData, err := loadFromFile(filename)
 	if err != nil && !os.IsNotExist(err) {
 		fmt.Println(err)
