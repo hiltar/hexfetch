@@ -1,0 +1,18 @@
+.live-data p {
+    text-align: center;
+    font-weight: bold;
+    font-size: 24px; /* Adjust for larger text */
+    margin: 10px 0;
+}
+
+#hexChart {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.miner-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
