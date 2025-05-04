@@ -162,3 +162,9 @@ body {
 .modal-footer {
     border-color: var(--border-color);
 }
+
+#logo {
+    height: 64px;
+    width: auto;
+    vertical-align: middle;
+}
