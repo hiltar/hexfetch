@@ -2,6 +2,7 @@ package main
 
 import (
     "encoding/json"
+    "fmt"
     "log"
     "net/http"
     "os"
@@ -30,12 +31,21 @@ var configManager = &ConfigManager{
 func (cm *ConfigManager) GetLiveDataFrequency() int {
     cm.mu.RLock()
     defer cm.mu.RUnlock()
-    return cm.config.LiveDataFrequency
+    freq := cm.config.LiveDataFrequency
+    if freq <= 0 {
+        log.Println("Invalid LiveDataFrequency, using default:", defaultLiveDataFrequency)
+        return defaultLiveDataFrequency
+    }
+    return freq
 }
 
 func (cm *ConfigManager) SetLiveDataFrequency(frequency int) {
     cm.mu.Lock()
     defer cm.mu.Unlock()
+    if frequency <= 0 {
+        log.Println("Attempted to set invalid LiveDataFrequency, ignoring:", frequency)
+        return
+    }
     cm.config.LiveDataFrequency = frequency
     log.Println("Set LiveDataFrequency to", frequency)
     for i, ch := range cm.changeChans {
@@ -94,23 +104,35 @@ const (
 func fetchHEXJSON() (HEXJSON, error) {
     resp, err := http.Get("https://hexdailystats.com/fulldatapulsechain")
     if err != nil {
-        return HEXJSON{}, err
+        return HEXJSON{}, fmt.Errorf("failed to fetch HEXJSON: %w", err)
     }
     defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        return HEXJSON{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
     var data HEXJSON
     err = json.NewDecoder(resp.Body).Decode(&data)
-    return data, err
+    if err != nil {
+        return HEXJSON{}, fmt.Errorf("failed to decode HEXJSON: %w", err)
+    }
+    return data, nil
 }
 
 func fetchLiveData() (LiveData, error) {
     resp, err := http.Get("https://hexdailystats.com/livedata")
     if err != nil {
-        return LiveData{}, err
+        return LiveData{}, fmt.Errorf("failed to fetch live data: %w", err)
     }
     defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        return LiveData{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
     var data LiveData
     err = json.NewDecoder(resp.Body).Decode(&data)
-    return data, err
+    if err != nil {
+        return LiveData{}, fmt.Errorf("failed to decode live data: %w", err)
+    }
+    return data, nil
 }
 
 func loadLocalHEXJSON() (HEXJSON, error) {
@@ -274,25 +296,39 @@ func handleLiveData(w http.ResponseWriter, r *http.Request) {
     liveDataMutex.Lock()
     data := latestLiveData
     liveDataMutex.Unlock()
-    json.NewEncoder(w).Encode(data)
+    if err := json.NewEncoder(w).Encode(data); err != nil {
+        log.Println("Error encoding live data response:", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 }
 
 func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
     data, err := loadLocalHEXJSON()
     if err != nil {
+        log.Println("Error loading HEXJSON:", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    json.NewEncoder(w).Encode(data)
+    if err := json.NewEncoder(w).Encode(data); err != nil {
+        log.Println("Error encoding HEXJSON response:", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 }
 
 func handleMiners(w http.ResponseWriter, r *http.Request) {
     miners, err := loadMiners()
     if err != nil {
+        log.Println("Error loading miners:", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    json.NewEncoder(w).Encode(miners)
+    if err := json.NewEncoder(w).Encode(miners); err != nil {
+        log.Println("Error encoding miners response:", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 }
 
 func handleAddMiner(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +338,7 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
     }
     var miner Miner
     if err := json.NewDecoder(r.Body).Decode(&miner); err != nil {
+        log.Println("Error decoding add miner request:", err)
         http.Error(w, "Invalid request body", http.StatusBadRequest)
         return
     }
@@ -310,20 +347,24 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
         return
     }
     if _, err := time.Parse(dateLayout, miner.StartDate); err != nil {
+        log.Println("Invalid start date format:", err)
         http.Error(w, "Invalid start date format", http.StatusBadRequest)
         return
     }
     if _, err := time.Parse(dateLayout, miner.EndDate); err != nil {
+        log.Println("Invalid end date format:", err)
         http.Error(w, "Invalid end date format", http.StatusBadRequest)
         return
     }
     miners, err := loadMiners()
     if err != nil {
+        log.Println("Error loading miners for add:", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
     miners = append(miners, miner)
     if err := saveMiners(miners); err != nil {
+        log.Println("Error saving miners:", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
@@ -339,16 +380,19 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
         Index int `json:"index"`
     }
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        log.Println("Error decoding end miner request:", err)
         http.Error(w, "Invalid request body", http.StatusBadRequest)
         return
     }
     miners, err := loadMiners()
     if err != nil || req.Index < 0 || req.Index >= len(miners) {
+        log.Println("Invalid miner index or error loading miners:", err)
         http.Error(w, "Invalid miner index", http.StatusBadRequest)
         return
     }
     miners[req.Index].Status = "completed"
     if err := saveMiners(miners); err != nil {
+        log.Println("Error saving miners for end:", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
@@ -364,16 +408,19 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
         Index int `json:"index"`
     }
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        log.Println("Error decoding delete miner request:", err)
         http.Error(w, "Invalid request body", http.StatusBadRequest)
         return
     }
     miners, err := loadMiners()
     if err != nil || req.Index < 0 || req.Index >= len(miners) {
+        log.Println("Invalid miner index or error loading miners:", err)
         http.Error(w, "Invalid miner index", http.StatusBadRequest)
         return
     }
     miners = append(miners[:req.Index], miners[req.Index+1:]...)
     if err := saveMiners(miners); err != nil {
+        log.Println("Error saving miners for delete:", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
@@ -384,21 +431,29 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
     if r.Method == http.MethodGet {
         config, err := loadConfig()
         if err != nil {
+            log.Println("Error loading config:", err)
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
         }
-        json.NewEncoder(w).Encode(config)
+        if err := json.NewEncoder(w).Encode(config); err != nil {
+            log.Println("Error encoding config response:", err)
+            http.Error(w, "Internal server error", http.StatusInternalServerError)
+            return
+        }
     } else if r.Method == http.MethodPost {
         var config Config
         if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+            log.Println("Error decoding config request:", err)
             http.Error(w, "Invalid request body", http.StatusBadRequest)
             return
         }
         if config.LiveDataFrequency <= 0 {
+            log.Println("Invalid frequency in config request:", config.LiveDataFrequency)
             http.Error(w, "Frequency must be positive", http.StatusBadRequest)
             return
         }
         if err := saveConfig(config); err != nil {
+            log.Println("Error saving config:", err)
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
         }
@@ -433,17 +488,23 @@ func main() {
         liveDataMutex.Lock()
         latestLiveData = data
         liveDataMutex.Unlock()
+        log.Println("Initial live data fetched successfully")
     }
 
     // Periodic live data fetching
     go func() {
         frequency := configManager.GetLiveDataFrequency()
+        if frequency <= 0 {
+            log.Println("Invalid initial frequency, using default:", defaultLiveDataFrequency)
+            frequency = defaultLiveDataFrequency
+        }
         ticker := time.NewTicker(time.Duration(frequency) * time.Minute)
         changeCh := configManager.Subscribe()
         defer ticker.Stop()
         for {
             select {
             case <-ticker.C:
+                log.Println("Fetching live data from external API...")
                 data, err := fetchLiveData()
                 if err != nil {
                     log.Println("Error fetching live data:", err)
@@ -451,11 +512,21 @@ func main() {
                     liveDataMutex.Lock()
                     latestLiveData = data
                     liveDataMutex.Unlock()
+                    log.Println("Live data updated successfully")
                 }
                 frequency = configManager.GetLiveDataFrequency()
+                if frequency <= 0 {
+                    log.Println("Invalid frequency, using default:", defaultLiveDataFrequency)
+                    frequency = defaultLiveDataFrequency
+                }
                 ticker.Reset(time.Duration(frequency) * time.Minute)
             case <-changeCh:
                 frequency = configManager.GetLiveDataFrequency()
+                if frequency <= 0 {
+                    log.Println("Invalid frequency from change, using default:", defaultLiveDataFrequency)
+                    frequency = defaultLiveDataFrequency
+                }
+                log.Println("Resetting ticker with frequency:", frequency)
                 ticker.Reset(time.Duration(frequency) * time.Minute)
             }
         }
