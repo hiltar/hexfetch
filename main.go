@@ -1,0 +1,480 @@
+package main
+
+import (
+    "encoding/json"
+    "log"
+    "net/http"
+    "os"
+    "strconv"
+    "sync"
+    "time"
+)
+
+// Global variables for cached live data
+var (
+    latestLiveData LiveData
+    liveDataMutex  sync.Mutex
+)
+
+// ConfigManager for thread-safe configuration
+type ConfigManager struct {
+    mu          sync.RWMutex
+    config      Config
+    changeChans []chan struct{}
+}
+
+var configManager = &ConfigManager{
+    config: Config{LiveDataFrequency: defaultLiveDataFrequency},
+}
+
+func (cm *ConfigManager) GetLiveDataFrequency() int {
+    cm.mu.RLock()
+    defer cm.mu.RUnlock()
+    return cm.config.LiveDataFrequency
+}
+
+func (cm *ConfigManager) SetLiveDataFrequency(frequency int) {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+    cm.config.LiveDataFrequency = frequency
+    log.Println("Set LiveDataFrequency to", frequency)
+    for i, ch := range cm.changeChans {
+        select {
+        case ch <- struct{}{}:
+        default:
+            log.Println("Warning: Frequency change channel full for subscriber", i)
+        }
+    }
+}
+
+func (cm *ConfigManager) Subscribe() chan struct{} {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+    ch := make(chan struct{}, 1)
+    cm.changeChans = append(cm.changeChans, ch)
+    return ch
+}
+
+// Data Structures
+type HEXJSONEntry struct {
+    CurrentDay     int     `json:"currentDay"`
+    TshareRateHEX  float64 `json:"tshareRateHEX"`
+    DailyPayoutHEX float64 `json:"dailyPayoutHEX"`
+    PricePulseX    float64 `json:"pricePulseX"`
+}
+
+type HEXJSON []HEXJSONEntry
+
+type LiveData struct {
+    PricePulsechain           float64 `json:"price_Pulsechain"`
+    TsharePricePulsechain     float64 `json:"tsharePrice_Pulsechain"`
+    TshareRateHEXPulsechain   float64 `json:"tshareRateHEX_Pulsechain"`
+    PenaltiesHEXPulsechain    float64 `json:"penaltiesHEX_Pulsechain"`
+    PayoutPerTsharePulsechain float64 `json:"payoutPerTshare_Pulsechain"`
+    Beat                      int64   `json:"beat"`
+}
+
+type Miner struct {
+    StartDate string  `json:"startDate"`
+    EndDate   string  `json:"endDate"`
+    TShares   float64 `json:"tShares"`
+    Status    string  `json:"status,omitempty"`
+}
+
+type Config struct {
+    LiveDataFrequency int `json:"liveDataFrequency"`
+}
+
+const (
+    dateLayout               = "02-01-2006"
+    defaultLiveDataFrequency = 15
+)
+
+// Data Fetching and Management
+func fetchHEXJSON() (HEXJSON, error) {
+    resp, err := http.Get("https://hexdailystats.com/fulldatapulsechain")
+    if err != nil {
+        return HEXJSON{}, err
+    }
+    defer resp.Body.Close()
+    var data HEXJSON
+    err = json.NewDecoder(resp.Body).Decode(&data)
+    return data, err
+}
+
+func fetchLiveData() (LiveData, error) {
+    resp, err := http.Get("https://hexdailystats.com/livedata")
+    if err != nil {
+        return LiveData{}, err
+    }
+    defer resp.Body.Close()
+    var data LiveData
+    err = json.NewDecoder(resp.Body).Decode(&data)
+    return data, err
+}
+
+func loadLocalHEXJSON() (HEXJSON, error) {
+    file, err := os.Open("data/hexjson.json")
+    if err != nil {
+        if os.IsNotExist(err) {
+            return HEXJSON{}, nil
+        }
+        return HEXJSON{}, err
+    }
+    defer file.Close()
+    var data HEXJSON
+    err = json.NewDecoder(file).Decode(&data)
+    return data, err
+}
+
+func saveLocalHEXJSON(data HEXJSON) error {
+    file, err := os.Create("data/hexjson.json")
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    encoder := json.NewEncoder(file)
+    encoder.SetIndent("", "  ")
+    return encoder.Encode(data)
+}
+
+func updateLocalHEXJSON() error {
+    localData, err := loadLocalHEXJSON()
+    if err != nil {
+        return err
+    }
+    remoteData, err := fetchHEXJSON()
+    if err != nil {
+        return err
+    }
+    if len(localData) == 0 {
+        return saveLocalHEXJSON(remoteData)
+    }
+    localMaxDay := localData[0].CurrentDay
+    var newEntries []HEXJSONEntry
+    for _, entry := range remoteData {
+        if entry.CurrentDay > localMaxDay {
+            newEntries = append(newEntries, entry)
+        } else {
+            break
+        }
+    }
+    if len(newEntries) > 0 {
+        updatedData := append(newEntries, localData...)
+        return saveLocalHEXJSON(updatedData)
+    }
+    return nil
+}
+
+func loadMiners() ([]Miner, error) {
+    file, err := os.Open("settings/miners.json")
+    if err != nil {
+        if os.IsNotExist(err) {
+            return []Miner{}, nil
+        }
+        return nil, err
+    }
+    defer file.Close()
+    var miners []Miner
+    err = json.NewDecoder(file).Decode(&miners)
+    return miners, err
+}
+
+func saveMiners(miners []Miner) error {
+    file, err := os.Create("settings/miners.json")
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    encoder := json.NewEncoder(file)
+    encoder.SetIndent("", "  ")
+    return encoder.Encode(miners)
+}
+
+func loadConfig() (Config, error) {
+    file, err := os.Open("settings/config.json")
+    if err != nil {
+        if os.IsNotExist(err) {
+            return Config{LiveDataFrequency: defaultLiveDataFrequency}, nil
+        }
+        return Config{}, err
+    }
+    defer file.Close()
+    var config Config
+    err = json.NewDecoder(file).Decode(&config)
+    if err != nil {
+        return Config{}, err
+    }
+    if config.LiveDataFrequency <= 0 {
+        config.LiveDataFrequency = defaultLiveDataFrequency
+    }
+    return config, err
+}
+
+func saveConfig(config Config) error {
+    file, err := os.Create("settings/config.json")
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    encoder := json.NewEncoder(file)
+    encoder.SetIndent("", "  ")
+    return encoder.Encode(config)
+}
+
+// Utility Functions
+func isMatured(endDate string) (bool, error) {
+    endTime, err := time.Parse(dateLayout, endDate)
+    if err != nil {
+        return false, err
+    }
+    now := time.Now()
+    endDateOnly := time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, endTime.Location())
+    nowDateOnly := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+    return nowDateOnly.After(endDateOnly) || nowDateOnly.Equal(endDateOnly), nil
+}
+
+func daysLeft(endDate string) (int, error) {
+    endTime, err := time.Parse(dateLayout, endDate)
+    if err != nil {
+        return 0, err
+    }
+    now := time.Now()
+    endDateOnly := time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, endTime.Location())
+    nowDateOnly := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+    if nowDateOnly.After(endDateOnly) {
+        return 0, nil
+    }
+    duration := endDateOnly.Sub(nowDateOnly)
+    return int(duration.Hours() / 24), nil
+}
+
+func formatWithCommas(num int) string {
+    str := strconv.Itoa(num)
+    n := len(str)
+    if n <= 3 {
+        return str
+    }
+    var result []byte
+    for i := 0; i < n; i++ {
+        if i > 0 && (n-i)%3 == 0 {
+            result = append(result, ',')
+        }
+        result = append(result, str[i])
+    }
+    return string(result)
+}
+
+func formatLongWithCommas(num int64) string {
+    return formatWithCommas(int(num))
+}
+
+// API Handlers
+func handleLiveData(w http.ResponseWriter, r *http.Request) {
+    liveDataMutex.Lock()
+    data := latestLiveData
+    liveDataMutex.Unlock()
+    json.NewEncoder(w).Encode(data)
+}
+
+func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
+    data, err := loadLocalHEXJSON()
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    json.NewEncoder(w).Encode(data)
+}
+
+func handleMiners(w http.ResponseWriter, r *http.Request) {
+    miners, err := loadMiners()
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    json.NewEncoder(w).Encode(miners)
+}
+
+func handleAddMiner(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    var miner Miner
+    if err := json.NewDecoder(r.Body).Decode(&miner); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+    if miner.StartDate == "" || miner.EndDate == "" || miner.TShares <= 0 {
+        http.Error(w, "Invalid miner data", http.StatusBadRequest)
+        return
+    }
+    if _, err := time.Parse(dateLayout, miner.StartDate); err != nil {
+        http.Error(w, "Invalid start date format", http.StatusBadRequest)
+        return
+    }
+    if _, err := time.Parse(dateLayout, miner.EndDate); err != nil {
+        http.Error(w, "Invalid end date format", http.StatusBadRequest)
+        return
+    }
+    miners, err := loadMiners()
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    miners = append(miners, miner)
+    if err := saveMiners(miners); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusCreated)
+}
+
+func handleEndMiner(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    var req struct {
+        Index int `json:"index"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+    miners, err := loadMiners()
+    if err != nil || req.Index < 0 || req.Index >= len(miners) {
+        http.Error(w, "Invalid miner index", http.StatusBadRequest)
+        return
+    }
+    miners[req.Index].Status = "completed"
+    if err := saveMiners(miners); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+}
+
+func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    var req struct {
+        Index int `json:"index"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+    miners, err := loadMiners()
+    if err != nil || req.Index < 0 || req.Index >= len(miners) {
+        http.Error(w, "Invalid miner index", http.StatusBadRequest)
+        return
+    }
+    miners = append(miners[:req.Index], miners[req.Index+1:]...)
+    if err := saveMiners(miners); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+}
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+    if r.Method == http.MethodGet {
+        config, err := loadConfig()
+        if err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+            return
+        }
+        json.NewEncoder(w).Encode(config)
+    } else if r.Method == http.MethodPost {
+        var config Config
+        if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+            http.Error(w, "Invalid request body", http.StatusBadRequest)
+            return
+        }
+        if config.LiveDataFrequency <= 0 {
+            http.Error(w, "Frequency must be positive", http.StatusBadRequest)
+            return
+        }
+        if err := saveConfig(config); err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+            return
+        }
+        configManager.SetLiveDataFrequency(config.LiveDataFrequency)
+        w.WriteHeader(http.StatusOK)
+    } else {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+    }
+}
+
+// Main Function
+func main() {
+    os.MkdirAll("data", 0755)
+    os.MkdirAll("settings", 0755)
+
+    if err := updateLocalHEXJSON(); err != nil {
+        log.Println("Error updating local HEXJSON:", err)
+    }
+
+    config, err := loadConfig()
+    if err != nil {
+        log.Println("Error loading config:", err)
+        config.LiveDataFrequency = defaultLiveDataFrequency
+    }
+    configManager.SetLiveDataFrequency(config.LiveDataFrequency)
+
+    // Initial live data fetch
+    data, err := fetchLiveData()
+    if err != nil {
+        log.Println("Error during initial live data fetch:", err)
+    } else {
+        liveDataMutex.Lock()
+        latestLiveData = data
+        liveDataMutex.Unlock()
+    }
+
+    // Periodic live data fetching
+    go func() {
+        frequency := configManager.GetLiveDataFrequency()
+        ticker := time.NewTicker(time.Duration(frequency) * time.Minute)
+        changeCh := configManager.Subscribe()
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ticker.C:
+                data, err := fetchLiveData()
+                if err != nil {
+                    log.Println("Error fetching live data:", err)
+                } else {
+                    liveDataMutex.Lock()
+                    latestLiveData = data
+                    liveDataMutex.Unlock()
+                }
+                frequency = configManager.GetLiveDataFrequency()
+                ticker.Reset(time.Duration(frequency) * time.Minute)
+            case <-changeCh:
+                frequency = configManager.GetLiveDataFrequency()
+                ticker.Reset(time.Duration(frequency) * time.Minute)
+            }
+        }
+    }()
+
+    // Serve static files
+    http.Handle("/", http.FileServer(http.Dir("static")))
+
+    // API endpoints
+    http.HandleFunc("/api/live-data", handleLiveData)
+    http.HandleFunc("/api/hexjson", handleHEXJSON)
+    http.HandleFunc("/api/miners", handleMiners)
+    http.HandleFunc("/api/add-miner", handleAddMiner)
+    http.HandleFunc("/api/end-miner", handleEndMiner)
+    http.HandleFunc("/api/delete-miner", handleDeleteMiner)
+    http.HandleFunc("/api/config", handleConfig)
+
+    log.Println("Server starting on :5555")
+    if err := http.ListenAndServe(":5555", nil); err != nil {
+        log.Fatal("Server failed:", err)
+    }
+}
