@@ -57,7 +57,6 @@ Not yet implemented
 Settings tab shows:  
   - Live Data Settings for changing the frequency of fetching data (in minutes)  
   - Add New Miner for adding HEX miner with start date, end date and amount of T-Shares  
-  - Existing Miners for list of HEX miners with Delete function  
+  - Existing Miners for list of HEX miners with Delete function
 
 
-# hexfetch-web
