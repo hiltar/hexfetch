@@ -1,4 +1,8 @@
-let chartInstance = null;
+let chartInstances = {
+    priceChart: null,
+    tshareRateChart: null,
+    dailyPayoutChart: null
+};
 
 function formatWithCommas(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -13,6 +17,8 @@ function setTheme(theme) {
     toggle.checked = theme === 'dark';
     icon.classList.remove('bi-sun-fill', 'bi-moon-fill');
     icon.classList.add(theme === 'dark' ? 'bi-moon-fill' : 'bi-sun-fill');
+    // Update charts to reflect theme
+    renderCharts();
 }
 
 function toggleTheme() {
@@ -40,7 +46,7 @@ function fetchLiveData() {
             return response.json();
         })
         .then(data => {
-            document.getElementById('price').textContent = data.price_Pulsechain.toFixed(4);
+            document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
             document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
             document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
             document.getElementById('payout').textContent = data.payoutPerTshare_Pulsechain.toFixed(1);
@@ -143,52 +149,106 @@ function endMiner(index) {
     }
 }
 
-function updateChart() {
-    const field = document.getElementById('chart-field').value;
+function renderCharts() {
     fetch('/api/hexjson')
-        .then(response => response.json())
-        .then(data => {
-            if (chartInstance) {
-                chartInstance.destroy();
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
-            const ctx = document.getElementById('hexChart').getContext('2d');
+            return response.json();
+        })
+        .then(data => {
+            // Sort data by currentDay ascending (earliest to latest)
+            const sortedData = [...data].sort((a, b) => a.currentDay - b.currentDay);
+            // Filter data for Price PulseX to start at currentDay 1260
+            const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
+
             const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.map(entry => entry.currentDay),
-                    datasets: [{
-                        label: field,
-                        data: data.map(entry => entry[field]),
-                        borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
-                        fill: false
-                    }]
+            const chartConfigs = [
+                {
+                    id: 'priceChart',
+                    label: 'Price PulseX',
+                    field: 'pricePulseX',
+                    borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
+                    data: priceFilteredData
                 },
-                options: {
-                    scales: {
-                        x: { 
-                            title: { 
-                                display: true, 
-                                text: 'Current Day', 
-                                color: isDarkTheme ? '#ffffff' : '#000000' 
-                            },
-                            ticks: { color: isDarkTheme ? '#ffffff' : '#000000' }
-                        },
-                        y: { 
-                            title: { 
-                                display: true, 
-                                text: field, 
-                                color: isDarkTheme ? '#ffffff' : '#000000' 
-                            },
-                            ticks: { color: isDarkTheme ? '#ffffff' : '#000000' }
-                        }
+                {
+                    id: 'tshareRateChart',
+                    label: 'T-Share Rate HEX',
+                    field: 'tshareRateHEX',
+                    borderColor: isDarkTheme ? '#00cc99' : '#28a745',
+                    data: sortedData
+                },
+                {
+                    id: 'dailyPayoutChart',
+                    label: 'Daily Payout HEX',
+                    field: 'dailyPayoutHEX',
+                    borderColor: isDarkTheme ? '#ff6f61' : '#dc3545',
+                    data: sortedData
+                }
+            ];
+
+            chartConfigs.forEach(config => {
+                if (chartInstances[config.id]) {
+                    chartInstances[config.id].destroy();
+                }
+                const ctx = document.getElementById(config.id).getContext('2d');
+                chartInstances[config.id] = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: config.data.map(entry => entry.currentDay),
+                        datasets: [{
+                            label: config.label,
+                            data: config.data.map(entry => entry[config.field]),
+                            borderColor: config.borderColor,
+                            fill: false,
+                            pointRadius: 3,
+                            tension: 0.1
+                        }]
                     },
-                    plugins: {
-                        legend: {
-                            labels: { color: isDarkTheme ? '#ffffff' : '#000000' }
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Current Day',
+                                    color: isDarkTheme ? '#ffffff' : '#000000'
+                                },
+                                ticks: {
+                                    color: isDarkTheme ? '#ffffff' : '#000000'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: config.label,
+                                    color: isDarkTheme ? '#ffffff' : '#000000'
+                                },
+                                ticks: {
+                                    color: isDarkTheme ? '#ffffff' : '#000000'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                labels: {
+                                    color: isDarkTheme ? '#ffffff' : '#000000'
+                                }
+                            }
                         }
                     }
-                }
+                });
+            });
+            console.log('Charts rendered: Price PulseX from day 1260, others from earliest day');
+        })
+        .catch(error => {
+            console.error('Error rendering charts:', error);
+            // Display error in UI
+            const chartContainers = document.querySelectorAll('.chart-container');
+            chartContainers.forEach(container => {
+                container.innerHTML = `<p style="color: var(--text-color); text-align: center;">Error loading chart: ${error.message}</p>`;
             });
         });
 }
@@ -299,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchProfile();
     fetchLiveData();
     fetchSettings();
-    updateChart();
+    renderCharts();
 
     // Periodic updates
     setInterval(() => {
@@ -307,4 +367,8 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchLiveData();
     }, 60000); // Update live data every minute
     setInterval(fetchProfile, 60000); // Update profile every minute
+    setInterval(() => {
+        console.log('Attempting to update charts...');
+        renderCharts();
+    }, 86400000); // Update charts every day
 });
