@@ -16,7 +16,7 @@
 <body>
     <div class="container mt-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <img src="/icon.png" alt="HEX Stats Logo" id="logo"> <h1>HEX Stats</h1>
+            <img src="/icon.png" alt="HEX Stats Logo" id="logo">
             <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="themeToggle" onchange="toggleTheme()">
                 <label class="form-check-label" for="themeToggle">
@@ -32,7 +32,7 @@
                 <a class="nav-link" id="live-data-tab" data-bs-toggle="tab" href="#live-data" role="tab"><i class="bi bi-broadcast me-1"></i> Live Data</a>
             </li>
             <li class="nav-item">
-                <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab"><i class="bi bi-bar-chart-fill me-1"></i> Chart</a>
+                <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
             </li>
             <li class="nav-item">
                 <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab"><i class="bi bi-gear-fill me-1"></i> Settings</a>
@@ -63,13 +63,19 @@
                 </div>
             </div>
             <div class="tab-pane fade" id="chart" role="tabpanel">
-                <h2>Chart</h2>
-                <select id="chart-field" class="form-select mb-3" onchange="updateChart()">
-                    <option value="pricePulseX">Price PulseX</option>
-                    <option value="tshareRateHEX">T-Share Rate HEX</option>
-                    <option value="dailyPayoutHEX">Daily Payout HEX</option>
-                </select>
-                <canvas id="hexChart"></canvas>
+                <h2>Charts</h2>
+                <div class="chart-container">
+                    <h3>Price PulseX</h3>
+                    <canvas id="priceChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>T-Share Rate HEX</h3>
+                    <canvas id="tshareRateChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Daily Payout HEX</h3>
+                    <canvas id="dailyPayoutChart"></canvas>
+                </div>
             </div>
             <div class="tab-pane fade" id="settings" role="tabpanel">
                 <h2>Settings</h2>
