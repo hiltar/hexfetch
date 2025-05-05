@@ -11,9 +11,6 @@ data directory contains hexdata.json.
 settings directory contains user defined config.json and miners.json.
 
 ## Upcoming features
-Charts tab is disabled in the code because it's not ready.   
-For now, it only shows chart as image without any functions.
-
 Better UI/UX   
 Optimization   
 Docker container   
