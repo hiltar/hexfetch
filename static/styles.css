@@ -98,15 +98,6 @@ body {
     color: var(--text-color);
 }
 
-#hexChart {
-    max-width: 600px;
-    margin: 0 auto;
-    background-color: var(--card-bg);
-    padding: 10px;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-}
-
 .miner-item {
     display: flex;
     justify-content: space-between;
@@ -163,8 +154,37 @@ body {
     border-color: var(--border-color);
 }
 
+/* Logo styling */
 #logo {
-    height: 64px;
-    width: auto;
-    vertical-align: middle;
+    height: 40px; /* Adjust size to match navbar height */
+    width: auto; /* Maintain aspect ratio */
+    vertical-align: middle; /* Align with theme toggle */
+}
+
+/* Chart container styling */
+.chart-container {
+    max-width: 600px; /* Consistent with previous single chart */
+    margin: 20px auto; /* Center and space charts vertically */
+    padding: 10px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.chart-container h3 {
+    text-align: center;
+    color: var(--text-color);
+    margin-bottom: 10px;
+}
+
+.chart-container canvas {
+    width: 100% !important; /* Ensure canvas fills container */
+    height: 300px !important; /* Fixed height for consistency */
+}
+
+/* Responsive grid for larger screens */
+@media (min-width: 992px) {
+    .chart-container {
+        max-width: 800px; /* Slightly wider for desktop */
+    }
 }
