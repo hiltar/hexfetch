@@ -24,20 +24,31 @@
                 </label>
             </div>
         </div>
-        <ul class="nav nav-tabs" id="hexTabs" role="tablist">
-            <li class="nav-item">
-                <a class="nav-link active" id="profile-tab" data-bs-toggle="tab" href="#profile" role="tab"><i class="bi bi-person-fill me-1"></i> Profile</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" id="live-data-tab" data-bs-toggle="tab" href="#live-data" role="tab"><i class="bi bi-broadcast me-1"></i> Live Data</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab"><i class="bi bi-gear-fill me-1"></i> Settings</a>
-            </li>
-        </ul>
+        <nav class="navbar navbar-expand-sm" id="hexTabs">
+            <div class="container-fluid">
+                <!-- Hamburger button -->
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <!-- Nav items -->
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav nav-tabs w-100" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="profile-tab" data-bs-toggle="tab" href="#profile" role="tab" aria-controls="profile" aria-selected="true"><i class="bi bi-person-fill me-1"></i> Profile</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="live-data-tab" data-bs-toggle="tab" href="#live-data" role="tab" aria-controls="live-data" aria-selected="false"><i class="bi bi-broadcast me-1"></i> Live Data</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab" aria-controls="chart" aria-selected="false"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab" aria-controls="settings" aria-selected="false"><i class="bi bi-gear-fill me-1"></i> Settings</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
         <div class="tab-content mt-3">
             <div class="tab-pane fade show active" id="profile" role="tabpanel">
                 <h2>Profile</h2>
