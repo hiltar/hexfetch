@@ -22,7 +22,6 @@ jobs:
         
     - name: Build
       run: |
-        go mod tidy
         go build -o hexfetch-web
 
     - name: Upload hexfetch-ui as artifact
