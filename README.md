@@ -13,7 +13,7 @@ settings directory contains user defined config.json and miners.json.
 ## Upcoming features
 Better UI/UX   
 Optimization   
-Charts   
+Charts with functions   
 
 ---
 
