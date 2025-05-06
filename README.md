@@ -30,11 +30,16 @@ chmod a+x hexfetch-web
 # Docker
 ```
 docker build hexfetch:v0.1.0 .
-docker run -d --name hexfetch -p 5555:5555 -v $(pwd)/data:/data -v $(pwd)/settings:/settings hexfetch:v0.1.0
+docker run -d --name hexfetch -m 256m -p 5555:5555 -v $(pwd)/data:/data -v $(pwd)/settings:/settings hexfetch:latest
 # Alternatively use run.sh
 
 curl http://127.0.0.1:5555
 ```
+
+## Environment variables
+| env  | value  | explanation  |
+|---|---|---|
+| DEBUG  | true/false  | Enable logging. Default value: false  |   
 
 ---
 
