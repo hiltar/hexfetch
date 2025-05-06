@@ -67,10 +67,11 @@ func (cm *ConfigManager) Subscribe() chan struct{} {
 
 // Data Structures
 type HEXJSONEntry struct {
-    CurrentDay     int     `json:"currentDay"`
-    TshareRateHEX  float64 `json:"tshareRateHEX"`
-    DailyPayoutHEX float64 `json:"dailyPayoutHEX"`
-    PricePulseX    float64 `json:"pricePulseX"`
+    CurrentDay         int     `json:"currentDay"`
+    TshareRateHEX      float64 `json:"tshareRateHEX"`
+    DailyPayoutHEX     float64 `json:"dailyPayoutHEX"`
+    PayoutPerTshareHEX float64 `json:"payoutPerTshareHEX"`
+    PricePulseX        float64 `json:"pricePulseX"`
 }
 
 type HEXJSON []HEXJSONEntry
@@ -186,6 +187,24 @@ func updateLocalHEXJSON() error {
         return saveLocalHEXJSON(updatedData)
     }
     return nil
+}
+
+func startDailyHEXJSONUpdate() {
+    go func() {
+        for {
+            now := time.Now().UTC()
+            nextMidnight := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
+            delay := nextMidnight.Sub(now) 
+            log.Printf("Scheduling next HEXJSON update in %v (at %v UTC)", delay, nextMidnight)
+            time.Sleep(delay)
+            log.Println("Running daily HEXJSON update...")
+            if err := updateLocalHEXJSON(); err != nil {
+                log.Printf("Error during daily HEXJSON update: %v", err)
+            } else {
+                log.Printf("Daily HEXJSON update completed successfully")
+            }
+        }
+    }()
 }
 
 func loadMiners() ([]Miner, error) {
@@ -469,10 +488,15 @@ func main() {
     os.MkdirAll("data", 0755)
     os.MkdirAll("settings", 0755)
 
+    // Initial HEXJSON update
     if err := updateLocalHEXJSON(); err != nil {
         log.Println("Error updating local HEXJSON:", err)
     }
 
+    // Start daily HEXJSON updates
+    startDailyHEXJSONUpdate()
+
+    // Load configuration
     config, err := loadConfig()
     if err != nil {
         log.Println("Error loading config:", err)
