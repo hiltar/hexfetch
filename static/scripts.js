@@ -351,6 +351,32 @@ function deleteMiner(index) {
     }
 }
 
+// Navbar row detection
+function checkNavbarRows() {
+    const navbarNav = document.querySelector('#navbarNav');
+    const navItems = document.querySelectorAll('.navbar-nav .nav-item');
+    const toggler = document.querySelector('.navbar-toggler');
+    if (!navbarNav || !toggler || navItems.length === 0) return;
+
+    // Get the top position of the first and last nav items
+    const firstItem = navItems[0];
+    const lastItem = navItems[navItems.length - 1];
+    const firstTop = firstItem.getBoundingClientRect().top;
+    const lastTop = lastItem.getBoundingClientRect().top;
+
+    // If tops differ significantly, nav bar is wrapping
+    const isWrapping = Math.abs(lastTop - firstTop) > 10;
+
+    // Toggle navbar classes
+    if (isWrapping && window.innerWidth >= 576) {
+        navbarNav.classList.add('collapse', 'navbar-collapse');
+        toggler.style.display = 'block';
+    } else if (window.innerWidth >= 576) {
+        navbarNav.classList.remove('collapse', 'navbar-collapse');
+        toggler.style.display = 'none';
+    }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize datepickers
@@ -368,6 +394,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchLiveData();
     fetchSettings();
     renderCharts();
+    checkNavbarRows();
 
     // Periodic updates
     setInterval(() => {
@@ -379,4 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('Attempting to update charts...');
         renderCharts();
     }, 86400000); // Update charts every day
+
+    // Navbar row detection on resize
+    window.addEventListener('resize', checkNavbarRows);
 });
