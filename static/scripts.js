@@ -1,6 +1,7 @@
 let chartInstances = {
     priceChart: null,
     tshareRateChart: null,
+    payoutPerTshareChart: null,
     dailyPayoutChart: null
 };
 
@@ -167,21 +168,28 @@ function renderCharts() {
             const chartConfigs = [
                 {
                     id: 'priceChart',
-                    label: 'Price PulseX',
+                    label: 'HEX Price',
                     field: 'pricePulseX',
                     borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
                     data: priceFilteredData
                 },
                 {
                     id: 'tshareRateChart',
-                    label: 'T-Share Rate HEX',
+                    label: 'T-Share Rate',
                     field: 'tshareRateHEX',
                     borderColor: isDarkTheme ? '#00cc99' : '#28a745',
                     data: sortedData
                 },
                 {
+                    id: 'payoutPerTshareChart',
+                    label: 'Payout Per T-Share',
+                    field: 'payoutPerTshareHEX',
+                    borderColor: isDarkTheme ? '#9900cc' : '#9966ff',
+                    data: sortedData
+                },
+                {
                     id: 'dailyPayoutChart',
-                    label: 'Daily Payout HEX',
+                    label: 'Daily Payout',
                     field: 'dailyPayoutHEX',
                     borderColor: isDarkTheme ? '#ff6f61' : '#dc3545',
                     data: sortedData
@@ -241,7 +249,7 @@ function renderCharts() {
                     }
                 });
             });
-            console.log('Charts rendered: Price PulseX from day 1260, others from earliest day');
+            console.log('Charts rendered: HEX Price from day 1260, others from earliest day');
         })
         .catch(error => {
             console.error('Error rendering charts:', error);
