@@ -13,7 +13,7 @@ settings directory contains user defined config.json and miners.json.
 ## Upcoming features
 Better UI/UX   
 Optimization   
-
+Charts   
 
 ---
 
@@ -58,7 +58,7 @@ Live Data tab shows periodically fetched data from Pulsechain API.
 
 
 # Charts
-Not yet implemented
+Charts tab show historical charts of HEX price, T-Share rate and other useful information of HEX.
 
 
 ## Settings
