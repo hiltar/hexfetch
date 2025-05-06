@@ -23,6 +23,7 @@ go mod init hexfetch-web
 go mod tidy
 go build -o hexfecth-web
 
+chmod a+x hexfetch-web
 ./hexfetch-web
 ```
 
