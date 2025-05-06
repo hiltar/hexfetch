@@ -184,7 +184,7 @@ function renderCharts() {
                     id: 'payoutPerTshareChart',
                     label: 'Payout Per T-Share',
                     field: 'payoutPerTshareHEX',
-                    borderColor: isDarkTheme ? '#9900cc' : '#9966ff',
+                    borderColor: isDarkTheme ? '#9966ff' : '#9900cc',
                     data: sortedData
                 },
                 {
