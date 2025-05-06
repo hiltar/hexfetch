@@ -13,7 +13,7 @@ settings directory contains user defined config.json and miners.json.
 ## Upcoming features
 Better UI/UX   
 Optimization   
-Docker container   
+
 
 ---
 
@@ -25,6 +25,16 @@ go build -o hexfecth-web
 
 ./hexfetch-web
 ```
+
+# Docker
+```
+docker build hexfetch:v0.1.0 .
+docker run -d --name hexfetch -p 5555:5555 -v $(pwd)/data:/data -v $(pwd)/settings:/settings hexfetch:v0.1.0
+# Alternatively use run.sh
+
+curl http://127.0.0.1:5555
+```
+
 ---
 
 # Tabs
