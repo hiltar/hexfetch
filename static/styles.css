@@ -41,21 +41,68 @@ body {
     border: 1px solid var(--border-color);
 }
 
-.nav-tabs {
+/* Navbar styles */
+.navbar {
     background-color: var(--nav-bg);
     border-bottom: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
+}
+
+.navbar-nav.nav-tabs {
+    border-bottom: none; /* Remove default nav-tabs border */
 }
 
 .nav-link {
     color: var(--nav-text);
+    padding: 0.5rem 1rem;
+    transition: color 0.2s;
+}
+
+.nav-link:hover {
+    color: var(--primary-bg);
 }
 
 .nav-link.active {
     background-color: var(--nav-active-bg);
     color: var(--text-color);
-    border-color: var(--border-color);
+    border: none;
+    border-bottom: 2px solid var(--primary-bg);
 }
 
+.navbar-toggler {
+    border: none;
+    padding: 0.25rem 0.75rem;
+}
+
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(0, 0, 0, 0.55)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+[data-theme="dark"] .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255, 255, 255, 0.55)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+/* Mobile menu styles */
+@media (max-width: 575.98px) {
+    .navbar-nav {
+        padding: 1rem;
+    }
+    .nav-item {
+        margin-bottom: 0.5rem;
+    }
+    .nav-link {
+        font-size: 1.1rem;
+        padding: 0.5rem 0;
+    }
+    .nav-link.active {
+        border-bottom: none;
+        background-color: var(--primary-bg);
+        color: var(--primary-text);
+        border-radius: 4px;
+    }
+}
+
+/* Existing styles */
 .btn-primary {
     background-color: var(--primary-bg);
     border-color: var(--primary-bg);
@@ -63,7 +110,7 @@ body {
 }
 
 .btn-primary:hover {
-    background-color: #0056b3; /* Slightly darker for hover */
+    background-color: #0056b3;
     border-color: #0056b3;
 }
 
@@ -93,7 +140,7 @@ body {
 .live-data p {
     text-align: center;
     font-weight: bold;
-    font-size: 24px; /* Preserved from previous requirement */
+    font-size: 24px;
     margin: 10px 0;
     color: var(--text-color);
 }
@@ -156,15 +203,15 @@ body {
 
 /* Logo styling */
 #logo {
-    height: 40px; /* Adjust size to match navbar height */
-    width: auto; /* Maintain aspect ratio */
-    vertical-align: middle; /* Align with theme toggle */
+    height: 40px;
+    width: auto;
+    vertical-align: middle;
 }
 
 /* Chart container styling */
 .chart-container {
-    max-width: 600px; /* Consistent with previous single chart */
-    margin: 20px auto; /* Center and space charts vertically */
+    max-width: 600px;
+    margin: 20px auto;
     padding: 10px;
     background-color: var(--card-bg);
     border: 1px solid var(--border-color);
@@ -178,13 +225,13 @@ body {
 }
 
 .chart-container canvas {
-    width: 100% !important; /* Ensure canvas fills container */
-    height: 300px !important; /* Fixed height for consistency */
+    width: 100% !important;
+    height: 300px !important;
 }
 
 /* Responsive grid for larger screens */
 @media (min-width: 992px) {
     .chart-container {
-        max-width: 800px; /* Slightly wider for desktop */
+        max-width: 800px;
     }
 }
