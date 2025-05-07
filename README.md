@@ -1,10 +1,10 @@
-# hexfetch-web
+# hexfetch
 
-hexfetch-web is a web application for hexfetch with convenient features like HEX miners and periodical data fetching from Pulsechain API.   
+hexfetch is a web application for hexfetch with convenient features like HEX miners, charts and periodical data fetching from Pulsechain API.   
 This doesn't itself interact Pulsechain network but instead it uses HEXDailyStats API to fetch data.   
-hexfetch-web doesn't need the 0x addresses at all so it's 100% privacy.
+hexfetch doesn't need the 0x addresses at all so it's 100% privacy.
 
-hexfetch-web is made with `go 1.24.2`.
+hexfetch is made with `go 1.24.2`.
 
 Running hexfetch-web will create two folders into same directory where hexfetch-web is running.   
 data directory contains hexdata.json.  
@@ -19,17 +19,17 @@ Charts with functions
 
 # Build
 ```
-go mod init hexfetch-web
+go mod init hexfetch
 go mod tidy
-go build -o hexfecth-web
+go build -o hexfecth
 
-chmod a+x hexfetch-web
-./hexfetch-web
+chmod a+x hexfetch
+./hexfetch
 ```
 
 # Docker
 ```
-docker build hexfetch:v0.1.0 .
+docker build hexfetch:latest .
 docker run -d --name hexfetch -m 256m -p 5555:5555 -v $(pwd)/data:/data -v $(pwd)/settings:/settings hexfetch:latest
 # Alternatively use run.sh
 
