@@ -18,7 +18,7 @@
     --bg-color: #212529;
     --text-color: #ffffff;
     --card-bg: #343a40;
-    --primary-bg: #0056b3;
+    --primary-bg: #00b7eb;
     --primary-text: #ffffff;
     --input-bg: #495057;
     --input-text: #ffffff;
@@ -229,9 +229,39 @@ body {
     height: 300px !important;
 }
 
-/* Responsive grid for larger screens */
-@media (min-width: 992px) {
-    .chart-container {
-        max-width: 800px;
+#profile .total-tshares,
+#profile .total-value {
+    font-size: 1.2rem; /* Larger text for emphasis */
+    font-weight: 600; /* Slightly bolder than <strong> for hierarchy */
+    color: var(--text-color); /* Respects light/dark theme */
+    background-color: var(--card-bg); /* Matches container background */
+    padding: 10px 15px; /* Spacing inside */
+    margin: 10px 0; /* Spacing outside */
+    border: 1px solid var(--border-color); /* Subtle border */
+    border-radius: 6px; /* Rounded corners */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Light shadow for depth */
+    transition: background-color 0.3s, border-color 0.3s; /* Smooth theme transitions */
+}
+
+/* Highlight the strong text (label) */
+#profile .total-tshares strong,
+#profile .total-value strong {
+    color: var(--primary-bg); 
+}
+
+/* Ensure span values stand out */
+#profile .total-tshares span,
+#profile .total-value span {
+    font-weight: 700; 
+    color: var(--text-color); 
+}
+
+/* Responsive adjustments for mobile */
+@media (max-width: 575.98px) {
+    #profile .total-tshares,
+    #profile .total-value {
+        font-size: 1.1rem;
+        padding: 8px 12px; 
     }
 }
+
