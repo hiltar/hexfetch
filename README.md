@@ -6,7 +6,7 @@ hexfetch doesn't need the 0x addresses at all so it's 100% privacy.
 
 hexfetch is made with `go 1.24.2`.
 
-Running hexfetch-web will create two folders into same directory where hexfetch-web is running.   
+Running hexfetch will create two folders into same directory where hexfetch is running.   
 data directory contains hexdata.json.  
 settings directory contains user defined config.json and miners.json.
 
