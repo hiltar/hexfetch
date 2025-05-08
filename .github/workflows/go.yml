@@ -22,6 +22,7 @@ jobs:
         
     - name: Build
       run: |
+        go mod init hexfetch
         go build -o hexfetch
 
     - name: Upload hexfetch as artifact
