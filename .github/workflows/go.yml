@@ -24,7 +24,7 @@ jobs:
       run: |
         go build -o hexfetch
 
-    - name: Upload hexfetch-ui as artifact
+    - name: Upload hexfetch as artifact
       uses: actions/upload-artifact@v4
       with:
         name: hexfetch
