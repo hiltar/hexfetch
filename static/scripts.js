@@ -134,11 +134,15 @@ function fetchLiveData() {
             // Update timestamp to confirm refresh
             const timestamp = new Date().toLocaleTimeString();
             document.getElementById('last-updated').textContent = `Last updated: ${timestamp}`;
-            console.log(`Live data updated at ${timestamp}`);
+            // Update document title with price
+            document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
+            console.log(`Live data updated at ${timestamp}, title set to: ${document.title}`);
         })
         .catch(error => {
             console.error('Error fetching live data:', error);
             document.getElementById('last-updated').textContent = `Error updating data: ${error.message}`;
+            // Revert title on error
+            document.title = 'HEX Stats';
         });
 }
 
@@ -511,6 +515,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize theme
     initTheme();
+
+    // Set initial document title
+    document.title = 'HEX Stats';
 
     // Initial fetches
     fetchProfile();
