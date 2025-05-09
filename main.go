@@ -93,7 +93,8 @@ type Miner struct {
 }
 
 type Config struct {
-    LiveDataFrequency int `json:"liveDataFrequency"`
+    LiveDataFrequency int     `json:"liveDataFrequency"`
+    LiquidHEX         float64 `json:"liquidHEX"` // New field for Liquid HEX
 }
 
 const (
@@ -247,7 +248,7 @@ func loadConfig() (Config, error) {
     file, err := os.Open("settings/config.json")
     if err != nil {
         if os.IsNotExist(err) {
-            return Config{LiveDataFrequency: defaultLiveDataFrequency}, nil
+            return Config{LiveDataFrequency: defaultLiveDataFrequency, LiquidHEX: 0}, nil
         }
         return Config{}, err
     }
@@ -298,7 +299,7 @@ func daysLeft(endDate string) (int, error) {
         return 0, nil
     }
     duration := endDateOnly.Sub(nowDateOnly)
-    return int(duration.Hours() / 24), nil
+    return int(duration.Hours()/24), nil
 }
 
 func formatWithCommas(num int) string {
@@ -480,6 +481,11 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
         if config.LiveDataFrequency <= 0 {
             debugLog("Invalid frequency in config request:", config.LiveDataFrequency)
             http.Error(w, "Frequency must be positive", http.StatusBadRequest)
+            return
+        }
+        if config.LiquidHEX < 0 {
+            debugLog("Invalid LiquidHEX in config request:", config.LiquidHEX)
+            http.Error(w, "Liquid HEX must be non-negative", http.StatusBadRequest)
             return
         }
         if err := saveConfig(config); err != nil {
