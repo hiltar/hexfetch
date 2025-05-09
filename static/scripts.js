@@ -80,7 +80,19 @@ function fetchProfile() {
             fetch('/api/live-data')
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('total-value').textContent = (totalTShares * data.tsharePrice_Pulsechain).toFixed(2);
+                    const totalValue = totalTShares * data.tsharePrice_Pulsechain;
+                    document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
+                });
+            fetch('/api/config')
+                .then(response => response.json())
+                .then(config => {
+                    const liquidHEX = config.liquidHEX || 0;
+                    fetch('/api/live-data')
+                        .then(response => response.json())
+                        .then(data => {
+                            const liquidHEXValue = liquidHEX * data.price_Pulsechain;
+                            document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+                        });
                 });
             const activeMinersDiv = document.getElementById('active-miners');
             activeMinersDiv.innerHTML = '';
@@ -266,6 +278,7 @@ function fetchSettings() {
         .then(response => response.json())
         .then(config => {
             document.getElementById('frequency').value = config.liveDataFrequency;
+            document.getElementById('liquid-hex').value = config.liquidHEX || '';
         });
     fetch('/api/miners')
         .then(response => response.json())
@@ -293,13 +306,34 @@ function saveFrequency() {
     fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency })
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: parseFloat(document.getElementById('liquid-hex').value) || 0 })
     })
         .then(response => {
             if (response.ok) {
                 alert(`Live data update frequency set to ${frequency} minutes`);
             } else {
                 alert('Error saving frequency');
+            }
+        });
+}
+
+function saveLiquidHEX() {
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value);
+    if (isNaN(liquidHEX) || liquidHEX < 0) {
+        alert('Liquid HEX must be a non-negative number');
+        return;
+    }
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveDataFrequency: parseInt(document.getElementById('frequency').value), liquidHEX })
+    })
+        .then(response => {
+            if (response.ok) {
+                alert('Liquid HEX saved successfully');
+                fetchProfile(); // Refresh Profile tab
+            } else {
+                alert('Error saving Liquid HEX');
             }
         });
 }
