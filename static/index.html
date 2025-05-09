@@ -55,6 +55,7 @@
                 <p id="profile-message"></p>
                 <p class="total-tshares"><strong>Total T-Shares:</strong> <span id="total-tshares">0.00</span></p>
                 <p class="total-value"><strong>Total T-Shares Value:</strong> $<span id="total-value">0.00</span></p>
+                <p class="liquid-hex-value"><strong>Liquid HEX Value:</strong> $<span id="liquid-hex-value">0.00</span></p>
                 <h3>Active Miners</h3>
                 <div id="active-miners"></div>
                 <div class="mt-3">
@@ -99,6 +100,12 @@
                     <label for="frequency" class="form-label">Update Frequency (minutes):</label>
                     <input type="number" id="frequency" class="form-control" min="1">
                     <button class="btn btn-primary mt-2" onclick="saveFrequency()">Save Frequency</button>
+                </div>
+                <h3>Liquid HEX Settings</h3>
+                <div class="mb-3">
+                    <label for="liquid-hex" class="form-label">Liquid HEX Amount:</label>
+                    <input type="number" id="liquid-hex" class="form-control" min="0" step="0.01">
+                    <button class="btn btn-primary mt-2" onclick="saveLiquidHEX()">Save Liquid HEX</button>
                 </div>
                 <h3>Add New Miner</h3>
                 <div class="mb-3">
