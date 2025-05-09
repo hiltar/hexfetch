@@ -5,6 +5,84 @@ let chartInstances = {
     dailyPayoutChart: null
 };
 
+// Show custom notification
+function showNotification(message, type = 'success') {
+    const container = document.getElementById('notification-container');
+    const notification = document.createElement('div');
+    notification.className = `notification alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+    notification.setAttribute('role', 'alert');
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    container.appendChild(notification);
+
+    // Auto-dismiss after 3 seconds
+    setTimeout(() => {
+        notification.classList.remove('show');
+        notification.classList.add('fade');
+        setTimeout(() => notification.remove(), 150); // Wait for fade animation
+    }, 3000);
+}
+
+// Show custom confirmation modal
+function showConfirmModal(title, message) {
+    return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">${title}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>${message}</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const bsModal = new bootstrap.Modal(modal, { backdrop: 'static', keyboard: false });
+        bsModal.show();
+
+        const confirmBtn = modal.querySelector('.confirm-btn');
+        const cancelBtn = modal.querySelector('.btn-secondary');
+        const closeBtn = modal.querySelector('.btn-close');
+
+        const cleanup = () => {
+            bsModal.hide();
+            modal.remove();
+        };
+
+        confirmBtn.addEventListener('click', () => {
+            cleanup();
+            resolve(true);
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            cleanup();
+            resolve(false);
+        });
+
+        closeBtn.addEventListener('click', () => {
+            cleanup();
+            resolve(false);
+        });
+
+        modal.addEventListener('hidden.bs.modal', () => {
+            cleanup();
+            resolve(false);
+        });
+    });
+}
+
 function formatWithCommas(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
@@ -145,8 +223,12 @@ function showCompletedMiners() {
         });
 }
 
-function endMiner(index) {
-    if (confirm('Have you ended the mining contract and minted HEX?')) {
+async function endMiner(index) {
+    const confirmed = await showConfirmModal(
+        'End Miner',
+        'Have you ended the mining contract and minted HEX?'
+    );
+    if (confirmed) {
         fetch('/api/end-miner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -154,9 +236,10 @@ function endMiner(index) {
         })
             .then(response => {
                 if (response.ok) {
+                    showNotification('Miner ended successfully', 'success');
                     fetchProfile();
                 } else {
-                    alert('Error ending miner');
+                    showNotification('Error ending miner', 'danger');
                 }
             });
     }
@@ -300,7 +383,7 @@ function fetchSettings() {
 function saveFrequency() {
     const frequency = parseInt(document.getElementById('frequency').value);
     if (frequency <= 0) {
-        alert('Frequency must be a positive integer');
+        showNotification('Frequency must be a positive integer', 'danger');
         return;
     }
     fetch('/api/config', {
@@ -310,9 +393,9 @@ function saveFrequency() {
     })
         .then(response => {
             if (response.ok) {
-                alert(`Live data update frequency set to ${frequency} minutes`);
+                showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
             } else {
-                alert('Error saving frequency');
+                showNotification('Error saving frequency', 'danger');
             }
         });
 }
@@ -320,7 +403,7 @@ function saveFrequency() {
 function saveLiquidHEX() {
     const liquidHEX = parseFloat(document.getElementById('liquid-hex').value);
     if (isNaN(liquidHEX) || liquidHEX < 0) {
-        alert('Liquid HEX must be a non-negative number');
+        showNotification('Liquid HEX must be a non-negative number', 'danger');
         return;
     }
     fetch('/api/config', {
@@ -330,10 +413,10 @@ function saveLiquidHEX() {
     })
         .then(response => {
             if (response.ok) {
-                alert('Liquid HEX saved successfully');
+                showNotification('Liquid HEX saved successfully', 'success');
                 fetchProfile(); // Refresh Profile tab
             } else {
-                alert('Error saving Liquid HEX');
+                showNotification('Error saving Liquid HEX', 'danger');
             }
         });
 }
@@ -343,12 +426,12 @@ function addMiner() {
     const endDate = document.getElementById('end-date').value;
     const tShares = parseFloat(document.getElementById('tshares').value);
     if (!startDate || !endDate || isNaN(tShares) || tShares <= 0) {
-        alert('Please fill all fields with valid data');
+        showNotification('Please fill all fields with valid data', 'danger');
         return;
     }
     const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
     if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
-        alert('Dates must be in DD-MM-YYYY format');
+        showNotification('Dates must be in DD-MM-YYYY format', 'danger');
         return;
     }
     fetch('/api/add-miner', {
@@ -358,18 +441,23 @@ function addMiner() {
     })
         .then(response => {
             if (response.ok) {
+                showNotification('Miner added successfully', 'success');
                 fetchSettings();
                 document.getElementById('start-date').value = '';
                 document.getElementById('end-date').value = '';
                 document.getElementById('tshares').value = '';
             } else {
-                alert('Error adding miner');
+                showNotification('Error adding miner', 'danger');
             }
         });
 }
 
-function deleteMiner(index) {
-    if (confirm('Do you want to delete this HEX miner?')) {
+async function deleteMiner(index) {
+    const confirmed = await showConfirmModal(
+        'Delete Miner',
+        'Do you want to delete this HEX miner?'
+    );
+    if (confirmed) {
         fetch('/api/delete-miner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -377,9 +465,10 @@ function deleteMiner(index) {
         })
             .then(response => {
                 if (response.ok) {
+                    showNotification('Miner deleted successfully', 'success');
                     fetchSettings();
                 } else {
-                    alert('Error deleting miner');
+                    showNotification('Error deleting miner', 'danger');
                 }
             });
     }
