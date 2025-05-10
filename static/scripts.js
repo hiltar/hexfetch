@@ -263,6 +263,23 @@ function renderCharts() {
             // Filter data for Price PulseX to start at currentDay 1260
             const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
 
+            // Get the latest values from sortedData (last entry)
+            const latestData = sortedData[sortedData.length - 1] || {};
+
+            // Update chart value displays
+            document.getElementById('price-value').textContent = latestData.pricePulseX
+                ? `$${latestData.pricePulseX.toFixed(4)}`
+                : '$0.0000';
+            document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX
+                ? `${formatWithCommas(latestData.tshareRateHEX.toFixed(2))} HEX`
+                : '0.00 HEX';
+            document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX
+                ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(2))} HEX`
+                : '0.00 HEX';
+            document.getElementById('daily-payout-value').textContent = latestData.dailyPayoutHEX
+                ? `${formatWithCommas(latestData.dailyPayoutHEX.toFixed(2))} HEX`
+                : '0.00 HEX';
+
             const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
             const chartConfigs = [
                 {
@@ -357,6 +374,11 @@ function renderCharts() {
             chartContainers.forEach(container => {
                 container.innerHTML = `<p style="color: var(--text-color); text-align: center;">Error loading chart: ${error.message}</p>`;
             });
+            // Set default values on error
+            document.getElementById('price-value').textContent = '$0.0000';
+            document.getElementById('tshare-rate-value').textContent = '0.00 HEX';
+            document.getElementById('payout-per-tshare-value').textContent = '0.00 HEX';
+            document.getElementById('daily-payout-value').textContent = '0.00 HEX';
         });
 }
 
