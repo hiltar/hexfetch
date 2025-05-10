@@ -303,6 +303,19 @@ body {
     height: 300px !important;
 }
 
+.chart-value {
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 10px;
+    padding: 5px;
+    background-color: var(--card-bg);
+    border-radius: 4px;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+
 /* Styling for Total T-Shares and Total T-Shares Value in Profile tab */
 #profile .total-tshares,
 #profile .total-value {
@@ -376,6 +389,10 @@ body {
     .modal-footer .btn {
         padding: 0.4rem 0.8rem;
         font-size: 0.9rem;
+    }
+    .chart-value {
+        font-size: 1rem;
+        padding: 4px;
     }
 }
 
