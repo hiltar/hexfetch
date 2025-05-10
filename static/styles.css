@@ -391,8 +391,7 @@ body {
         font-size: 0.9rem;
     }
     .chart-value {
-        font-size: 1rem;
-        padding: 4px;
+        display: none;
     }
 }
 
