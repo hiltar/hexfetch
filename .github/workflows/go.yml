@@ -22,8 +22,10 @@ jobs:
         
     - name: Build
       run: |
+        apt update && apt install upx -y
         go mod init hexfetch
-        go build -o hexfetch
+        CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch
+        upx --best hexfetch
 
     - name: Upload hexfetch as artifact
       uses: actions/upload-artifact@v4
@@ -37,3 +39,4 @@ jobs:
       with:
         files: hexfetch
         draft: true
+        
