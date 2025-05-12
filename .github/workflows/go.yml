@@ -22,7 +22,6 @@ jobs:
         
     - name: Build
       run: |
-        apt update && apt install upx -y
         go mod init hexfetch
         CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch
         upx --best hexfetch
