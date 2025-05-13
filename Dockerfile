@@ -9,6 +9,8 @@ COPY data/ ./data/
 COPY settings/ ./settings/
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch .
+RUN apk add upx
+RUN upx --best hexfetch
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
