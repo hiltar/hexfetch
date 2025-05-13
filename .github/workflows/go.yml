@@ -23,6 +23,8 @@ jobs:
     - name: Build
       run: |
         go mod init hexfetch-arm
+        go get github.com/cenkalti/backoff/v4
+        go get github.com/json-iterator/go
         CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch-arm
         upx --best hexfetch-arm
 
