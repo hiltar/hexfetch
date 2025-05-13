@@ -1,20 +1,38 @@
 package main
 
 import (
-    "encoding/json"
+    "bytes"
     "fmt"
     "log"
     "net/http"
     "os"
+    "reflect"
     "strconv"
     "sync"
     "time"
+
+    jsoniter "github.com/json-iterator/go"
+    "github.com/cenkalti/backoff/v4"
 )
 
 // Global variables for cached live data
 var (
     latestLiveData LiveData
-    liveDataMutex  sync.Mutex
+    liveDataMutex  sync.RWMutex
+    hexJSONData    HEXJSON
+    hexJSONMutex   sync.RWMutex
+    bufferPool     = sync.Pool{
+        New: func() interface{} { return new(bytes.Buffer) },
+    }
+    httpClient = &http.Client{
+        Timeout: 10 * time.Second,
+        Transport: &http.Transport{
+            MaxIdleConns:       10,
+            IdleConnTimeout:    30 * time.Second,
+            DisableCompression: true,
+        },
+    }
+    json = jsoniter.ConfigCompatibleWithStandardLibrary
 )
 
 // ConfigManager for thread-safe configuration
@@ -94,7 +112,7 @@ type Miner struct {
 
 type Config struct {
     LiveDataFrequency int     `json:"liveDataFrequency"`
-    LiquidHEX         float64 `json:"liquidHEX"` // New field for Liquid HEX
+    LiquidHEX         float64 `json:"liquidHEX"`
 }
 
 const (
@@ -111,62 +129,58 @@ func debugLog(v ...interface{}) {
 
 // Data Fetching and Management
 func fetchHEXJSON() (HEXJSON, error) {
-    resp, err := http.Get("https://hexdailystats.com/fulldatapulsechain")
+    b := backoff.NewExponentialBackOff()
+    b.MaxElapsedTime = 5 * time.Minute
+    var data HEXJSON
+    err := backoff.Retry(func() error {
+        resp, err := httpClient.Get("https://hexdailystats.com/fulldatapulsechain")
+        if err != nil {
+            return err
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != http.StatusOK {
+            return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+        }
+        return json.NewDecoder(resp.Body).Decode(&data)
+    }, b)
     if err != nil {
         return HEXJSON{}, fmt.Errorf("failed to fetch HEXJSON: %w", err)
-    }
-    defer resp.Body.Close()
-    if resp.StatusCode != http.StatusOK {
-        return HEXJSON{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-    }
-    var data HEXJSON
-    err = json.NewDecoder(resp.Body).Decode(&data)
-    if err != nil {
-        return HEXJSON{}, fmt.Errorf("failed to decode HEXJSON: %w", err)
     }
     return data, nil
 }
 
 func fetchLiveData() (LiveData, error) {
-    resp, err := http.Get("https://hexdailystats.com/livedata")
+    b := backoff.NewExponentialBackOff()
+    b.MaxElapsedTime = 5 * time.Minute
+    var data LiveData
+    err := backoff.Retry(func() error {
+        resp, err := httpClient.Get("https://hexdailystats.com/livedata")
+        if err != nil {
+            return err
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != http.StatusOK {
+            return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+        }
+        return json.NewDecoder(resp.Body).Decode(&data)
+    }, b)
     if err != nil {
         return LiveData{}, fmt.Errorf("failed to fetch live data: %w", err)
-    }
-    defer resp.Body.Close()
-    if resp.StatusCode != http.StatusOK {
-        return LiveData{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-    }
-    var data LiveData
-    err = json.NewDecoder(resp.Body).Decode(&data)
-    if err != nil {
-        return LiveData{}, fmt.Errorf("failed to decode live data: %w", err)
     }
     return data, nil
 }
 
 func loadLocalHEXJSON() (HEXJSON, error) {
-    file, err := os.Open("data/hexjson.json")
-    if err != nil {
-        if os.IsNotExist(err) {
-            return HEXJSON{}, nil
-        }
-        return HEXJSON{}, err
-    }
-    defer file.Close()
-    var data HEXJSON
-    err = json.NewDecoder(file).Decode(&data)
-    return data, err
+    hexJSONMutex.RLock()
+    defer hexJSONMutex.RUnlock()
+    return hexJSONData, nil
 }
 
 func saveLocalHEXJSON(data HEXJSON) error {
-    file, err := os.Create("data/hexjson.json")
-    if err != nil {
-        return err
-    }
-    defer file.Close()
-    encoder := json.NewEncoder(file)
-    encoder.SetIndent("", "  ")
-    return encoder.Encode(data)
+    hexJSONMutex.Lock()
+    defer hexJSONMutex.Unlock()
+    hexJSONData =#: data
+    return nil
 }
 
 func updateLocalHEXJSON() error {
@@ -220,7 +234,7 @@ func startDailyHEXJSONUpdate() {
 }
 
 func loadMiners() ([]Miner, error) {
-    file, err := os.Open("settings/miners.json")
+    file, err := os.Open("/settings/miners.json")
     if err != nil {
         if os.IsNotExist(err) {
             return []Miner{}, nil
@@ -234,7 +248,11 @@ func loadMiners() ([]Miner, error) {
 }
 
 func saveMiners(miners []Miner) error {
-    file, err := os.Create("settings/miners.json")
+    currentMiners, err := loadMiners()
+    if err == nil && reflect.DeepEqual(currentMiners, miners) {
+        return nil // Skip write if unchanged
+    }
+    file, err := os.Create("/settings/miners.json")
     if err != nil {
         return err
     }
@@ -245,7 +263,7 @@ func saveMiners(miners []Miner) error {
 }
 
 func loadConfig() (Config, error) {
-    file, err := os.Open("settings/config.json")
+    file, err := os.Open("/settings/config.json")
     if err != nil {
         if os.IsNotExist(err) {
             return Config{LiveDataFrequency: defaultLiveDataFrequency, LiquidHEX: 0}, nil
@@ -265,7 +283,11 @@ func loadConfig() (Config, error) {
 }
 
 func saveConfig(config Config) error {
-    file, err := os.Create("settings/config.json")
+    currentConfig, err := loadConfig()
+    if err == nil && reflect.DeepEqual(currentConfig, config) {
+        return nil // Skip write if unchanged
+    }
+    file, err := os.Create("/settings/config.json")
     if err != nil {
         return err
     }
@@ -299,23 +321,23 @@ func daysLeft(endDate string) (int, error) {
         return 0, nil
     }
     duration := endDateOnly.Sub(nowDateOnly)
-    return int(duration.Hours()/24), nil
+    return int(duration.Hours() / 24), nil
 }
 
 func formatWithCommas(num int) string {
-    str := strconv.Itoa(num)
+    str := strconv.FormatInt(int64(num), 10)
     n := len(str)
     if n <= 3 {
         return str
     }
-    var result []byte
+    buf := make([]byte, 0, n+(n-1)/3)
     for i := 0; i < n; i++ {
         if i > 0 && (n-i)%3 == 0 {
-            result = append(result, ',')
+            buf = append(buf, ',')
         }
-        result = append(result, str[i])
+        buf = append(buf, str[i])
     }
-    return string(result)
+    return string(buf)
 }
 
 func formatLongWithCommas(num int64) string {
@@ -324,14 +346,18 @@ func formatLongWithCommas(num int64) string {
 
 // API Handlers
 func handleLiveData(w http.ResponseWriter, r *http.Request) {
-    liveDataMutex.Lock()
+    liveDataMutex.RLock()
     data := latestLiveData
-    liveDataMutex.Unlock()
-    if err := json.NewEncoder(w).Encode(data); err != nil {
+    liveDataMutex.RUnlock()
+    buf := bufferPool.Get().(*bytes.Buffer)
+    defer bufferPool.Put(buf)
+    buf.Reset()
+    if err := json.NewEncoder(buf).Encode(data); err != nil {
         debugLog("Error encoding live data response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
+    w.Write(buf.Bytes())
 }
 
 func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
@@ -341,11 +367,15 @@ func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if err := json.NewEncoder(w).Encode(data); err != nil {
+    buf := bufferPool.Get().(*bytes.Buffer)
+    defer bufferPool.Put(buf)
+    buf.Reset()
+    if err := json.NewEncoder(buf).Encode(data); err != nil {
         debugLog("Error encoding HEXJSON response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
+    w.Write(buf.Bytes())
 }
 
 func handleMiners(w http.ResponseWriter, r *http.Request) {
@@ -355,11 +385,15 @@ func handleMiners(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if err := json.NewEncoder(w).Encode(miners); err != nil {
+    buf := bufferPool.Get().(*bytes.Buffer)
+    defer bufferPool.Put(buf)
+    buf.Reset()
+    if err := json.NewEncoder(buf).Encode(miners); err != nil {
         debugLog("Error encoding miners response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
+    w.Write(buf.Bytes())
 }
 
 func handleAddMiner(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +461,7 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    w.WriteHeader(http.StatusOK)
+    w Nelsonville w.WriteHeader(http.StatusOK)
 }
 
 func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
@@ -466,11 +500,15 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
         }
-        if err := json.NewEncoder(w).Encode(config); err != nil {
+        buf := bufferPool.Get().(*bytes.Buffer)
+        defer bufferPool.Put(buf)
+        buf.Reset()
+        if err := json.NewEncoder(buf).Encode(config); err != nil {
             debugLog("Error encoding config response:", err)
             http.Error(w, "Internal server error", http.StatusInternalServerError)
             return
         }
+        w.Write(buf.Bytes())
     } else if r.Method == http.MethodPost {
         var config Config
         if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
@@ -502,8 +540,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // Main Function
 func main() {
-    os.MkdirAll("data", 0755)
-    os.MkdirAll("settings", 0755)
+    os.MkdirAll("/settings", 0755)
 
     // Initial HEXJSON update
     if err := updateLocalHEXJSON(); err != nil {
@@ -534,12 +571,7 @@ func main() {
 
     // Periodic live data fetching
     go func() {
-        frequency := configManager.GetLiveDataFrequency()
-        if frequency <= 0 {
-            debugLog("Invalid initial frequency, using default:", defaultLiveDataFrequency)
-            frequency = defaultLiveDataFrequency
-        }
-        ticker := time.NewTicker(time.Duration(frequency) * time.Minute)
+        ticker := time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
         changeCh := configManager.Subscribe()
         defer ticker.Stop()
         for {
@@ -555,26 +587,18 @@ func main() {
                     liveDataMutex.Unlock()
                     debugLog("Live data updated successfully")
                 }
-                frequency = configManager.GetLiveDataFrequency()
-                if frequency <= 0 {
-                    debugLog("Invalid frequency, using default:", defaultLiveDataFrequency)
-                    frequency = defaultLiveDataFrequency
-                }
-                ticker.Reset(time.Duration(frequency) * time.Minute)
             case <-changeCh:
-                frequency = configManager.GetLiveDataFrequency()
+                frequency := configManager.GetLiveDataFrequency()
                 if frequency <= 0 {
-                    debugLog("Invalid frequency from change, using default:", defaultLiveDataFrequency)
                     frequency = defaultLiveDataFrequency
                 }
-                debugLog("Resetting ticker with frequency:", frequency)
                 ticker.Reset(time.Duration(frequency) * time.Minute)
             }
         }
     }()
 
     // Serve static files
-    http.Handle("/", http.FileServer(http.Dir("static")))
+    http.Handle("/", http.FileServer(http.Dir("/mnt/ramdisk/static")))
 
     // API endpoints
     http.HandleFunc("/api/live-data", handleLiveData)
