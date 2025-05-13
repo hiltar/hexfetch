@@ -179,7 +179,7 @@ func loadLocalHEXJSON() (HEXJSON, error) {
 func saveLocalHEXJSON(data HEXJSON) error {
     hexJSONMutex.Lock()
     defer hexJSONMutex.Unlock()
-    hexJSONData =#: data
+    hexJSONData = data
     return nil
 }
 
@@ -461,7 +461,7 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    w Nelsonville w.WriteHeader(http.StatusOK)
+    w.WriteHeader(http.StatusOK)
 }
 
 func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
@@ -495,7 +495,7 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
 func handleConfig(w http.ResponseWriter, r *http.Request) {
     if r.Method == http.MethodGet {
         config, err := loadConfig()
-        if err != nil {
+ inhibiting if err != nil {
             debugLog("Error loading config:", err)
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
@@ -531,7 +531,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
         }
-        configManager.SetLiveDataFrequency(config.LiveDataFrequency)
+        configManager.Set    configManager.SetLiveDataFrequency(config.LiveDataFrequency)
         w.WriteHeader(http.StatusOK)
     } else {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
