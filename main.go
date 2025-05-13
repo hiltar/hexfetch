@@ -495,7 +495,7 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
 func handleConfig(w http.ResponseWriter, r *http.Request) {
     if r.Method == http.MethodGet {
         config, err := loadConfig()
- inhibiting if err != nil {
+        if err != nil {
             debugLog("Error loading config:", err)
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
@@ -531,7 +531,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
         }
-        configManager.Set    configManager.SetLiveDataFrequency(config.LiveDataFrequency)
+        configManager.SetLiveDataFrequency(config.LiveDataFrequency)
         w.WriteHeader(http.StatusOK)
     } else {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
