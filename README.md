@@ -22,24 +22,22 @@ This branch called `arm` is for arm based architecture microcontrollers such as 
 We are using `Raspberry Pi Zero 2W` for this build.
 
 ## Prepare SD-card
-Format SD-card with 2 partitions:  
-1. BOOT (256MB)
-2. DATA (rest of space)
+Format SD-card with `FAT32` partition called `ALPINE`.
 
-## Initialize BOOT partition
+## Initialize ALPINE partition
 ```
-mkdir /mnt/boot
-mount /dev/sdc1 /mnt/boot
+sudo mkdir /mnt/sdcard
+sudo mount /dev/sdc1 /mnt/sdcard
 
-# Extract archive into /mnt/boot
-tar -xzf alpine-rpi-<version>-aarch64.tar.gz -C /mnt/boot
+# Extract archive into /mnt/sdcard
+sudo tar -xzf alpine-rpi-<version>-armv7.tar.gz -C /mnt/sdcard
 ```
 
 ## Enable SSH
-`touch /mnt/boot/ssh`
+`touch /mnt/sdcard/ssh`
 
 ## WiFi setup
-`nano /mnt/boot/wpa_supplicant.conf`
+`nano /mnt/sdcard/wpa_supplicant.conf`
 ```
 ctrl_interface=DIR=/var/run/ WPA_DRIVER=nl80211
 update_config=1
@@ -51,7 +49,7 @@ network={
 ```
 
 ## Configuration file
-`nano /mnt/boot/config.txt`
+`nano /mnt/sdcard/config.txt`
 ```
 enable_uart=1
 arm_64bit=1
@@ -59,15 +57,18 @@ kernel=boot/vmlinuz-rpi
 initramfs boot/initramfs-rpi
 ```
 
-`nano /mnt/boot/cmdline.txt`
+`nano /mnt/sdcard/cmdline.txt`
 ```
-console=tty1 modules=loop,squashfs,sd-mod,usb-storage alpine_dev=mmcblk0p1:vfat apkovl=/dev/mmcblk0p2/PERSIST/config.apkovl.tar.gz
+console=tty1 modules=loop,squashfs,sd-mod,usb-storage alpine_dev=mmcblk0p1:vfat apkovl=/dev/mmcblk0p1/ALPINE/config.apkovl.tar.gz
 ```
 
 ## Unmount SD-card
-`umount /mnt/boot`
+```
+sync
+umount /mnt/boot
+```
 
-# arm Setup to be continued
+## arm Setup to be continued
 
 
 ---
