@@ -6,40 +6,69 @@ hexfetch doesn't need the 0x addresses at all so it's 100% privacy.
 
 hexfetch is made with `go 1.24.2`.
 
-Running hexfetch will create two folders into same directory where hexfetch is running.   
-data directory contains hexdata.json.  
+Running hexfetch will create a folder into same directory where hexfetch is running.   
 settings directory contains user defined config.json and miners.json.
-
-## Upcoming features
-Better UI/UX   
-Optimization   
-Charts with functions   
-
----
-
-# Build
-```
-go mod init hexfetch
-go mod tidy
-go build -o hexfecth
-
-chmod a+x hexfetch
-./hexfetch
-```
-
-# Docker
-```
-docker build hexfetch:latest .
-docker run -d --name hexfetch -m 256m -p 5555:5555 -v $(pwd)/data:/data -v $(pwd)/settings:/settings hexfetch:latest
-# Alternatively use run.sh
-
-curl http://127.0.0.1:5555
-```
 
 ## Environment variables
 | env  | value  | explanation  |
 |---|---|---|
 | DEBUG  | true/false  | Enable logging. Default value: false  |   
+
+
+---
+
+# hexfetch for arm architecture
+This branch called `arm` is for arm based architecture microcontrollers such as `Raspberry Pi`.   
+We are using `Raspberry Pi Zero 2W` for this build.
+
+## Prepare SD-card
+Format SD-card with 2 partitions:  
+1. BOOT (256MB)
+2. DATA (rest of space)
+
+## Initialize BOOT partition
+```
+mkdir /mnt/boot
+mount /dev/sdc1 /mnt/boot
+
+# Extract archive into /mnt/boot
+tar -xzf alpine-rpi-<version>-aarch64.tar.gz -C /mnt/boot
+```
+
+## Enable SSH
+`touch /mnt/boot/ssh`
+
+## WiFi setup
+`nano /mnt/boot/wpa_supplicant.conf`
+```
+ctrl_interface=DIR=/var/run/ WPA_DRIVER=nl80211
+update_config=1
+country=US
+network={
+    ssid="YourSSID"
+    psk="YourPassword"
+}
+```
+
+## Configuration file
+`nano /mnt/boot/config.txt`
+```
+enable_uart=1
+arm_64bit=1
+kernel=boot/vmlinuz-rpi
+initramfs boot/initramfs-rpi
+```
+
+`nano /mnt/boot/cmdline.txt`
+```
+console=tty1 modules=loop,squashfs,sd-mod,usb-storage alpine_dev=mmcblk0p1:vfat apkovl=/dev/mmcblk0p2/PERSIST/config.apkovl.tar.gz
+```
+
+## Unmount SD-card
+`umount /mnt/boot`
+
+# arm Setup to be continued
+
 
 ---
 
