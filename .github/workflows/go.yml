@@ -3,7 +3,7 @@ name: hexfetch
 on:
   push:
     branches:
-      - main
+      - arm
   release:
     types: [created]
 
@@ -22,20 +22,20 @@ jobs:
         
     - name: Build
       run: |
-        go mod init hexfetch
-        CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch
-        upx --best hexfetch
+        go mod init hexfetch-arm
+        CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch-arm
+        upx --best hexfetch-arm
 
     - name: Upload hexfetch as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: hexfetch
-        path: hexfetch
+        name: hexfetch-arm
+        path: hexfetch-arm
     
     - name: Upload to GitHub Release
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
       with:
-        files: hexfetch
+        files: hexfetch-arm
         draft: true
         
