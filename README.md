@@ -68,7 +68,8 @@ Charts tab show historical charts of HEX price, T-Share rate and other useful in
 
 ## Settings
 Settings tab shows:  
-  - Live Data Settings for changing the frequency of fetching data (in minutes)  
+  - Live Data Settings for changing the frequency of fetching data (in minutes)
+  - Liquid HEX to calculate and show the value of liquid HEX in Profile tab  
   - Add New Miner for adding HEX miner with start date, end date and amount of T-Shares  
   - Existing Miners for list of HEX miners with Delete function
 
