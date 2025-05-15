@@ -5,8 +5,7 @@ let chartInstances = {
     dailyPayoutChart: null,
     cpuUsageChart: null,
     memoryUsageChart: null,
-    diskUsageChart: null,
-    networkIOChart: null
+    diskUsageChart: null
 };
 
 let systemMetricsHistory = [];
@@ -271,7 +270,6 @@ function renderSystemCharts() {
     document.getElementById('cpu-usage-value').textContent = `${latestMetrics.cpuUsagePercent.toFixed(2)}%`;
     document.getElementById('memory-usage-value').textContent = `${latestMetrics.memoryUsedPercent.toFixed(2)}% (${latestMetrics.memoryUsedGB.toFixed(2)} GB / ${latestMetrics.memoryTotalGB.toFixed(2)} GB)`;
     document.getElementById('disk-usage-value').textContent = `${latestMetrics.diskUsedPercent.toFixed(2)}% (${latestMetrics.diskUsedGB.toFixed(2)} GB / ${latestMetrics.diskTotalGB.toFixed(2)} GB)`;
-    document.getElementById('network-io-value').textContent = `Sent: ${latestMetrics.networkSentMB.toFixed(2)} MB, Received: ${latestMetrics.networkReceivedMB.toFixed(2)} MB`;
 
     const chartConfigs = [
         {
@@ -294,23 +292,6 @@ function renderSystemCharts() {
             field: 'diskUsedPercent',
             borderColor: isDarkTheme ? '#9966ff' : '#9900cc',
             yAxisLabel: 'Percentage (%)'
-        },
-        {
-            id: 'networkIOChart',
-            label: 'Network I/O (MB)',
-            datasets: [
-                {
-                    label: 'Sent (MB)',
-                    field: 'networkSentMB',
-                    borderColor: isDarkTheme ? '#ff6f61' : '#dc3545'
-                },
-                {
-                    label: 'Received (MB)',
-                    field: 'networkReceivedMB',
-                    borderColor: isDarkTheme ? '#ffd700' : '#ffc107'
-                }
-            ],
-            yAxisLabel: 'Megabytes (MB)'
         }
     ];
 
@@ -501,7 +482,6 @@ function renderCharts() {
             document.getElementById('cpu-usage-value').textContent = '0.00%';
             document.getElementById('memory-usage-value').textContent = '0.00% (0.00 GB / 0.00 GB)';
             document.getElementById('disk-usage-value').textContent = '0.00% (0.00 GB / 0.00 GB)';
-            document.getElementById('network-io-value').textContent = 'Sent: 0.00 MB, Received: 0.00 MB';
             showNotification('Failed to load chart data', 'danger');
         });
 }
