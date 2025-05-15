@@ -9,6 +9,10 @@ import (
     "strconv"
     "sync"
     "time"
+    "github.com/shirou/gopsutil/v3/cpu"
+    "github.com/shirou/gopsutil/v3/disk"
+    "github.com/shirou/gopsutil/v3/mem"
+    "github.com/shirou/gopsutil/v3/net"
 )
 
 // Global variables for cached live data
@@ -94,7 +98,20 @@ type Miner struct {
 
 type Config struct {
     LiveDataFrequency int     `json:"liveDataFrequency"`
-    LiquidHEX         float64 `json:"liquidHEX"` // New field for Liquid HEX
+    LiquidHEX         float64 `json:"liquidHEX"`
+}
+
+type SystemMetrics struct {
+    CPUUsagePercent    float64 `json:"cpuUsagePercent"`
+    MemoryUsedPercent  float64 `json:"memoryUsedPercent"`
+    MemoryUsedGB       float64 `json:"memoryUsedGB"`
+    MemoryTotalGB      float64 `json:"memoryTotalGB"`
+    DiskUsedPercent    float64 `json:"diskUsedPercent"`
+    DiskUsedGB         float64 `json:"diskUsedGB"`
+    DiskTotalGB        float64 `json:"diskTotalGB"`
+    NetworkSentMB      float64 `json:"networkSentMB"`
+    NetworkReceivedMB  float64 `json:"networkReceivedMB"`
+    Timestamp          int64   `json:"timestamp"`
 }
 
 const (
@@ -201,14 +218,11 @@ func updateLocalHEXJSON() error {
 func startDailyHEXJSONUpdate() {
     go func() {
         for {
-            // Calculate time until next midnight UTC
             now := time.Now().UTC()
             nextMidnight := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
             delay := nextMidnight.Sub(now)
-
             debugLog("Scheduling next HEXJSON update in", delay, "(at", nextMidnight, "UTC)")
             time.Sleep(delay)
-
             debugLog("Running daily HEXJSON update...")
             if err := updateLocalHEXJSON(); err != nil {
                 debugLog("Error during daily HEXJSON update:", err)
@@ -320,6 +334,62 @@ func formatWithCommas(num int) string {
 
 func formatLongWithCommas(num int64) string {
     return formatWithCommas(int(num))
+}
+
+// System Metrics Handler
+func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
+    cpuPercent, err := cpu.Percent(0, false)
+    cpuUsage := 0.0
+    if err == nil && len(cpuPercent) > 0 {
+        cpuUsage = cpuPercent[0]
+    }
+
+    memInfo, err := mem.VirtualMemory()
+    memoryUsedPercent := 0.0
+    memoryUsedGB := 0.0
+    memoryTotalGB := 0.0
+    if err == nil {
+        memoryUsedPercent = memInfo.UsedPercent
+        memoryUsedGB = float64(memInfo.Used) / 1e9
+        memoryTotalGB = float64(memInfo.Total) / 1e9
+    }
+
+    diskInfo, err := disk.Usage("/")
+    diskUsedPercent := 0.0
+    diskUsedGB := 0.0
+    diskTotalGB := 0.0
+    if err == nil {
+        diskUsedPercent = diskInfo.UsedPercent
+        diskUsedGB = float64(diskInfo.Used) / 1e9
+        diskTotalGB = float64(diskInfo.Total) / 1e9
+    }
+
+    netInfo, err := net.IOCounters(false)
+    networkSentMB := 0.0
+    networkReceivedMB := 0.0
+    if err == nil && len(netInfo) > 0 {
+        networkSentMB = float64(netInfo[0].BytesSent) / 1e6
+        networkReceivedMB = float64(netInfo[0].BytesRecv) / 1e6
+    }
+
+    metrics := SystemMetrics{
+        CPUUsagePercent:   cpuUsage,
+        MemoryUsedPercent: memoryUsedPercent,
+        MemoryUsedGB:      memoryUsedGB,
+        MemoryTotalGB:     memoryTotalGB,
+        DiskUsedPercent:   diskUsedPercent,
+        DiskUsedGB:        diskUsedGB,
+        DiskTotalGB:       diskTotalGB,
+        NetworkSentMB:     networkSentMB,
+        NetworkReceivedMB: networkReceivedMB,
+        Timestamp:         time.Now().Unix(),
+    }
+
+    if err := json.NewEncoder(w).Encode(metrics); err != nil {
+        debugLog("Error encoding system metrics response:", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 }
 
 // API Handlers
@@ -505,15 +575,12 @@ func main() {
     os.MkdirAll("data", 0755)
     os.MkdirAll("settings", 0755)
 
-    // Initial HEXJSON update
     if err := updateLocalHEXJSON(); err != nil {
         debugLog("Error updating local HEXJSON:", err)
     }
 
-    // Start daily HEXJSON updates
     startDailyHEXJSONUpdate()
 
-    // Load configuration
     config, err := loadConfig()
     if err != nil {
         debugLog("Error loading config:", err)
@@ -521,7 +588,6 @@ func main() {
     }
     configManager.SetLiveDataFrequency(config.LiveDataFrequency)
 
-    // Initial live data fetch
     data, err := fetchLiveData()
     if err != nil {
         debugLog("Error during initial live data fetch:", err)
@@ -532,7 +598,6 @@ func main() {
         debugLog("Initial live data fetched successfully")
     }
 
-    // Periodic live data fetching
     go func() {
         frequency := configManager.GetLiveDataFrequency()
         if frequency <= 0 {
@@ -573,10 +638,7 @@ func main() {
         }
     }()
 
-    // Serve static files
     http.Handle("/", http.FileServer(http.Dir("static")))
-
-    // API endpoints
     http.HandleFunc("/api/live-data", handleLiveData)
     http.HandleFunc("/api/hexjson", handleHEXJSON)
     http.HandleFunc("/api/miners", handleMiners)
@@ -584,6 +646,7 @@ func main() {
     http.HandleFunc("/api/end-miner", handleEndMiner)
     http.HandleFunc("/api/delete-miner", handleDeleteMiner)
     http.HandleFunc("/api/config", handleConfig)
+    http.HandleFunc("/api/system", handleSystemMetrics)
 
     log.Println("Server starting on :5555")
     if err := http.ListenAndServe(":5555", nil); err != nil {
