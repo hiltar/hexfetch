@@ -23,9 +23,8 @@ jobs:
     - name: Build
       run: |
         go mod init hexfetch
-        RUN go get github.com/shirou/gopsutil/v3/cpu
+        go get github.com/shirou/gopsutil/v3/cpu
         go get github.com/shirou/gopsutil/v3/disk
-        get github.com/shirou/gopsutil/v3/net
         get github.com/shirou/gopsutil/v3/mem
         CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch
         upx --best hexfetch
