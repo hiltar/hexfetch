@@ -5,10 +5,11 @@ let chartInstances = {
     dailyPayoutChart: null,
     cpuUsageChart: null,
     memoryUsageChart: null,
-    diskUsageChart: null
+    diskUsageChart: null,
 };
 
 let systemMetricsHistory = [];
+let isSystemEnabled = false;
 
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
@@ -90,7 +91,9 @@ function setTheme(theme) {
     icon.classList.remove('bi-sun-fill', 'bi-moon-fill');
     icon.classList.add(theme === 'dark' ? 'bi-moon-fill' : 'bi-sun-fill');
     renderCharts();
-    renderSystemCharts();
+    if (isSystemEnabled) {
+        renderSystemCharts();
+    }
 }
 
 function toggleTheme() {
@@ -238,7 +241,34 @@ async function endMiner(index) {
     }
 }
 
+function checkSystemEnabled() {
+    return fetch('/api/system', { method: 'HEAD' })
+        .then(response => {
+            if (response.ok) {
+                isSystemEnabled = true;
+                document.getElementById('system-tab-li').style.display = 'block';
+                document.getElementById('system').style.display = 'block';
+                console.log('System tab enabled');
+            } else {
+                isSystemEnabled = false;
+                document.getElementById('system-tab-li').style.display = 'none';
+                document.getElementById('system').style.display = 'none';
+                console.log('System tab disabled');
+            }
+        })
+        .catch(error => {
+            console.error('Error checking system endpoint:', error);
+            isSystemEnabled = false;
+            document.getElementById('system-tab-li').style.display = 'none';
+            document.getElementById('system').style.display = 'none';
+            console.log('System tab disabled due to error');
+        });
+}
+
 function fetchSystemMetrics() {
+    if (!isSystemEnabled) {
+        return;
+    }
     fetch('/api/system')
         .then(response => {
             if (!response.ok) {
@@ -260,7 +290,7 @@ function fetchSystemMetrics() {
 }
 
 function renderSystemCharts() {
-    if (systemMetricsHistory.length === 0) {
+    if (!isSystemEnabled || systemMetricsHistory.length === 0) {
         return;
     }
 
@@ -467,7 +497,9 @@ function renderCharts() {
                     }
                 });
             });
-            renderSystemCharts();
+            if (isSystemEnabled) {
+                renderSystemCharts();
+            }
         })
         .catch(error => {
             console.error('Error rendering charts:', error);
@@ -479,9 +511,11 @@ function renderCharts() {
             document.getElementById('tshare-rate-value').textContent = '0.00 HEX';
             document.getElementById('payout-per-tshare-value').textContent = '0.00 HEX';
             document.getElementById('daily-payout-value').textContent = '0.00 HEX';
-            document.getElementById('cpu-usage-value').textContent = '0.00%';
-            document.getElementById('memory-usage-value').textContent = '0.00% (0.00 GB / 0.00 GB)';
-            document.getElementById('disk-usage-value').textContent = '0.00% (0.00 GB / 0.00 GB)';
+            if (isSystemEnabled) {
+                document.getElementById('cpu-usage-value').textContent = '0.00%';
+                document.getElementById('memory-usage-value').textContent = '0.00% (0.00 GB / 0.00 GB)';
+                document.getElementById('disk-usage-value').textContent = '0.00% (0.00 GB / 0.00 GB)';
+            }
             showNotification('Failed to load chart data', 'danger');
         });
 }
@@ -632,24 +666,30 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     initTheme();
     document.title = 'HEX Stats';
-    fetchProfile();
-    fetchLiveData();
-    fetchSettings();
-    fetchSystemMetrics();
-    renderCharts();
-    checkNavbarRows();
-    setInterval(() => {
-        console.log('Attempting to fetch live data...');
+    checkSystemEnabled().then(() => {
+        fetchProfile();
         fetchLiveData();
-    }, 60000);
-    setInterval(fetchProfile, 60000);
-    setInterval(() => {
-        console.log('Attempting to fetch system metrics...');
-        fetchSystemMetrics();
-    }, 60000);
-    setInterval(() => {
-        console.log('Attempting to update charts...');
+        fetchSettings();
+        if (isSystemEnabled) {
+            fetchSystemMetrics();
+        }
         renderCharts();
-    }, 86400000);
-    window.addEventListener('resize', checkNavbarRows);
+        checkNavbarRows();
+        setInterval(() => {
+            console.log('Attempting to fetch live data...');
+            fetchLiveData();
+        }, 60000);
+        setInterval(fetchProfile, 60000);
+        if (isSystemEnabled) {
+            setInterval(() => {
+                console.log('Attempting to fetch system metrics...');
+                fetchSystemMetrics();
+            }, 60000);
+        }
+        setInterval(() => {
+            console.log('Attempting to update charts...');
+            renderCharts();
+        }, 86400000);
+        window.addEventListener('resize', checkNavbarRows);
+    });
 });
