@@ -11,9 +11,9 @@ data directory contains hexdata.json.
 settings directory contains user defined config.json and miners.json.
 
 ## Upcoming features
-Better UI/UX   
 Optimization   
 Charts with functions   
+Enable System tab with env var  
 
 ---
 
@@ -21,7 +21,9 @@ Charts with functions
 ```
 go mod init hexfetch
 go mod tidy
-go build -o hexfecth
+# Run go get to download dependencies
+
+CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch
 
 chmod a+x hexfetch
 ./hexfetch
@@ -47,23 +49,24 @@ curl http://127.0.0.1:5555
 
 ## Profile
 Profile tab shows user's miners and T-Shares and total value of T-Shares.   
-If miner is matured, it will be shown **(MATURED)** with `END` button. Ending the miner will move it into `Completed Miners` container.
-
-
+If miner is matured, it will be shown **(MATURED)** with `END` button. Ending the miner will move it into `Completed Miners` container.  
 
 Viewing Completed Miners button opens a window of completed HEX miners.
-
-
 
 
 ## Live Data
 Live Data tab shows periodically fetched data from Pulsechain API.
 
 
-
-
-# Charts
+## Charts
 Charts tab show historical charts of HEX price, T-Share rate and other useful information of HEX.
+
+
+## System
+System related information:
+  - CPU
+  - Disk
+  - Memory
 
 
 ## Settings
