@@ -12,7 +12,6 @@ import (
     "github.com/shirou/gopsutil/v3/cpu"
     "github.com/shirou/gopsutil/v3/disk"
     "github.com/shirou/gopsutil/v3/mem"
-    "github.com/shirou/gopsutil/v3/net"
 )
 
 // Global variables for cached live data
@@ -109,8 +108,6 @@ type SystemMetrics struct {
     DiskUsedPercent    float64 `json:"diskUsedPercent"`
     DiskUsedGB         float64 `json:"diskUsedGB"`
     DiskTotalGB        float64 `json:"diskTotalGB"`
-    NetworkSentMB      float64 `json:"networkSentMB"`
-    NetworkReceivedMB  float64 `json:"networkReceivedMB"`
     Timestamp          int64   `json:"timestamp"`
 }
 
@@ -364,13 +361,6 @@ func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
         diskTotalGB = float64(diskInfo.Total) / 1e9
     }
 
-    netInfo, err := net.IOCounters(false)
-    networkSentMB := 0.0
-    networkReceivedMB := 0.0
-    if err == nil && len(netInfo) > 0 {
-        networkSentMB = float64(netInfo[0].BytesSent) / 1e6
-        networkReceivedMB = float64(netInfo[0].BytesRecv) / 1e6
-    }
 
     metrics := SystemMetrics{
         CPUUsagePercent:   cpuUsage,
@@ -380,8 +370,6 @@ func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
         DiskUsedPercent:   diskUsedPercent,
         DiskUsedGB:        diskUsedGB,
         DiskTotalGB:       diskTotalGB,
-        NetworkSentMB:     networkSentMB,
-        NetworkReceivedMB: networkReceivedMB,
         Timestamp:         time.Now().Unix(),
     }
 
