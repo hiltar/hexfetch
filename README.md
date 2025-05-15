@@ -1,6 +1,6 @@
 # hexfetch
 
-hexfetch is a web application for hexfetch with convenient features like HEX miners, charts and periodical data fetching from Pulsechain API.   
+hexfetch is a web application for hexfetch-cli with convenient features like HEX miners, charts and periodical data fetching from Pulsechain API.   
 This doesn't itself interact Pulsechain network but instead it uses HEXDailyStats API to fetch data.   
 hexfetch doesn't need the 0x addresses at all so it's 100% privacy.
 
