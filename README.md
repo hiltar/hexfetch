@@ -13,7 +13,6 @@ settings directory contains user defined config.json and miners.json.
 ## Upcoming features
 Optimization   
 Charts with functions   
-Enable System tab with env var  
 
 ---
 
@@ -41,7 +40,8 @@ curl http://127.0.0.1:5555
 ## Environment variables
 | env  | value  | explanation  |
 |---|---|---|
-| DEBUG  | true/false  | Enable logging. Default value: false  |   
+| DEBUG  | true/false  | Enable logging. Default value: false    |   
+| SYSTEM | true/false  | Enable System tab. Default value: false |
 
 ---
 
