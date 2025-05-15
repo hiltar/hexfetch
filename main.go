@@ -335,6 +335,12 @@ func formatLongWithCommas(num int64) string {
 
 // System Metrics Handler
 func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
+    if os.Getenv("SYSTEM") != "true" {
+        debugLog("System metrics endpoint disabled (SYSTEM != true)")
+        http.Error(w, "System metrics endpoint disabled", http.StatusNotFound)
+        return
+    }
+    
     cpuPercent, err := cpu.Percent(0, false)
     cpuUsage := 0.0
     if err == nil && len(cpuPercent) > 0 {
