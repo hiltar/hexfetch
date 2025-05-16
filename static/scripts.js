@@ -2,7 +2,18 @@ let chartInstances = {
     priceChart: null,
     tshareRateChart: null,
     payoutPerTshareChart: null,
-    dailyPayoutChart: null
+    dailyPayoutChart: null,
+    cpuUsageChart: null,
+    memoryUsageChart: null,
+    diskUsageChart: null
+};
+
+// System metrics history (store up to 60 points, ~5 minutes at 5s intervals)
+const systemMetricsHistory = {
+    cpu: [],
+    memory: [],
+    disk: [],
+    timestamps: []
 };
 
 // Show custom notification
@@ -43,7 +54,7 @@ function showConfirmModal(title, message) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
-                    </div>
+                    </ overal>
                 </div>
             </div>
         `;
@@ -98,6 +109,7 @@ function setTheme(theme) {
     icon.classList.add(theme === 'dark' ? 'bi-moon-fill' : 'bi-sun-fill');
     // Update charts to reflect theme
     renderCharts();
+    renderSystemCharts();
 }
 
 function toggleTheme() {
@@ -144,6 +156,125 @@ function fetchLiveData() {
             // Revert title on error
             document.title = 'HEX Stats';
         });
+}
+
+function fetchSystemInfo() {
+    fetch('/api/system-info')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Update value displays
+            document.getElementById('cpu-usage-value').textContent = `${data.cpuUsage.toFixed(1)}%`;
+            document.getElementById('memory-usage-value').textContent = `${data.memoryUsage.toFixed(1)}%`;
+            document.getElementById('disk-usage-value').textContent = `${data.diskUsage.toFixed(1)}%`;
+            // Update timestamp
+            const timestamp = new Date().toLocaleTimeString();
+            document.getElementById('system-last-updated').textContent = `Last updated: ${timestamp}`;
+
+            // Add to history (limit to 60 points)
+            systemMetricsHistory.cpu.push(data.cpuUsage);
+            systemMetricsHistory.memory.push(data.memoryUsage);
+            systemMetricsHistory.disk.push(data.diskUsage);
+            systemMetricsHistory.timestamps.push(new Date(data.timestamp * 1000).toLocaleTimeString());
+            if (systemMetricsHistory.cpu.length > 60) {
+                systemMetricsHistory.cpu.shift();
+                systemMetricsHistory.memory.shift();
+                systemMetricsHistory.disk.shift();
+                systemMetricsHistory.timestamps.shift();
+            }
+
+            // Render system charts
+            renderSystemCharts();
+        })
+        .catch(error => {
+            console.error('Error fetching system info:', error);
+            document.getElementById('system-last-updated').textContent = `Error updating data: ${error.message}`;
+        });
+}
+
+function renderSystemCharts() {
+    const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+    const chartConfigs = [
+        {
+            id: 'cpuUsageChart',
+            label: 'CPU Usage (%)',
+            data: systemMetricsHistory.cpu,
+            borderColor: isDarkTheme ? '#ff6f61' : '#dc3545'
+        },
+        {
+            id: 'memoryUsageChart',
+            label: 'Memory Usage (%)',
+            data: systemMetricsHistory.memory,
+            borderColor: isDarkTheme ? '#00cc99' : '#28a745'
+        },
+        {
+            id: 'diskUsageChart',
+            label: 'Disk Usage (%)',
+            data: systemMetricsHistory.disk,
+            borderColor: isDarkTheme ? '#9966ff' : '#9900cc'
+        }
+    ];
+
+    chartConfigs.forEach(config => {
+        if (chartInstances[config.id]) {
+            chartInstances[config.id].destroy();
+        }
+        const ctx = document.getElementById(config.id).getContext('2d');
+        chartInstances[config.id] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: systemMetricsHistory.timestamps,
+                datasets: [{
+                    label: config.label,
+                    data: config.data,
+                    borderColor: config.borderColor,
+                    fill: false,
+                    pointRadius: 2,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time',
+                            color: isDarkTheme ? '#ffffff' : '#000000'
+                        },
+                        ticks: {
+                            color: isDarkTheme ? '#ffffff' : '#000000',
+                            maxTicksLimit: 10
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: config.label,
+                            color: isDarkTheme ? '#ffffff' : '#000000'
+                        },
+                        ticks: {
+                            color: isDarkTheme ? '#ffffff' : '#000000'
+                        },
+                        suggestedMin: 0,
+                        suggestedMax: 100
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: isDarkTheme ? '#ffffff' : '#000000'
+                        }
+                    }
+                }
+            }
+        });
+    });
 }
 
 function fetchProfile() {
@@ -545,6 +676,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchProfile();
     fetchLiveData();
     fetchSettings();
+    fetchSystemInfo();
     renderCharts();
     checkNavbarRows();
 
@@ -554,6 +686,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchLiveData();
     }, 60000); // Update live data every minute
     setInterval(fetchProfile, 60000); // Update profile every minute
+    setInterval(fetchSystemInfo, 5000); // Update system info every 5 seconds
     setInterval(() => {
         console.log('Attempting to update charts...');
         renderCharts();
