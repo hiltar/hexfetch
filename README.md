@@ -34,10 +34,10 @@ sudo tar -xzf alpine-rpi-<version>-armv7.tar.gz -C /mnt/sdcard
 ```
 
 ## Enable SSH
-`touch /mnt/sdcard/ssh`
+`sudo touch /mnt/sdcard/ssh`
 
 ## WiFi setup
-`nano /mnt/sdcard/wpa_supplicant.conf`
+`sudo nano /mnt/sdcard/wpa_supplicant.conf`
 ```
 ctrl_interface=DIR=/var/run/ WPA_DRIVER=nl80211
 update_config=1
@@ -45,7 +45,14 @@ country=US
 network={
     ssid="YourSSID"
     psk="YourPassword"
+    key_mgmt=WPA-PSK
 }
+```
+
+## Headless Alpine bootstrap
+```
+sudo wget https://github.com/macmpi/alpine-linux-headless-bootstrap/blob/89c689e0c48d1da52357e23c8e9468f11521c97e/headless.apkovl.tar.gz
+sudo mv headless.apkovl.tar.gz /mnt/sdcard
 ```
 
 ## Configuration file
@@ -65,11 +72,25 @@ console=tty1 modules=loop,squashfs,sd-mod,usb-storage alpine_dev=mmcblk0p1:vfat 
 ## Unmount SD-card
 ```
 sync
-umount /mnt/boot
+sudo umount /mnt/sdcard
 ```
 
-## arm Setup to be continued
+## Connecting into rpi0
+`ssh root@192.168.68.102`
 
+## Setup the Alpine Linux
+```
+setup-alpine
+# Proceed with default options.
+
+# SSH
+# Allow root ssh login: prohibit-password
+# input public SSH key
+
+# Disk & Install
+
+
+```
 
 ---
 
