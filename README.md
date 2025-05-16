@@ -21,6 +21,8 @@ settings directory contains user defined config.json and miners.json.
 This branch called `arm` is for arm based architecture microcontrollers such as `Raspberry Pi`.   
 We are using `Raspberry Pi Zero 2W` for this build.
 
+**NOTE: ALL COMMANDS MUST BE RUN AS SUDO!**
+
 ## Prepare SD-card
 Format SD-card with `FAT32` partition called `ALPINE`.
 
