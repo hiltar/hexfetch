@@ -13,6 +13,9 @@ import (
 
     jsoniter "github.com/json-iterator/go"
     "github.com/cenkalti/backoff/v4"
+    "github.com/shirou/gopsutil/v3/cpu"
+    "github.com/shirou/gopsutil/v3/disk"
+    "github.com/shirou/gopsutil/v3/mem"
 )
 
 // Global variables for cached live data
@@ -21,6 +24,8 @@ var (
     liveDataMutex  sync.RWMutex
     hexJSONData    HEXJSON
     hexJSONMutex   sync.RWMutex
+    systemInfo     SystemInfo
+    systemInfoMutex sync.RWMutex
     bufferPool     = sync.Pool{
         New: func() interface{} { return new(bytes.Buffer) },
     }
@@ -34,6 +39,14 @@ var (
     }
     json = jsoniter.ConfigCompatibleWithStandardLibrary
 )
+
+// SystemInfo holds system metrics
+type SystemInfo struct {
+    CPUUsage    float64 `json:"cpuUsage"`    // Percentage
+    MemoryUsage float64 `json:"memoryUsage"` // Percentage
+    DiskUsage   float64 `json:"diskUsage"`   // Percentage
+    Timestamp   int64   `json:"timestamp"`   // Unix timestamp in seconds
+}
 
 // ConfigManager for thread-safe configuration
 type ConfigManager struct {
@@ -125,6 +138,37 @@ func debugLog(v ...interface{}) {
     if os.Getenv("DEBUG") == "true" {
         log.Println(v...)
     }
+}
+
+// Fetch system information
+func fetchSystemInfo() (SystemInfo, error) {
+    var info SystemInfo
+    info.Timestamp = time.Now().Unix()
+
+    // CPU Usage
+    cpuPercent, err := cpu.Percent(time.Second, false)
+    if err != nil {
+        return SystemInfo{}, fmt.Errorf("failed to fetch CPU usage: %w", err)
+    }
+    if len(cpuPercent) > 0 {
+        info.CPUUsage = cpuPercent[0]
+    }
+
+    // Memory Usage
+    memInfo, err := mem.VirtualMemory()
+    if err != nil {
+        return SystemInfo{}, fmt.Errorf("failed to fetch memory usage: %w", err)
+    }
+    info.MemoryUsage = memInfo.UsedPercent
+
+    // Disk Usage (root partition)
+    diskInfo, err := disk.Usage("/")
+    if err != nil {
+        return SystemInfo{}, fmt.Errorf("failed to fetch disk usage: %w", err)
+    }
+    info.DiskUsage = diskInfo.UsedPercent
+
+    return info, nil
 }
 
 // Data Fetching and Management
@@ -228,6 +272,29 @@ func startDailyHEXJSONUpdate() {
                 debugLog("Error during daily HEXJSON update:", err)
             } else {
                 debugLog("Daily HEXJSON update completed successfully")
+            }
+        }
+    }()
+}
+
+// Periodic system info updates
+func startSystemInfoUpdate() {
+    go func() {
+        ticker := time.NewTicker(5 * time.Second) // Update every 5 seconds
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ticker.C:
+                debugLog("Fetching system info...")
+                info, err := fetchSystemInfo()
+                if err != nil {
+                    debugLog("Error fetching system info:", err)
+                } else {
+                    systemInfoMutex.Lock()
+                    systemInfo = info
+                    systemInfoMutex.Unlock()
+                    debugLog("System info updated successfully")
+                }
             }
         }
     }()
@@ -345,6 +412,21 @@ func formatLongWithCommas(num int64) string {
 }
 
 // API Handlers
+func handleSystemInfo(w http.ResponseWriter, r *http.Request) {
+    systemInfoMutex.RLock()
+    data := systemInfo
+    systemInfoMutex.RUnlock()
+    buf := bufferPool.Get().(*bytes.Buffer)
+    defer bufferPool.Put(buf)
+    buf.Reset()
+    if err := json.NewEncoder(buf).Encode(data); err != nil {
+        debugLog("Error encoding system info response:", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    w.Write(buf.Bytes())
+}
+
 func handleLiveData(w http.ResponseWriter, r *http.Request) {
     liveDataMutex.RLock()
     data := latestLiveData
@@ -569,6 +651,17 @@ func main() {
         debugLog("Initial live data fetched successfully")
     }
 
+    // Initial system info fetch
+    info, err := fetchSystemInfo()
+    if err != nil {
+        debugLog("Error during initial system info fetch:", err)
+    } else {
+        systemInfoMutex.Lock()
+        systemInfo = info
+        systemInfoMutex.Unlock()
+        debugLog("Initial system info fetched successfully")
+    }
+
     // Periodic live data fetching
     go func() {
         ticker := time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
@@ -597,10 +690,14 @@ func main() {
         }
     }()
 
+    // Start periodic system info updates
+    startSystemInfoUpdate()
+
     // Serve static files
     http.Handle("/", http.FileServer(http.Dir("/mnt/ramdisk/static")))
 
     // API endpoints
+    http.HandleFunc("/api/system-info", handleSystemInfo)
     http.HandleFunc("/api/live-data", handleLiveData)
     http.HandleFunc("/api/hexjson", handleHEXJSON)
     http.HandleFunc("/api/miners", handleMiners)
