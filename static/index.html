@@ -46,6 +46,9 @@
                             <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab" aria-controls="chart" aria-selected="false"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" id="system-info-tab" data-bs-toggle="tab" href="#system-info" role="tab" aria-controls="system-info" aria-selected="false"><i class="bi bi-cpu-fill me-1"></i> System Info</a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab" aria-controls="settings" aria-selected="false"><i class="bi bi-gear-fill me-1"></i> Settings</a>
                         </li>
                     </ul>
@@ -99,6 +102,25 @@
                     <p id="daily-payout-value" class="chart-value">0.00 HEX</p>
                     <canvas id="dailyPayoutChart"></canvas>
                 </div>
+            </div>
+            <div class="tab-pane fade" id="system-info" role="tabpanel">
+                <h2>System Information</h2>
+                <div class="chart-container">
+                    <h3>CPU Usage</h3>
+                    <p id="cpu-usage-value" class="chart-value">0.0%</p>
+                    <canvas id="cpuUsageChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Memory Usage</h3>
+                    <p id="memory-usage-value" class="chart-value">0.0%</p>
+                    <canvas id="memoryUsageChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Disk Usage</h3>
+                    <p id="disk-usage-value" class="chart-value">0.0%</p>
+                    <canvas id="diskUsageChart"></canvas>
+                </div>
+                <p id="system-last-updated">Last updated: Waiting for data...</p>
             </div>
             <div class="tab-pane fade" id="settings" role="tabpanel">
                 <h2>Settings</h2>
