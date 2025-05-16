@@ -25,6 +25,9 @@ jobs:
         go mod init hexfetch-arm
         go get github.com/cenkalti/backoff/v4
         go get github.com/json-iterator/go
+        go get github.com/shirou/gopsutil/v3/mem
+        go get github.com/shirou/gopsutil/v3/cpu
+        go get github.com/shirou/gopsutil/v3/disk
         CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -a -ldflags="-s -w" -o hexfetch-arm
         upx --best hexfetch-arm
 
