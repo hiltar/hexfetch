@@ -35,40 +35,23 @@ sudo mount /dev/sdc1 /mnt/sdcard
 sudo tar -xzf alpine-rpi-<version>-armv7.tar.gz -C /mnt/sdcard
 ```
 
-## Enable SSH
-`sudo touch /mnt/sdcard/ssh`
 
 ## WiFi setup
 `sudo nano /mnt/sdcard/wpa_supplicant.conf`
 ```
-ctrl_interface=DIR=/var/run/ WPA_DRIVER=nl80211
-update_config=1
-country=US
+country=FI
+
 network={
-    ssid="YourSSID"
-    psk="YourPassword"
-    key_mgmt=WPA-PSK
+	key_mgmt=WPA-PSK
+	ssid="mySSID"
+	psk="myPassPhrase"
 }
 ```
 
 ## Headless Alpine bootstrap
 ```
-sudo wget https://github.com/macmpi/alpine-linux-headless-bootstrap/blob/89c689e0c48d1da52357e23c8e9468f11521c97e/headless.apkovl.tar.gz
+# Download from https://github.com/macmpi/alpine-linux-headless-bootstrap/releases
 sudo mv headless.apkovl.tar.gz /mnt/sdcard
-```
-
-## Configuration file
-`nano /mnt/sdcard/config.txt`
-```
-enable_uart=1
-arm_64bit=1
-kernel=boot/vmlinuz-rpi
-initramfs boot/initramfs-rpi
-```
-
-`nano /mnt/sdcard/cmdline.txt`
-```
-console=tty1 modules=loop,squashfs,sd-mod,usb-storage alpine_dev=mmcblk0p1:vfat apkovl=/dev/mmcblk0p1/ALPINE/config.apkovl.tar.gz
 ```
 
 ## Unmount SD-card
