@@ -25,7 +25,7 @@ jobs:
         go mod init hexfetch-arm
         go get github.com/cenkalti/backoff/v4
         go get github.com/json-iterator/go
-        CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch-arm
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -a -ldflags="-s -w" -o hexfetch-arm
         upx --best hexfetch-arm
 
     - name: Upload hexfetch as artifact
