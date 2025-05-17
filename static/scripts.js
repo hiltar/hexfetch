@@ -689,7 +689,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchLiveData();
     }, 60000); // Update live data every minute
     setInterval(fetchProfile, 60000); // Update profile every minute
-    setInterval(fetchSystemInfo, 30000); // Update system info every 30 seconds
+    setInterval(fetchSystemInfo, 5000); // Update system info every 5 seconds
     setInterval(() => {
         console.log('Attempting to update charts...');
         renderCharts();
