@@ -110,6 +110,25 @@ lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
 ```
 
+```
+# /etc/init.d/hexfetch-arm
+
+#!/sbin/openrc-run
+name="hexfetch-arm"
+description="hexfetch"
+command="/mnt/ramdisk/hexfetch-arm"
+command_args=""
+pidfile="/var/run/hexfetch-arm.pid"
+depend() {
+    after ramdisk
+}
+
+# Update RC configuration
+chmod +x /etc/init.d/hexfetch-arm
+rc-update add hexfetch-arm default
+
+lbu commit
+```
 
 ---
 
