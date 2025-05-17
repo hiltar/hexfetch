@@ -108,7 +108,7 @@ sudo umount mnt/sdcard
 #!/bin/sh
 cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/
 cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/
-/mnt/ramdisk/hexfetch-arm # To be removed
+/mnt/ramdisk/hexfetch-arm &
 
 # Update RC configuration
 chmod +x /etc/local.d/ramdisk.start
@@ -121,27 +121,6 @@ mkdir /opt/settings/
 lbu add /opt/settings/
 lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
-```
-
-### Not working yet!
-```
-# /etc/init.d/hexfetch-arm
-
-#!/sbin/openrc-run
-name="hexfetch-arm"
-description="hexfetch"
-command="/mnt/ramdisk/hexfetch-arm"
-command_args=""
-pidfile="/var/run/hexfetch-arm.pid"
-depend() {
-    after ramdisk
-}
-
-# Update RC configuration
-chmod +x /etc/init.d/hexfetch-arm
-rc-update add hexfetch-arm default
-
-lbu commit
 ```
 
 ## Updating hexfetch
