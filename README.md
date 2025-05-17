@@ -91,6 +91,44 @@ lbu add /etc/
 lbu commit -d
 ```
 
+# Setup hexfetch
+```
+echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
+
+# /etc/local.d/ramdisk.start
+
+#!/bin/sh
+cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/
+cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/
+
+# Update RC configuration
+chmod +x /etc/local.d/ramdisk.start
+rc-update add local default
+
+lbu commit
+```
+
+```
+# /etc/init.d/hexfetch-arm
+
+#!/sbin/openrc-run
+name="hexfetch-arm"
+description="hexfetch"
+command="/mnt/ramdisk/hexfetch-arm"
+command_args=""
+pidfile="/var/run/hexfetch-arm.pid"
+depend() {
+    need net
+    after ramdisk
+}
+
+# Update RC configuration
+chmod +x /etc/init.d/myapp
+rc-update add myapp default
+
+lbu commit
+```
+
 ---
 
 # Tabs
