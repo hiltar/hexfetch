@@ -91,7 +91,7 @@ lbu add /etc/
 lbu commit -d
 ```
 
-# Setup hexfetch
+## Setup hexfetch
 ```
 echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
 
