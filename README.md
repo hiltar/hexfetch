@@ -100,7 +100,7 @@ echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
 #!/bin/sh
 cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/
 cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/
-/mnt/ramdisk/hexfetch-arm
+/mnt/ramdisk/hexfetch-arm # To be removed
 
 # Update RC configuration
 chmod +x /etc/local.d/ramdisk.start
@@ -110,6 +110,7 @@ lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
 ```
 
+### Not working yet!
 ```
 # /etc/init.d/hexfetch-arm
 
@@ -129,6 +130,12 @@ rc-update add hexfetch-arm default
 
 lbu commit
 ```
+
+## Notes
+Any changes in settings or ending a miner in profile must be saved with `lbu commit`.  
+Rebooting happens with `reboot -f ` and hitting `CTRL + C`.  
+
+These issues will be fixed later.
 
 ---
 
