@@ -123,8 +123,8 @@ depend() {
 }
 
 # Update RC configuration
-chmod +x /etc/init.d/myapp
-rc-update add myapp default
+chmod +x /etc/init.d/hexfetch-arm
+rc-update add hexfetch-arm default
 
 lbu commit
 ```
