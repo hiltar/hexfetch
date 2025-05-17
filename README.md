@@ -144,6 +144,19 @@ rc-update add hexfetch-arm default
 lbu commit
 ```
 
+## Updating hexfetch
+To run newer hexfetch executable, power off the raspberry pi and pull sd-card out. Plug it into PC.  
+```
+sudo mount /dev/sdc1 /mnt/sdcard
+sudo mv hexfetch-arm /mnt/sdcard/hexfetch
+# If static files are updated:
+sudo rm -r /mnt/sdcard/hexfetch/static
+sudo cp -r /static /mnt/sdcard/hexfetch
+
+sync
+sudo umount /mnt/sdcard
+```
+
 ## Notes
 Any changes in settings or ending a miner in profile must be saved with `lbu commit`.  
 Rebooting happens with `reboot -f ` and hitting `CTRL + C`.  
