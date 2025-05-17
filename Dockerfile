@@ -10,7 +10,6 @@ COPY settings/ ./settings/
 
 RUN go get github.com/shirou/gopsutil/v3/cpu
 RUN go get github.com/shirou/gopsutil/v3/disk
-RUN go get github.com/shirou/gopsutil/v3/net
 RUN go get github.com/shirou/gopsutil/v3/mem
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch .
