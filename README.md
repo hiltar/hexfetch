@@ -35,6 +35,14 @@ sudo mount /dev/sdc1 /mnt/sdcard
 sudo tar -xzf alpine-rpi-<version>-armv7.tar.gz -C /mnt/sdcard
 ```
 
+## hexfetch contents into sdcard
+```
+sudo mkdir /mnt/sdcard/hexfetch
+sudo mkdir /mnt/sdcard/hexfetch/static
+# Copy hexfetch-arm executable into /mnt/sdcard/hexfetch
+# Copy static files into /mnt/sdcard/hexfetch/static
+```
+
 
 ## WiFi setup
 `sudo nano /mnt/sdcard/wpa_supplicant.conf`
