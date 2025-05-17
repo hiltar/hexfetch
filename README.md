@@ -91,6 +91,7 @@ lbu commit -d
 ## Setup hexfetch
 ```
 echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
+mount -a
 
 # /etc/local.d/ramdisk.start
 
