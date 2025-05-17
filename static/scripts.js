@@ -144,12 +144,13 @@ function fetchProfile() {
         .then(miners => {
             let totalTShares = 0;
             let activeMiners = [];
+            // Store original indices for active miners
             let minerIndices = [];
             miners.forEach((miner, originalIndex) => {
                 if (miner.status !== 'completed') {
                     totalTShares += miner.tShares;
                     activeMiners.push(miner);
-                    minerIndices.push(originalIndex);
+                    minerIndices.push(originalIndex); // Track the original index
                 }
             });
             document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
@@ -182,6 +183,7 @@ function fetchProfile() {
                 const daysLeft = isMatured ? 0 : Math.ceil((new Date(miner.endDate.split('-').reverse().join('-')) - new Date()) / (1000 * 60 * 60 * 24));
                 const minerDiv = document.createElement('div');
                 minerDiv.className = 'miner-item';
+                // Use minerIndices[index] instead of index in the endMiner call
                 minerDiv.innerHTML = `
                     <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)} ${isMatured ? '(Matured)' : `(${daysLeft} days left)`}</span>
                     ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
