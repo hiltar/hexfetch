@@ -100,34 +100,16 @@ echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
 #!/bin/sh
 cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/
 cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/
+/mnt/ramdisk/hexfetch-arm
 
 # Update RC configuration
 chmod +x /etc/local.d/ramdisk.start
 rc-update add local default
 
 lbu commit
+reboot # after reboot hexfetch should be available from <rpi-ip>:5555
 ```
 
-```
-# /etc/init.d/hexfetch-arm
-
-#!/sbin/openrc-run
-name="hexfetch-arm"
-description="hexfetch"
-command="/mnt/ramdisk/hexfetch-arm"
-command_args=""
-pidfile="/var/run/hexfetch-arm.pid"
-depend() {
-    need net
-    after ramdisk
-}
-
-# Update RC configuration
-chmod +x /etc/init.d/hexfetch-arm
-rc-update add hexfetch-arm default
-
-lbu commit
-```
 
 ---
 
