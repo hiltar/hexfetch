@@ -280,7 +280,7 @@ func startDailyHEXJSONUpdate() {
 // Periodic system info updates
 func startSystemInfoUpdate() {
     go func() {
-        ticker := time.NewTicker(30 * time.Second) // Update every 30 seconds
+        ticker := time.NewTicker(5 * time.Second) // Update every 5 seconds
         defer ticker.Stop()
         for {
             select {
