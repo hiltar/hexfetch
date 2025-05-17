@@ -103,16 +103,14 @@ sudo umount mnt/sdcard
 
 ## Setup hexfetch
 ```
-# /etc/local.d/ramdisk.start
+# SSH into rpi
+ssh root@<rpi-ip>
 
-#!/bin/sh
-cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/
-cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/
-/mnt/ramdisk/hexfetch-arm &
+# Copy hexfetch file contents from init.d folder into /etc/init.d/hexfetch
 
 # Update RC configuration
-chmod +x /etc/local.d/ramdisk.start
-rc-update add local default
+chmod +x /etc/init.d/hexfetch
+rc-update add hexfetch default
 
 # Settings folder
 mkdir /opt/settings/
@@ -121,6 +119,8 @@ mkdir /opt/settings/
 lbu add /opt/settings/
 lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
+
+rc-service hexfetch status
 ```
 
 ## Updating hexfetch
@@ -138,9 +138,6 @@ sudo umount /mnt/sdcard
 
 ## Notes
 Any changes in settings or ending a miner in profile must be saved with `lbu commit`.  
-Rebooting happens with `reboot -f ` and hitting `CTRL + C`.  
-
-These issues will be fixed later.
 
 ---
 
@@ -170,5 +167,3 @@ Settings tab shows:
   - Liquid HEX to calculate and show the value of liquid HEX in Profile tab  
   - Add New Miner for adding HEX miner with start date, end date and amount of T-Shares  
   - Existing Miners for list of HEX miners with Delete function
-
-
