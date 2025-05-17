@@ -21,32 +21,8 @@ import (
 // Global variables for cached live data
 var (
     latestLiveData LiveData
-    liveDataMutex  sync.RWMutex
-    hexJSONData    HEXJSON
-    hexJSONMutex   sync.RWMutex
-    systemInfo     SystemInfo
-    systemInfoMutex sync.RWMutex
-    bufferPool     = sync.Pool{
-        New: func() interface{} { return new(bytes.Buffer) },
-    }
-    httpClient = &http.Client{
-        Timeout: 10 * time.Second,
-        Transport: &http.Transport{
-            MaxIdleConns:       10,
-            IdleConnTimeout:    30 * time.Second,
-            DisableCompression: true,
-        },
-    }
-    json = jsoniter.ConfigCompatibleWithStandardLibrary
+    liveDataMutex  sync.Mutex
 )
-
-// SystemInfo holds system metrics
-type SystemInfo struct {
-    CPUUsage    float64 `json:"cpuUsage"`    // Percentage
-    MemoryUsage float64 `json:"memoryUsage"` // Percentage
-    DiskUsage   float64 `json:"diskUsage"`   // Percentage
-    Timestamp   int64   `json:"timestamp"`   // Unix timestamp in seconds
-}
 
 // ConfigManager for thread-safe configuration
 type ConfigManager struct {
@@ -128,6 +104,17 @@ type Config struct {
     LiquidHEX         float64 `json:"liquidHEX"`
 }
 
+type SystemMetrics struct {
+    CPUUsagePercent    float64 `json:"cpuUsagePercent"`
+    MemoryUsedPercent  float64 `json:"memoryUsedPercent"`
+    MemoryUsedGB       float64 `json:"memoryUsedGB"`
+    MemoryTotalGB      float64 `json:"memoryTotalGB"`
+    DiskUsedPercent    float64 `json:"diskUsedPercent"`
+    DiskUsedGB         float64 `json:"diskUsedGB"`
+    DiskTotalGB        float64 `json:"diskTotalGB"`
+    Timestamp          int64   `json:"timestamp"`
+}
+
 const (
     dateLayout               = "02-01-2006"
     defaultLiveDataFrequency = 15
@@ -140,91 +127,64 @@ func debugLog(v ...interface{}) {
     }
 }
 
-// Fetch system information
-func fetchSystemInfo() (SystemInfo, error) {
-    var info SystemInfo
-    info.Timestamp = time.Now().Unix()
-
-    // CPU Usage
-    cpuPercent, err := cpu.Percent(time.Second, false)
-    if err != nil {
-        return SystemInfo{}, fmt.Errorf("failed to fetch CPU usage: %w", err)
-    }
-    if len(cpuPercent) > 0 {
-        info.CPUUsage = cpuPercent[0]
-    }
-
-    // Memory Usage
-    memInfo, err := mem.VirtualMemory()
-    if err != nil {
-        return SystemInfo{}, fmt.Errorf("failed to fetch memory usage: %w", err)
-    }
-    info.MemoryUsage = memInfo.UsedPercent
-
-    // Disk Usage (root partition)
-    diskInfo, err := disk.Usage("/")
-    if err != nil {
-        return SystemInfo{}, fmt.Errorf("failed to fetch disk usage: %w", err)
-    }
-    info.DiskUsage = diskInfo.UsedPercent
-
-    return info, nil
-}
-
 // Data Fetching and Management
 func fetchHEXJSON() (HEXJSON, error) {
-    b := backoff.NewExponentialBackOff()
-    b.MaxElapsedTime = 5 * time.Minute
-    var data HEXJSON
-    err := backoff.Retry(func() error {
-        resp, err := httpClient.Get("https://hexdailystats.com/fulldatapulsechain")
-        if err != nil {
-            return err
-        }
-        defer resp.Body.Close()
-        if resp.StatusCode != http.StatusOK {
-            return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-        }
-        return json.NewDecoder(resp.Body).Decode(&data)
-    }, b)
+    resp, err := http.Get("https://hexdailystats.com/fulldatapulsechain")
     if err != nil {
         return HEXJSON{}, fmt.Errorf("failed to fetch HEXJSON: %w", err)
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        return HEXJSON{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
+    var data HEXJSON
+    err = json.NewDecoder(resp.Body).Decode(&data)
+    if err != nil {
+        return HEXJSON{}, fmt.Errorf("failed to decode HEXJSON: %w", err)
     }
     return data, nil
 }
 
 func fetchLiveData() (LiveData, error) {
-    b := backoff.NewExponentialBackOff()
-    b.MaxElapsedTime = 5 * time.Minute
-    var data LiveData
-    err := backoff.Retry(func() error {
-        resp, err := httpClient.Get("https://hexdailystats.com/livedata")
-        if err != nil {
-            return err
-        }
-        defer resp.Body.Close()
-        if resp.StatusCode != http.StatusOK {
-            return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-        }
-        return json.NewDecoder(resp.Body).Decode(&data)
-    }, b)
+    resp, err := http.Get("https://hexdailystats.com/livedata")
     if err != nil {
         return LiveData{}, fmt.Errorf("failed to fetch live data: %w", err)
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        return LiveData{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
+    var data LiveData
+    err = json.NewDecoder(resp.Body).Decode(&data)
+    if err != nil {
+        return LiveData{}, fmt.Errorf("failed to decode live data: %w", err)
     }
     return data, nil
 }
 
 func loadLocalHEXJSON() (HEXJSON, error) {
-    hexJSONMutex.RLock()
-    defer hexJSONMutex.RUnlock()
-    return hexJSONData, nil
+    file, err := os.Open("data/hexjson.json")
+    if err != nil {
+        if os.IsNotExist(err) {
+            return HEXJSON{}, nil
+        }
+        return HEXJSON{}, err
+    }
+    defer file.Close()
+    var data HEXJSON
+    err = json.NewDecoder(file).Decode(&data)
+    return data, err
 }
 
 func saveLocalHEXJSON(data HEXJSON) error {
-    hexJSONMutex.Lock()
-    defer hexJSONMutex.Unlock()
-    hexJSONData = data
-    return nil
+    file, err := os.Create("data/hexjson.json")
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    encoder := json.NewEncoder(file)
+    encoder.SetIndent("", "  ")
+    return encoder.Encode(data)
 }
 
 func updateLocalHEXJSON() error {
@@ -259,14 +219,11 @@ func updateLocalHEXJSON() error {
 func startDailyHEXJSONUpdate() {
     go func() {
         for {
-            // Calculate time until next midnight UTC
             now := time.Now().UTC()
             nextMidnight := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
             delay := nextMidnight.Sub(now)
-
             debugLog("Scheduling next HEXJSON update in", delay, "(at", nextMidnight, "UTC)")
             time.Sleep(delay)
-
             debugLog("Running daily HEXJSON update...")
             if err := updateLocalHEXJSON(); err != nil {
                 debugLog("Error during daily HEXJSON update:", err)
@@ -277,31 +234,8 @@ func startDailyHEXJSONUpdate() {
     }()
 }
 
-// Periodic system info updates
-func startSystemInfoUpdate() {
-    go func() {
-        ticker := time.NewTicker(5 * time.Second) // Update every 5 seconds
-        defer ticker.Stop()
-        for {
-            select {
-            case <-ticker.C:
-                debugLog("Fetching system info...")
-                info, err := fetchSystemInfo()
-                if err != nil {
-                    debugLog("Error fetching system info:", err)
-                } else {
-                    systemInfoMutex.Lock()
-                    systemInfo = info
-                    systemInfoMutex.Unlock()
-                    debugLog("System info updated successfully")
-                }
-            }
-        }
-    }()
-}
-
 func loadMiners() ([]Miner, error) {
-    file, err := os.Open("/opt/settings/miners.json")
+    file, err := os.Open("settings/miners.json")
     if err != nil {
         if os.IsNotExist(err) {
             return []Miner{}, nil
@@ -315,11 +249,7 @@ func loadMiners() ([]Miner, error) {
 }
 
 func saveMiners(miners []Miner) error {
-    currentMiners, err := loadMiners()
-    if err == nil && reflect.DeepEqual(currentMiners, miners) {
-        return nil // Skip write if unchanged
-    }
-    file, err := os.Create("/opt/settings/miners.json")
+    file, err := os.Create("settings/miners.json")
     if err != nil {
         return err
     }
@@ -330,7 +260,7 @@ func saveMiners(miners []Miner) error {
 }
 
 func loadConfig() (Config, error) {
-    file, err := os.Open("/opt/settings/config.json")
+    file, err := os.Open("settings/config.json")
     if err != nil {
         if os.IsNotExist(err) {
             return Config{LiveDataFrequency: defaultLiveDataFrequency, LiquidHEX: 0}, nil
@@ -350,11 +280,7 @@ func loadConfig() (Config, error) {
 }
 
 func saveConfig(config Config) error {
-    currentConfig, err := loadConfig()
-    if err == nil && reflect.DeepEqual(currentConfig, config) {
-        return nil // Skip write if unchanged
-    }
-    file, err := os.Create("/opt/settings/config.json")
+    file, err := os.Create("settings/config.json")
     if err != nil {
         return err
     }
@@ -388,58 +314,92 @@ func daysLeft(endDate string) (int, error) {
         return 0, nil
     }
     duration := endDateOnly.Sub(nowDateOnly)
-    return int(duration.Hours() / 24), nil
+    return int(duration.Hours()/24), nil
 }
 
 func formatWithCommas(num int) string {
-    str := strconv.FormatInt(int64(num), 10)
+    str := strconv.Itoa(num)
     n := len(str)
     if n <= 3 {
         return str
     }
-    buf := make([]byte, 0, n+(n-1)/3)
+    var result []byte
     for i := 0; i < n; i++ {
         if i > 0 && (n-i)%3 == 0 {
-            buf = append(buf, ',')
+            result = append(result, ',')
         }
-        buf = append(buf, str[i])
+        result = append(result, str[i])
     }
-    return string(buf)
+    return string(result)
 }
 
 func formatLongWithCommas(num int64) string {
     return formatWithCommas(int(num))
 }
 
-// API Handlers
-func handleSystemInfo(w http.ResponseWriter, r *http.Request) {
-    systemInfoMutex.RLock()
-    data := systemInfo
-    systemInfoMutex.RUnlock()
-    buf := bufferPool.Get().(*bytes.Buffer)
-    defer bufferPool.Put(buf)
-    buf.Reset()
-    if err := json.NewEncoder(buf).Encode(data); err != nil {
-        debugLog("Error encoding system info response:", err)
+// System Metrics Handler
+func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
+    if os.Getenv("SYSTEM") != "true" {
+        debugLog("System metrics endpoint disabled (SYSTEM != true)")
+        http.Error(w, "System metrics endpoint disabled", http.StatusNotFound)
+        return
+    }
+    
+    cpuPercent, err := cpu.Percent(0, false)
+    cpuUsage := 0.0
+    if err == nil && len(cpuPercent) > 0 {
+        cpuUsage = cpuPercent[0]
+    }
+
+    memInfo, err := mem.VirtualMemory()
+    memoryUsedPercent := 0.0
+    memoryUsedGB := 0.0
+    memoryTotalGB := 0.0
+    if err == nil {
+        memoryUsedPercent = memInfo.UsedPercent
+        memoryUsedGB = float64(memInfo.Used) / 1e9
+        memoryTotalGB = float64(memInfo.Total) / 1e9
+    }
+
+    diskInfo, err := disk.Usage("/")
+    diskUsedPercent := 0.0
+    diskUsedGB := 0.0
+    diskTotalGB := 0.0
+    if err == nil {
+        diskUsedPercent = diskInfo.UsedPercent
+        diskUsedGB = float64(diskInfo.Used) / 1e9
+        diskTotalGB = float64(diskInfo.Total) / 1e9
+    }
+
+
+    metrics := SystemMetrics{
+        CPUUsagePercent:   cpuUsage,
+        MemoryUsedPercent: memoryUsedPercent,
+        MemoryUsedGB:      memoryUsedGB,
+        MemoryTotalGB:     memoryTotalGB,
+        DiskUsedPercent:   diskUsedPercent,
+        DiskUsedGB:        diskUsedGB,
+        DiskTotalGB:       diskTotalGB,
+        Timestamp:         time.Now().Unix(),
+    }
+
+    if err := json.NewEncoder(w).Encode(metrics); err != nil {
+        debugLog("Error encoding system metrics response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
-    w.Write(buf.Bytes())
 }
 
+// API Handlers
 func handleLiveData(w http.ResponseWriter, r *http.Request) {
-    liveDataMutex.RLock()
+    liveDataMutex.Lock()
     data := latestLiveData
-    liveDataMutex.RUnlock()
-    buf := bufferPool.Get().(*bytes.Buffer)
-    defer bufferPool.Put(buf)
-    buf.Reset()
-    if err := json.NewEncoder(buf).Encode(data); err != nil {
+    liveDataMutex.Unlock()
+    if err := json.NewEncoder(w).Encode(data); err != nil {
         debugLog("Error encoding live data response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
-    w.Write(buf.Bytes())
 }
 
 func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
@@ -449,15 +409,11 @@ func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    buf := bufferPool.Get().(*bytes.Buffer)
-    defer bufferPool.Put(buf)
-    buf.Reset()
-    if err := json.NewEncoder(buf).Encode(data); err != nil {
+    if err := json.NewEncoder(w).Encode(data); err != nil {
         debugLog("Error encoding HEXJSON response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
-    w.Write(buf.Bytes())
 }
 
 func handleMiners(w http.ResponseWriter, r *http.Request) {
@@ -467,15 +423,11 @@ func handleMiners(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    buf := bufferPool.Get().(*bytes.Buffer)
-    defer bufferPool.Put(buf)
-    buf.Reset()
-    if err := json.NewEncoder(buf).Encode(miners); err != nil {
+    if err := json.NewEncoder(w).Encode(miners); err != nil {
         debugLog("Error encoding miners response:", err)
         http.Error(w, "Internal server error", http.StatusInternalServerError)
         return
     }
-    w.Write(buf.Bytes())
 }
 
 func handleAddMiner(w http.ResponseWriter, r *http.Request) {
@@ -537,17 +489,6 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Invalid miner index", http.StatusBadRequest)
         return
     }
-    isMatured, err := isMatured(miners[req.Index].EndDate)
-    if err != nil {
-        debugLog("Error checking miner maturity:", err)
-        http.Error(w, "Invalid end date", http.StatusBadRequest)
-        return
-    }
-    if !isMatured {
-        debugLog("Attempted to end non-matured miner at index:", req.Index)
-        http.Error(w, "Miner is not matured", http.StatusBadRequest)
-        return
-    }
     miners[req.Index].Status = "completed"
     if err := saveMiners(miners); err != nil {
         debugLog("Error saving miners for end:", err)
@@ -593,15 +534,11 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
             http.Error(w, err.Error(), http.StatusInternalServerError)
             return
         }
-        buf := bufferPool.Get().(*bytes.Buffer)
-        defer bufferPool.Put(buf)
-        buf.Reset()
-        if err := json.NewEncoder(buf).Encode(config); err != nil {
+        if err := json.NewEncoder(w).Encode(config); err != nil {
             debugLog("Error encoding config response:", err)
             http.Error(w, "Internal server error", http.StatusInternalServerError)
             return
         }
-        w.Write(buf.Bytes())
     } else if r.Method == http.MethodPost {
         var config Config
         if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
@@ -633,17 +570,15 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // Main Function
 func main() {
-    os.MkdirAll("/settings", 0755)
+    os.MkdirAll("data", 0755)
+    os.MkdirAll("settings", 0755)
 
-    // Initial HEXJSON update
     if err := updateLocalHEXJSON(); err != nil {
         debugLog("Error updating local HEXJSON:", err)
     }
 
-    // Start daily HEXJSON updates
     startDailyHEXJSONUpdate()
 
-    // Load configuration
     config, err := loadConfig()
     if err != nil {
         debugLog("Error loading config:", err)
@@ -651,7 +586,6 @@ func main() {
     }
     configManager.SetLiveDataFrequency(config.LiveDataFrequency)
 
-    // Initial live data fetch
     data, err := fetchLiveData()
     if err != nil {
         debugLog("Error during initial live data fetch:", err)
@@ -662,20 +596,13 @@ func main() {
         debugLog("Initial live data fetched successfully")
     }
 
-    // Initial system info fetch
-    info, err := fetchSystemInfo()
-    if err != nil {
-        debugLog("Error during initial system info fetch:", err)
-    } else {
-        systemInfoMutex.Lock()
-        systemInfo = info
-        systemInfoMutex.Unlock()
-        debugLog("Initial system info fetched successfully")
-    }
-
-    // Periodic live data fetching
     go func() {
-        ticker := time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
+        frequency := configManager.GetLiveDataFrequency()
+        if frequency <= 0 {
+            debugLog("Invalid initial frequency, using default:", defaultLiveDataFrequency)
+            frequency = defaultLiveDataFrequency
+        }
+        ticker := time.NewTicker(time.Duration(frequency) * time.Minute)
         changeCh := configManager.Subscribe()
         defer ticker.Stop()
         for {
@@ -691,24 +618,25 @@ func main() {
                     liveDataMutex.Unlock()
                     debugLog("Live data updated successfully")
                 }
-            case <-changeCh:
-                frequency := configManager.GetLiveDataFrequency()
+                frequency = configManager.GetLiveDataFrequency()
                 if frequency <= 0 {
+                    debugLog("Invalid frequency, using default:", defaultLiveDataFrequency)
                     frequency = defaultLiveDataFrequency
                 }
+                ticker.Reset(time.Duration(frequency) * time.Minute)
+            case <-changeCh:
+                frequency = configManager.GetLiveDataFrequency()
+                if frequency <= 0 {
+                    debugLog("Invalid frequency from change, using default:", defaultLiveDataFrequency)
+                    frequency = defaultLiveDataFrequency
+                }
+                debugLog("Resetting ticker with frequency:", frequency)
                 ticker.Reset(time.Duration(frequency) * time.Minute)
             }
         }
     }()
 
-    // Start periodic system info updates
-    startSystemInfoUpdate()
-
-    // Serve static files
-    http.Handle("/", http.FileServer(http.Dir("/mnt/ramdisk/static")))
-
-    // API endpoints
-    http.HandleFunc("/api/system-info", handleSystemInfo)
+    http.Handle("/", http.FileServer(http.Dir("static")))
     http.HandleFunc("/api/live-data", handleLiveData)
     http.HandleFunc("/api/hexjson", handleHEXJSON)
     http.HandleFunc("/api/miners", handleMiners)
@@ -716,6 +644,7 @@ func main() {
     http.HandleFunc("/api/end-miner", handleEndMiner)
     http.HandleFunc("/api/delete-miner", handleDeleteMiner)
     http.HandleFunc("/api/config", handleConfig)
+    http.HandleFunc("/api/system", handleSystemMetrics)
 
     log.Println("Server starting on :5555")
     if err := http.ListenAndServe(":5555", nil); err != nil {
