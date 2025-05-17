@@ -485,6 +485,17 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Invalid miner index", http.StatusBadRequest)
         return
     }
+    isMatured, err := isMatured(miners[req.Index].EndDate)
+    if err != nil {
+        debugLog("Error checking miner maturity:", err)
+        http.Error(w, "Invalid end date", http.StatusBadRequest)
+        return
+    }
+    if !isMatured {
+        debugLog("Attempted to end non-matured miner at index:", req.Index)
+        http.Error(w, "Miner is not matured", http.StatusBadRequest)
+        return
+    }
     miners[req.Index].Status = "completed"
     if err := saveMiners(miners); err != nil {
         debugLog("Error saving miners for end:", err)
