@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+
+name="hexfetch"
+description="Run hexfetch from ramdisk"
+
+
+command="/mnt/ramdisk/hexfetch-arm"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need localmount
+    after bootmisc
+}
+    
+start_pre() {
+    cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/ || return 1
+    cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/ || return 1
+}
