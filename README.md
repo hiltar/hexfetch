@@ -83,9 +83,6 @@ setup-alpine
 # Disk & Install
 none
 
-# Install wifi firmware
-apk add linux-firmware-brcm
-
 # LBU
 lbu add /etc/
 lbu commit -d
