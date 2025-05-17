@@ -283,10 +283,12 @@ function fetchProfile() {
         .then(miners => {
             let totalTShares = 0;
             let activeMiners = [];
-            miners.forEach(miner => {
+            let minerIndices = [];
+            miners.forEach((miner, originalIndex) => {
                 if (miner.status !== 'completed') {
                     totalTShares += miner.tShares;
                     activeMiners.push(miner);
+                    minerIndices.push(originalIndex);
                 }
             });
             document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
@@ -321,12 +323,13 @@ function fetchProfile() {
                 minerDiv.className = 'miner-item';
                 minerDiv.innerHTML = `
                     <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)} ${isMatured ? '(Matured)' : `(${daysLeft} days left)`}</span>
-                    ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${index})">End</button>` : ''}
+                    ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
                 `;
                 activeMinersDiv.appendChild(minerDiv);
             });
         });
 }
+
 
 function showCompletedMiners() {
     fetch('/api/miners')
