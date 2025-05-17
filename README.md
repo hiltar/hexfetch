@@ -35,14 +35,6 @@ sudo mount /dev/sdc1 /mnt/sdcard
 sudo tar -xzf alpine-rpi-<version>-armv7.tar.gz -C /mnt/sdcard
 ```
 
-## hexfetch contents into sdcard
-```
-sudo mkdir /mnt/sdcard/hexfetch
-sudo mkdir /mnt/sdcard/hexfetch/static
-# Copy hexfetch-arm executable into /mnt/sdcard/hexfetch
-# Copy static files into /mnt/sdcard/hexfetch/static
-```
-
 
 ## WiFi setup
 `sudo nano /mnt/sdcard/wpa_supplicant.conf`
@@ -83,16 +75,34 @@ setup-alpine
 # Disk & Install
 none
 
+# ramdisk filesystem
+echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
+mount -a
+
 # LBU
 lbu add /etc/
 lbu commit -d
+
+# You may reboot and check ramdisk filesystem
+df -h
+```
+
+## hexfetch contents into sdcard
+After Alpine Linux setup, you must run `poweroff` to shut rpi off. Take sd card off and mount it in PC:
+```
+sudo mount /dev/sdc1 /mnt/sdcard
+
+sudo mkdir /mnt/sdcard/hexfetch
+sudo mkdir /mnt/sdcard/hexfetch/static
+# Copy hexfetch-arm executable into /mnt/sdcard/hexfetch
+# Copy static files into /mnt/sdcard/hexfetch/static
+
+sync
+sudo umount mnt/sdcard
 ```
 
 ## Setup hexfetch
 ```
-echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
-mount -a
-
 # /etc/local.d/ramdisk.start
 
 #!/bin/sh
@@ -104,6 +114,11 @@ cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/
 chmod +x /etc/local.d/ramdisk.start
 rc-update add local default
 
+# Settings folder
+mkdir /opt/settings/
+# Optionally move config.json and miners.json files into /opt/settings/ folder
+
+lbu add /opt/settings/
 lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
 ```
@@ -141,24 +156,21 @@ These issues will be fixed later.
 
 ## Profile
 Profile tab shows user's miners and T-Shares and total value of T-Shares.   
-If miner is matured, it will be shown **(MATURED)** with `END` button. Ending the miner will move it into `Completed Miners` container.
-
-
+If miner is matured, it will be shown **(MATURED)** with `END` button. Ending the miner will move it into `Completed Miners` container.  
 
 Viewing Completed Miners button opens a window of completed HEX miners.
-
-
-
 
 ## Live Data
 Live Data tab shows periodically fetched data from Pulsechain API.
 
-
-
-
-# Charts
+## Charts
 Charts tab show historical charts of HEX price, T-Share rate and other useful information of HEX.
 
+## System info
+System info tab shows system information of rpi.
+  - Memory
+  - CPU
+  - Disk
 
 ## Settings
 Settings tab shows:  
