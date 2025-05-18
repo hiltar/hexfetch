@@ -124,7 +124,7 @@ rc-service hexfetch status
 
 # Add a daily cronjob:
 crontab -e
-0 2 * * * /etc/init.d/hexfetch restart # Restart hexfetch service every day at 2:00 UTC.
+1 0 * * * /etc/init.d/hexfetch restart # Restart hexfetch service every day at 00:01 UTC.
 ```
 
 ---
