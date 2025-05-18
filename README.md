@@ -121,7 +121,13 @@ lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
 
 rc-service hexfetch status
+
+# Add a daily cronjob:
+crontab -e
+0 2 * * * /etc/init.d/hexfetch restart
 ```
+
+---
 
 ## Updating hexfetch
 To run newer hexfetch executable, power off the raspberry pi and pull sd-card out. Plug it into PC.  
