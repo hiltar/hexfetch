@@ -622,7 +622,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // Main Function
 func main() {
-    os.MkdirAll("/settings", 0755)
+    os.MkdirAll("/opt/settings", 0755)
 
     // Initial HEXJSON update
     if err := updateLocalHEXJSON(); err != nil {
