@@ -6,7 +6,7 @@ hexfetch doesn't need the 0x addresses at all so it's 100% privacy.
 
 hexfetch is made with `go 1.24.2`.
 
-Running hexfetch will create a folder into same directory where hexfetch is running.   
+Running hexfetch will create a folder into `/opt/` path.     
 settings directory contains user defined config.json and miners.json.
 
 ## Environment variables
@@ -32,7 +32,7 @@ sudo mkdir /mnt/sdcard
 sudo mount /dev/sdc1 /mnt/sdcard
 
 # Extract archive into /mnt/sdcard
-sudo tar -xzf alpine-rpi-<version>-armv7.tar.gz -C /mnt/sdcard
+sudo tar -xzf alpine-rpi-<version>-aarch64.tar.gz -C /mnt/sdcard
 ```
 
 
@@ -124,7 +124,7 @@ rc-service hexfetch status
 
 # Add a daily cronjob:
 crontab -e
-0 2 * * * /etc/init.d/hexfetch restart
+0 2 * * * /etc/init.d/hexfetch restart # Restart hexfetch service every day at 2:00 UTC.
 ```
 
 ---
@@ -144,6 +144,7 @@ sudo umount /mnt/sdcard
 
 ## Notes
 Any changes in settings or ending a miner in profile must be saved with `lbu commit`.  
+Daily cronjob is for fetching latest data for Charts tab because code isn't doing it every day at 00:00 UTC.
 
 ---
 
