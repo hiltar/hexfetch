@@ -14,6 +14,11 @@ depend() {
 }
     
 start_pre() {
-    cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/ || return 1
-    cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/ || return 1
+    if [ ! -f /mnt/ramdisk/hexfetch-arm ]; then
+        cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/ || return 1
+    fi
+
+    if [ ! -d /mnt/ramdisk/static ]; then
+        cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/ || return 1
+    fi
 }
