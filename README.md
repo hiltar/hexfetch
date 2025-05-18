@@ -76,7 +76,7 @@ setup-alpine
 none
 
 # ramdisk filesystem
-echo "tmpfs /mnt/ramdisk tmpfs size=128m,mode=0755 0 0" >> /etc/fstab
+echo "tmpfs /mnt/ramdisk tmpfs size=8m,mode=0755 0 0" >> /etc/fstab
 mount -a
 
 # LBU
