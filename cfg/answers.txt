@@ -1,4 +1,3 @@
-```
 KEYMAPOPTS="fi fi"
 HOSTNAMEOPTS="rpizero"
 INTERFACESOPTS="auto lo
@@ -13,4 +12,3 @@ SSHDOPTS="openssh"
 DISKOPTS="none"
 APKREPOSOPTS="f"
 ROOTPW="change_me"
-```
