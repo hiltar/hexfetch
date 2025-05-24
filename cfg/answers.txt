@@ -12,4 +12,5 @@ NTPOPTS="chrony"
 SSHDOPTS="openssh"
 DISKOPTS="none"
 APKREPOSOPTS="f"
+ROOTPW="change_me"
 ```
