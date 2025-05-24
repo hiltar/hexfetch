@@ -1,0 +1,15 @@
+```
+KEYMAPOPTS="fi fi"
+HOSTNAMEOPTS="rpizero"
+INTERFACESOPTS="auto lo
+iface lo inet loopback
+auto wlan0
+iface wlan0 inet dhcp"
+DNSOPTS="1.1.1.1"
+TIMEZONEOPTS="Europe/Helsinki"
+PROXYOPTS="none"
+NTPOPTS="chrony"
+SSHDOPTS="openssh"
+DISKOPTS="none"
+APKREPOSOPTS="f"
+```
