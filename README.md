@@ -80,7 +80,7 @@ echo "tmpfs /mnt/ramdisk tmpfs size=8m,mode=0755 0 0" >> /etc/fstab
 mount -a
 
 # LBU
-lbu add /etc/
+lbu add /etc/wpa_supplicant/
 lbu commit -d
 
 # You may reboot and check ramdisk filesystem
