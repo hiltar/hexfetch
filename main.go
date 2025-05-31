@@ -301,7 +301,7 @@ func startSystemInfoUpdate() {
 }
 
 func loadMiners() ([]Miner, error) {
-    file, err := os.Open("/opt/settings/miners.json")
+    file, err := os.Open("/opt/hexfetch/miners.json")
     if err != nil {
         if os.IsNotExist(err) {
             return []Miner{}, nil
@@ -319,7 +319,7 @@ func saveMiners(miners []Miner) error {
     if err == nil && reflect.DeepEqual(currentMiners, miners) {
         return nil // Skip write if unchanged
     }
-    file, err := os.Create("/opt/settings/miners.json")
+    file, err := os.Create("/opt/hexfetch/miners.json")
     if err != nil {
         return err
     }
@@ -330,7 +330,7 @@ func saveMiners(miners []Miner) error {
 }
 
 func loadConfig() (Config, error) {
-    file, err := os.Open("/opt/settings/config.json")
+    file, err := os.Open("/opt/hexfetch/config.json")
     if err != nil {
         if os.IsNotExist(err) {
             return Config{LiveDataFrequency: defaultLiveDataFrequency, LiquidHEX: 0}, nil
@@ -354,7 +354,7 @@ func saveConfig(config Config) error {
     if err == nil && reflect.DeepEqual(currentConfig, config) {
         return nil // Skip write if unchanged
     }
-    file, err := os.Create("/opt/settings/config.json")
+    file, err := os.Create("/opt/hexfetch/config.json")
     if err != nil {
         return err
     }
@@ -622,7 +622,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // Main Function
 func main() {
-    os.MkdirAll("/opt/settings", 0755)
+    os.MkdirAll("/opt/hexfetch", 0755)
 
     // Initial HEXJSON update
     if err := updateLocalHEXJSON(); err != nil {
