@@ -694,7 +694,7 @@ func main() {
     startSystemInfoUpdate()
 
     // Serve static files
-    http.Handle("/", http.FileServer(http.Dir("./static")))
+    http.Handle("/", http.FileServer(http.Dir("/mnt/ramdisk/hexfetch/static")))
 
     // API endpoints
     http.HandleFunc("/api/system-info", handleSystemInfo)
