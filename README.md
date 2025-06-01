@@ -54,6 +54,17 @@ network={
 sudo mv headless.apkovl.tar.gz /mnt/sdcard
 ```
 
+## hexfetch contents into sdcard
+```
+sudo mkdir /mnt/sdcard/hexfetch
+sudo mkdir /mnt/sdcard/hexfetch/static
+# Copy hexfetch-arm executable into /mnt/sdcard/hexfetch
+# Copy static files into /mnt/sdcard/hexfetch/static
+
+sync
+sudo umount mnt/sdcard
+```
+
 ## Unmount SD-card
 ```
 sync
@@ -87,20 +98,6 @@ lbu commit -d
 df -h
 ```
 
-## hexfetch contents into sdcard
-After Alpine Linux setup, you must run `poweroff` to shut rpi off. Take sd card off and mount it in PC:
-```
-sudo mount /dev/sdc1 /mnt/sdcard
-
-sudo mkdir /mnt/sdcard/hexfetch
-sudo mkdir /mnt/sdcard/hexfetch/static
-# Copy hexfetch-arm executable into /mnt/sdcard/hexfetch
-# Copy static files into /mnt/sdcard/hexfetch/static
-
-sync
-sudo umount mnt/sdcard
-```
-
 ## Setup hexfetch
 ```
 # SSH into rpi
@@ -125,6 +122,9 @@ rc-service hexfetch status
 # Add a daily cronjob:
 crontab -e
 1 0 * * * /etc/init.d/hexfetch restart # Restart hexfetch service every day at 00:01 UTC.
+
+# Stop sshd - If SSH connection is needed, reboot the Raspberry Pi
+rc-service sshd stop
 ```
 
 ---
@@ -161,12 +161,6 @@ Live Data tab shows periodically fetched data from Pulsechain API.
 
 ## Charts
 Charts tab show historical charts of HEX price, T-Share rate and other useful information of HEX.
-
-## System info
-System info tab shows system information of rpi.
-  - Memory
-  - CPU
-  - Disk
 
 ## Settings
 Settings tab shows:  
