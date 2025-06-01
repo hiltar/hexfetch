@@ -122,9 +122,6 @@ rc-service hexfetch status
 # Add a daily cronjob:
 crontab -e
 1 0 * * * /etc/init.d/hexfetch restart # Restart hexfetch service every day at 00:01 UTC.
-
-# Stop sshd - If SSH connection is needed, reboot the Raspberry Pi
-rc-service sshd stop
 ```
 
 ---
