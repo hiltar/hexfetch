@@ -16,6 +16,10 @@ const systemMetricsHistory = {
     timestamps: []
 };
 
+// Store the live data interval ID and current frequency
+let liveDataIntervalId = null;
+let currentFrequency = 15; // Default to 15 minute
+
 // Show custom notification
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
@@ -54,7 +58,7 @@ function showConfirmModal(title, message) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
-                    </ overal>
+                    </div>
                 </div>
             </div>
         `;
@@ -156,6 +160,22 @@ function fetchLiveData() {
             // Revert title on error
             document.title = 'HEX Stats';
         });
+}
+
+// Set up live data interval based on frequency (in minutes)
+function setupLiveDataInterval(frequencyInMinutes) {
+    // Clear existing interval if it exists
+    if (liveDataIntervalId) {
+        clearInterval(liveDataIntervalId);
+    }
+    // Convert frequency from minutes to milliseconds
+    const intervalMs = frequencyInMinutes * 60 * 1000;
+    currentFrequency = frequencyInMinutes;
+    // Set new interval
+    liveDataIntervalId = setInterval(() => {
+        console.log(`Attempting to fetch live data every ${frequencyInMinutes} minute(s)...`);
+        fetchLiveData();
+    }, intervalMs);
 }
 
 function fetchSystemInfo() {
@@ -329,7 +349,6 @@ function fetchProfile() {
             });
         });
 }
-
 
 function showCompletedMiners() {
     fetch('/api/miners')
@@ -522,6 +541,8 @@ function fetchSettings() {
         .then(config => {
             document.getElementById('frequency').value = config.liveDataFrequency;
             document.getElementById('liquid-hex').value = config.liquidHEX || '';
+            // Set up live data interval with the fetched frequency
+            setupLiveDataInterval(config.liveDataFrequency);
         });
     fetch('/api/miners')
         .then(response => response.json())
@@ -554,6 +575,8 @@ function saveFrequency() {
         .then(response => {
             if (response.ok) {
                 showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
+                // Update the live data interval
+                setupLiveDataInterval(frequency);
             } else {
                 showNotification('Error saving frequency', 'danger');
             }
@@ -677,17 +700,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial fetches
     fetchProfile();
-    fetchLiveData();
-    fetchSettings();
+    fetchLiveData(); // Initial fetch
+    fetchSettings(); // This will set up the live data interval
     fetchSystemInfo();
     renderCharts();
     checkNavbarRows();
 
     // Periodic updates
-    setInterval(() => {
-        console.log('Attempting to fetch live data...');
-        fetchLiveData();
-    }, 60000); // Update live data every minute
     setInterval(fetchProfile, 60000); // Update profile every minute
     setInterval(fetchSystemInfo, 5000); // Update system info every 5 seconds
     setInterval(() => {
