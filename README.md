@@ -110,10 +110,10 @@ chmod +x /etc/init.d/hexfetch
 rc-update add hexfetch default
 
 # Settings folder
-mkdir /opt/settings/
-# Optionally move config.json and miners.json files into /opt/settings/ folder
+mkdir /opt/hexfetch/
+# Optionally move config.json and miners.json files into /opt/hexfetch/ folder
 
-lbu add /opt/settings/
+lbu add /opt/hexfetch/
 lbu commit
 reboot # after reboot hexfetch should be available from <rpi-ip>:5555
 
