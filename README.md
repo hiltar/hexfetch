@@ -108,6 +108,7 @@ ssh root@<rpi-ip>
 # Update RC configuration
 chmod +x /etc/init.d/hexfetch
 rc-update add hexfetch default
+lbu add /etc/init.d/hexfetch
 
 # Settings folder
 mkdir /opt/hexfetch/
