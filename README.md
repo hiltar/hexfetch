@@ -10,10 +10,6 @@ Running hexfetch will create two folders into same directory where hexfetch is r
 data directory contains hexdata.json.  
 settings directory contains user defined config.json and miners.json.
 
-## Upcoming features
-Optimization   
-Charts with functions   
-
 ---
 
 # Build
