@@ -152,6 +152,13 @@ sudo umount /mnt/sdcard
 Any changes in settings or ending a miner in profile must be saved with `lbu commit`.  
 Daily cronjob is for fetching latest data for Charts tab because code isn't doing it every day at 00:00 UTC.
 
+## Alpine Local Backup tool (LBU)
+Local backup utility(lbu) is the Alpine Linux tool to manage Diskless Mode installations. For these installations, `lbu` tool must be used to commit the changes whenever Alpine Package Keeper is used.
+
+When Alpine Linux boots in diskless mode, it initially only loads a few required packages from the boot device. However, local adjustments to what-gets-loaded-into-RAM are possible, e.g. installing a package or adjusting the configuration files in /etc. The modifications can be saved with `lbu` tool to an overlay file i.e apkovl file that can be automatically loaded when booting, to restore the saved state.
+
+By default, an `lbu commit` only stores modifications below /etc, with the exception of the /etc/init.d/ directory. If a user was created during the setup-alpine script, that user's home directory is also added to the paths that lbu will backup up. However, `lbu add` enables modifying that set of included files, and can be used to specify additional files or folders. 
+
 ---
 
 # Tabs
