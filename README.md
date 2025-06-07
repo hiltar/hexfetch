@@ -127,6 +127,8 @@ crontab -e
 
 # Disable SSH
 rc-service sshd zap
+apk del openssh
+
 rc-status
 lbu commit
 ```
