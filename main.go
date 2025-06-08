@@ -647,7 +647,13 @@ func main() {
     }()
 
     // Serve embedded static files
-    http.Handle("/", http.FileServer(http.FS(staticFiles)))
+    fs, err := fs.Sub(staticFiles, "static")
+    if err != nil {
+        log.Fatal("Failed to create sub-filesystem:", err)
+    }
+    http.Handle("/", http.FileServer(http.FS(fs)))
+    
+    // API Endpoints
     http.HandleFunc("/api/live-data", handleLiveData)
     http.HandleFunc("/api/hexjson", handleHEXJSON)
     http.HandleFunc("/api/miners", handleMiners)
