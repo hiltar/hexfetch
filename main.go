@@ -702,7 +702,7 @@ func main() {
     if err != nil {
         log.Fatal("Failed to create sub-filesystem:", err)
     }
-    http.Handle("/", http.FileServer(http.FS(staticFiles)))
+    http.Handle("/", http.FileServer(http.FS(fs)))
 
     // API endpoints
     http.HandleFunc("/api/system-info", handleSystemInfo)
