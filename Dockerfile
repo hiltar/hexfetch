@@ -19,7 +19,6 @@ RUN upx --best hexfetch
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /app/hexfetch /hexfetch
-COPY --from=builder --chown=1000:1000 /app/static /static
 COPY --from=builder --chown=1000:1000 /app/data /data
 COPY --from=builder --chown=1000:1000 /app/settings /settings
 
