@@ -18,8 +18,4 @@ start_pre() {
         mkdir /mnt/ramdisk/hexfetch
         cp /media/mmcblk0p1/hexfetch/hexfetch-arm /mnt/ramdisk/hexfetch || return 1
     fi
-
-    if [ ! -d /mnt/ramdisk/hexfetch/static ]; then
-        cp -r /media/mmcblk0p1/hexfetch/static /mnt/ramdisk/hexfetch || return 1
-    fi
 }
