@@ -1,6 +1,7 @@
 package main
 
 import (
+    "embed"
     "bytes"
     "fmt"
     "log"
@@ -17,6 +18,9 @@ import (
     "github.com/shirou/gopsutil/v3/disk"
     "github.com/shirou/gopsutil/v3/mem"
 )
+
+//go:embed static
+var staticFiles embed.FS
 
 // Global variables for cached live data
 var (
@@ -693,8 +697,8 @@ func main() {
     // Start periodic system info updates
     startSystemInfoUpdate()
 
-    // Serve static files
-    http.Handle("/", http.FileServer(http.Dir("/mnt/ramdisk/hexfetch/static")))
+    // Serve embedded static files
+    http.Handle("/", http.FileServer(http.FS(staticFiles)))
 
     // API endpoints
     http.HandleFunc("/api/system-info", handleSystemInfo)
