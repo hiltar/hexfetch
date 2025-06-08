@@ -2,6 +2,7 @@ package main
 
 import (
     "embed"
+    "io/fs"
     "encoding/json"
     "fmt"
     "log"
