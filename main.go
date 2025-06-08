@@ -1,6 +1,7 @@
 package main
 
 import (
+    "embed"
     "encoding/json"
     "fmt"
     "log"
@@ -13,6 +14,9 @@ import (
     "github.com/shirou/gopsutil/v3/disk"
     "github.com/shirou/gopsutil/v3/mem"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
 
 // Global variables for cached live data
 var (
@@ -367,7 +371,6 @@ func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
         diskTotalGB = float64(diskInfo.Total) / 1e9
     }
 
-
     metrics := SystemMetrics{
         CPUUsagePercent:   cpuUsage,
         MemoryUsedPercent: memoryUsedPercent,
@@ -643,7 +646,8 @@ func main() {
         }
     }()
 
-    http.Handle("/", http.FileServer(http.Dir("static")))
+    // Serve embedded static files
+    http.Handle("/", http.FileServer(http.FS(staticFiles)))
     http.HandleFunc("/api/live-data", handleLiveData)
     http.HandleFunc("/api/hexjson", handleHEXJSON)
     http.HandleFunc("/api/miners", handleMiners)
