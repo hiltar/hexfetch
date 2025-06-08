@@ -15,7 +15,7 @@ import (
     "github.com/shirou/gopsutil/v3/mem"
 )
 
-//go:embed static/*
+//go:embed static
 var staticFiles embed.FS
 
 // Global variables for cached live data
