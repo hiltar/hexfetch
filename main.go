@@ -698,6 +698,10 @@ func main() {
     startSystemInfoUpdate()
 
     // Serve embedded static files
+    fs, err := fs.Sub(staticFiles, "static")
+    if err != nil {
+        log.Fatal("Failed to create sub-filesystem:", err)
+    }
     http.Handle("/", http.FileServer(http.FS(staticFiles)))
 
     // API endpoints
