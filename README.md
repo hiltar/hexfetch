@@ -57,9 +57,7 @@ sudo mv headless.apkovl.tar.gz /mnt/sdcard
 ## hexfetch contents into sdcard
 ```
 sudo mkdir /mnt/sdcard/hexfetch
-sudo mkdir /mnt/sdcard/hexfetch/static
 # Copy hexfetch-arm executable into /mnt/sdcard/hexfetch
-# Copy static files into /mnt/sdcard/hexfetch/static
 
 sync
 sudo umount mnt/sdcard
