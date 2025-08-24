@@ -140,6 +140,13 @@ sudo mount /dev/sdc1 /mnt/sdcard
 sudo tar -xzf alpine-rpi-3.22.1-aarch64.tar.gz -C /mnt/sdcard --no-same-owner
 sync
 sudo unmount /mnt/sdcard
+
+vi /etc/apk/repositories
+# Change versions
+apk update
+apk upgrade
+lbu commit
+reboot
 ```
 
 ## Updating hexfetch
