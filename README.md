@@ -133,6 +133,15 @@ lbu commit
 
 ---
 
+## Updating Alpine Linux version
+```
+# https://alpinelinux.org/downloads/
+sudo mount /dev/sdc1 /mnt/sdcard
+sudo tar -xzf alpine-rpi-3.22.1-aarch64.tar.gz -C /mnt/sdcard --no-same-owner
+sync
+sudo unmount /mnt/sdcard
+```
+
 ## Updating hexfetch
 To run newer hexfetch executable, power off the raspberry pi and pull sd-card out. Plug it into PC.  
 ```
