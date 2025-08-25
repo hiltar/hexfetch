@@ -1,3 +1,4 @@
 gpu_mem=8
 dtparam=audio=off
 dtoverlay=disable-bt
+hdmi_enable=0
