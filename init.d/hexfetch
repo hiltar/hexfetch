@@ -7,6 +7,8 @@ description="Run hexfetch from ramdisk"
 command="/mnt/ramdisk/hexfetch/hexfetch-arm"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/hexfetch.log"
+error_log="/var/log/hexfetch.log"
 
 depend() {
     need localmount
