@@ -16,11 +16,8 @@ settings directory contains user defined config.json and miners.json.
 ```
 go mod init hexfetch
 go mod tidy
-# Run go get to download dependencies
-
 CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-s -w" -o hexfetch
 
-chmod a+x hexfetch
 ./hexfetch
 ```
 
