@@ -121,7 +121,9 @@ rc-service hexfetch status
 # Add a daily cronjob:
 crontab -e
 1 3 * * * /etc/init.d/hexfetch restart # Restart hexfetch service every day at 03:01.
-0 1 * * 5 lbu commit
+1 * * *                                 lbu status | grep -q "no changes" || lbu commit
+* 4 * * 5                               apk update && apk upgrade
+* 5 * * 4                               rc-service sshd restart
 
 # Disable SSH
 rc-service sshd zap
