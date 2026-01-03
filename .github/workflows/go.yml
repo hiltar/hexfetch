@@ -27,6 +27,7 @@ jobs:
         go get github.com/shirou/gopsutil/v3/disk
         go get github.com/shirou/gopsutil/v3/mem
         CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags="-s -w" -o hexfetch
+        go version -m hexfetch
         upx --best --lzma hexfetch
 
     - name: Upload hexfetch as artifact
