@@ -19,12 +19,12 @@
 
     <div class="container mt-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <img src="/icon.png" alt="HEX Stats Logo" id="logo"><h1>HEX Stats</h1>
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="themeToggle" onchange="toggleTheme()">
-                <label class="form-check-label" for="themeToggle">
-                    <i class="bi bi-sun-fill" id="themeIcon"></i>
-                </label>
+            <div class="d-flex align-items-center gap-3">
+                <img src="/icon.png" alt="HEX Stats Logo" id="logo">
+                <h1 class="mb-0">HEX Stats</h1>
+            </div>
+            <div id="refresh-timer" class="text-muted small">
+                Live Data Refresh:  <span id="countdown" class="fw-bold text-primary">15:00</span>
             </div>
         </div>
         <nav class="navbar navbar-expand-sm" id="hexTabs">
@@ -46,9 +46,6 @@
                             <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab" aria-controls="chart" aria-selected="false"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" id="system-info-tab" data-bs-toggle="tab" href="#system-info" role="tab" aria-controls="system-info" aria-selected="false"><i class="bi bi-cpu-fill me-1"></i> System Info</a>
-                        </li>
-                        <li class="nav-item">
                             <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab" aria-controls="settings" aria-selected="false"><i class="bi bi-gear-fill me-1"></i> Settings</a>
                         </li>
                     </ul>
@@ -62,6 +59,34 @@
                 <p class="total-tshares"><strong>Total T-Shares:</strong> <span id="total-tshares">0.00</span></p>
                 <p class="total-value"><strong>Total T-Shares Value:</strong> $<span id="total-value">0.00</span></p>
                 <p class="liquid-hex-value"><strong>Liquid HEX Value:</strong> $<span id="liquid-hex-value">0.00</span></p>
+                
+                <!-- NEW: Historical Portfolio Chart (exactly after Liquid HEX Value) -->
+                <div id="portfolio-history" class="mt-4">
+                    <h3>Historical Portfolio Value</h3>
+                    <div class="row g-3 mb-3 text-center small">
+                        <div class="col">
+                            <div class="text-muted">Starting (Day <span id="hist-start-day-label">1260</span>)</div>
+                            <div class="h5 fw-bold" id="hist-start-value">$0.00</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">Current</div>
+                            <div class="h5 fw-bold" id="hist-current-value">$0.00</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">All-Time High</div>
+                            <div class="h5 fw-bold text-success" id="hist-ath">$0.00</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">Growth</div>
+                            <div class="h5 fw-bold" id="hist-growth">$0.00</div>
+                            <div class="small fw-bold" id="hist-growth-pct">0.00%</div>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="historicalValueChart" height="320"></canvas>
+                    </div>
+                </div>
+
                 <h3>Active Miners</h3>
                 <div id="active-miners"></div>
                 <div class="mt-3">
@@ -103,25 +128,6 @@
                     <canvas id="dailyPayoutChart"></canvas>
                 </div>
             </div>
-            <div class="tab-pane fade" id="system-info" role="tabpanel">
-                <h2>System Information</h2>
-                <div class="chart-container">
-                    <h3>CPU Usage</h3>
-                    <p id="cpu-usage-value" class="chart-value">0.0%</p>
-                    <canvas id="cpuUsageChart"></canvas>
-                </div>
-                <div class="chart-container">
-                    <h3>Memory Usage</h3>
-                    <p id="memory-usage-value" class="chart-value">0.0%</p>
-                    <canvas id="memoryUsageChart"></canvas>
-                </div>
-                <div class="chart-container">
-                    <h3>Disk Usage</h3>
-                    <p id="disk-usage-value" class="chart-value">0.0%</p>
-                    <canvas id="diskUsageChart"></canvas>
-                </div>
-                <p id="system-last-updated">Last updated: Waiting for data...</p>
-            </div>
             <div class="tab-pane fade" id="settings" role="tabpanel">
                 <h2>Settings</h2>
                 <h3>Live Data Settings</h3>
@@ -135,6 +141,13 @@
                     <label for="liquid-hex" class="form-label">Liquid HEX Amount:</label>
                     <input type="number" id="liquid-hex" class="form-control" min="0" step="0.01">
                     <button class="btn btn-primary mt-2" onclick="saveLiquidHEX()">Save Liquid HEX</button>
+                </div>
+                <!-- NEW: Historical chart start day setting -->
+                <h3>Historical Chart Settings</h3>
+                <div class="mb-3">
+                    <label for="hist-start-day" class="form-label">Starting Day for Historical Chart (e.g. 1420):</label>
+                    <input type="number" id="hist-start-day" class="form-control" min="1" value="1260">
+                    <button class="btn btn-primary mt-2" onclick="saveHistoricalStartDay()">Save Starting Day</button>
                 </div>
                 <h3>Add New Miner</h3>
                 <div class="mb-3">
