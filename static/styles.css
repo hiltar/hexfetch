@@ -1,20 +1,4 @@
-/* Light theme variables (default) */
 :root {
-    --bg-color: #ffffff;
-    --text-color: #000000;
-    --card-bg: #f8f9fa;
-    --primary-bg: #007bff;
-    --primary-text: #ffffff;
-    --input-bg: #ffffff;
-    --input-text: #000000;
-    --nav-bg: #ffffff;
-    --nav-text: #000000;
-    --nav-active-bg: #e9ecef;
-    --border-color: #dee2e6;
-}
-
-/* Dark theme variables */
-[data-theme="dark"] {
     --bg-color: #212529;
     --text-color: #ffffff;
     --card-bg: #343a40;
@@ -392,5 +376,88 @@ body {
 @media (min-width: 992px) {
     .chart-container {
         max-width: 800px;
+    }
+}
+
+/* ==================== REFRESH TIMER  ==================== */
+#refresh-timer {
+    color: var(--primary-bg) !important;
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+#refresh-timer .text-muted {
+    color: inherit !important;
+}
+
+
+#countdown {
+    color: var(--primary-bg) !important;
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: 0.5px;
+}
+
+/* ==================== PORTFOLIO HISTORY STATS ==================== */
+#portfolio-history .row > div {
+    padding: 14px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background-color: var(--card-bg);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+#portfolio-history .row > div:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+#portfolio-history .text-muted {
+    color: #00b7eb !important;
+    opacity: 0.92;
+    font-weight: 600;
+    font-size: 0.88rem;
+    letter-spacing: 0.3px;
+    margin-bottom: 4px;
+}
+
+#portfolio-history .h5 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin: 2px 0 0;
+    color: var(--text-color);
+}
+
+/* Growth percentage gets extra attention */
+#hist-growth-pct {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 3px;
+}
+
+/* All existing profile, liquid, total styles kept and enhanced */
+#profile .total-tshares,
+#profile .total-value,
+#profile .liquid-hex-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    background-color: var(--card-bg);
+    padding: 12px 16px;
+    margin: 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+/* Responsive */
+@media (max-width: 576px) {
+    #refresh-timer {
+        font-size: 0.9rem;
+        padding: 6px 10px;
+    }
+    #portfolio-history .row > div {
+        padding: 10px 8px;
+    }
+    #portfolio-history .h5 {
+        font-size: 1.2rem;
     }
 }
