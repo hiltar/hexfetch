@@ -746,13 +746,12 @@ document.addEventListener('DOMContentLoaded', () => {
     checkNavbarRows();
 
     // Periodic updates
-    setInterval(fetchProfile, 60000); // Update profile every minute
-    setInterval(fetchLiveData, 30000); // Extra safety live data fetch
+    setInterval(fetchProfile, 600000); // Update profile every 10 minutes
     setInterval(() => {
         console.log('Attempting to update charts...');
         renderCharts();
     }, 86400000); // Update charts every day
-    setInterval(renderPortfolioHistoryChart, 300000); // Update portfolio chart every 5 min
+    setInterval(renderPortfolioHistoryChart, 86400000); // Update portfolio chart every day
 
     // Navbar row detection on resize
     window.addEventListener('resize', checkNavbarRows);
