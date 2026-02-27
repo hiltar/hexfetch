@@ -4,94 +4,82 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HEX Stats</title>
-    <!-- Favicon -->
     <link rel="icon" type="image/png" href="/icon.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
-    <!-- Bootstrap Datepicker CSS -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.9.0/css/bootstrap-datepicker.min.css" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Notification container -->
     <div id="notification-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1100;"></div>
 
     <div class="container mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-4">
             <div class="d-flex align-items-center gap-3">
-                <img src="/icon.png" alt="HEX Stats Logo" id="logo">
-                <h1 class="mb-0">HEX Stats</h1>
+                <img src="/icon.png" alt="Logo" id="logo" class="logo">
+                <h1 class="mb-0 display-5 fw-bold">HEX Stats</h1>
             </div>
-            <div id="refresh-timer" class="text-muted small">
-                Live Data Refresh:  <span id="countdown" class="fw-bold text-primary">15:00</span>
+            
+            <!-- Animated Circular Countdown -->
+            <div id="refresh-timer" class="glass-card text-center px-4 py-2">
+                <div class="small mb-1 text-muted">Live Data Refresh</div>
+                <div class="position-relative d-inline-block">
+                    <svg width="68" height="68" class="timer-svg">
+                        <circle cx="34" cy="34" r="30" class="timer-bg"/>
+                        <circle cx="34" cy="34" r="30" class="timer-progress" id="timer-progress"/>
+                    </svg>
+                    <div class="position-absolute top-50 start-50 translate-middle text-center">
+                        <div id="countdown" class="fw-bold fs-4">4:50</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="themeToggle" onchange="toggleTheme()">
+                <label class="form-check-label" for="themeToggle"><i class="bi bi-sun-fill" id="themeIcon"></i></label>
             </div>
         </div>
-        <nav class="navbar navbar-expand-sm" id="hexTabs">
+
+        <nav class="navbar navbar-expand-sm glass-card mb-4" id="hexTabs">
+            <!-- same nav as before but with glass effect -->
             <div class="container-fluid">
-                <!-- Hamburger button -->
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                     <span class="navbar-toggler-icon"></span>
                 </button>
-                <!-- Nav items -->
                 <div class="collapse navbar-collapse" id="navbarNav">
-                    <ul class="navbar-nav nav-tabs w-100" role="tablist">
-                        <li class="nav-item">
-                            <a class="nav-link active" id="profile-tab" data-bs-toggle="tab" href="#profile" role="tab" aria-controls="profile" aria-selected="true"><i class="bi bi-person-fill me-1"></i> Profile</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" id="live-data-tab" data-bs-toggle="tab" href="#live-data" role="tab" aria-controls="live-data" aria-selected="false"><i class="bi bi-broadcast me-1"></i> Live Data</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab" aria-controls="chart" aria-selected="false"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab" aria-controls="settings" aria-selected="false"><i class="bi bi-gear-fill me-1"></i> Settings</a>
-                        </li>
+                    <ul class="navbar-nav nav-tabs w-100">
+                        <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#profile"><i class="bi bi-person-fill me-1"></i>Profile</a></li>
+                        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#live-data"><i class="bi bi-broadcast me-1"></i>Live</a></li>
+                        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#chart"><i class="bi bi-bar-chart-fill me-1"></i>Charts</a></li>
+                        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#settings"><i class="bi bi-gear-fill me-1"></i>Settings</a></li>
                     </ul>
                 </div>
             </div>
         </nav>
-        <div class="tab-content mt-3">
-            <div class="tab-pane fade show active" id="profile" role="tabpanel">
-                <h2>Profile</h2>
-                <p id="profile-message"></p>
-                <p class="total-tshares"><strong>Total T-Shares:</strong> <span id="total-tshares">0.00</span></p>
-                <p class="total-value"><strong>Total T-Shares Value:</strong> $<span id="total-value">0.00</span></p>
-                <p class="liquid-hex-value"><strong>Liquid HEX Value:</strong> $<span id="liquid-hex-value">0.00</span></p>
-                
-                <!-- NEW: Historical Portfolio Chart (exactly after Liquid HEX Value) -->
-                <div id="portfolio-history" class="mt-4">
-                    <h3>Historical Portfolio Value</h3>
-                    <div class="row g-3 mb-3 text-center small">
-                        <div class="col">
-                            <div class="text-muted">Starting (Day <span id="hist-start-day-label">1260</span>)</div>
-                            <div class="h5 fw-bold" id="hist-start-value">$0.00</div>
-                        </div>
-                        <div class="col">
-                            <div class="text-muted">Current</div>
-                            <div class="h5 fw-bold" id="hist-current-value">$0.00</div>
-                        </div>
-                        <div class="col">
-                            <div class="text-muted">All-Time High</div>
-                            <div class="h5 fw-bold text-success" id="hist-ath">$0.00</div>
-                        </div>
-                        <div class="col">
-                            <div class="text-muted">Growth</div>
-                            <div class="h5 fw-bold" id="hist-growth">$0.00</div>
-                            <div class="small fw-bold" id="hist-growth-pct">0.00%</div>
-                        </div>
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="historicalValueChart" height="320"></canvas>
-                    </div>
+
+        <div class="tab-content">
+            <!-- Profile Tab – Hero Dashboard -->
+            <div class="tab-pane fade show active" id="profile">
+                <div class="glass-card p-4 mb-4 text-center hero-portfolio">
+                    <h2 class="fw-bold">Your Portfolio</h2>
+                    <div id="portfolio-total" class="display-3 fw-bold mb-2">$0.00</div>
+                    <div id="portfolio-growth" class="fs-4"></div>
                 </div>
 
-                <h3>Active Miners</h3>
-                <div id="active-miners"></div>
-                <div class="mt-3">
-                    <button class="btn btn-primary" onclick="showCompletedMiners()">View Completed Miners</button>
+                <!-- Historical Chart + Stats -->
+                <div id="portfolio-history" class="glass-card p-4">
+                    <h4 class="mb-3">Historical Portfolio Value</h4>
+                    <div class="row g-3 mb-4 text-center">
+                        <div class="col"><div class="text-muted small">Starting Day <span id="hist-start-day-label">1260</span></div><div id="hist-start-value" class="h5">$0</div></div>
+                        <div class="col"><div class="text-muted small">Current</div><div id="hist-current-value" class="h5">$0</div></div>
+                        <div class="col"><div class="text-muted small">All-Time High</div><div id="hist-ath" class="h5 text-success">$0</div></div>
+                        <div class="col"><div class="text-muted small">Growth</div><div id="hist-growth" class="h5"></div><div id="hist-growth-pct" class="small fw-bold"></div></div>
+                    </div>
+                    <canvas id="historicalValueChart" height="380"></canvas>
                 </div>
+
+                <h4 class="mt-5 mb-3">Active Miners</h4>
+                <div id="active-miners"></div>
             </div>
             <div class="tab-pane fade" id="live-data" role="tabpanel">
                 <h2>Live Data</h2>
@@ -169,9 +157,12 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Floating Add Miner Button -->
+    <button onclick="document.getElementById('settings-tab').click()" class="floating-btn btn btn-primary shadow-lg">
+        <i class="bi bi-plus-lg"></i>
+    </button>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-    <!-- Bootstrap Datepicker JS (requires jQuery) -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.9.0/js/bootstrap-datepicker.min.js"></script>
     <script src="scripts.js"></script>
