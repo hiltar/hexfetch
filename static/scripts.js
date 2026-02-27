@@ -667,6 +667,7 @@ function addMiner() {
         .then(response => {
             if (response.ok) {
                 showNotification('Miner added successfully', 'success');
+                fetchProfile();
                 fetchSettings();
                 document.getElementById('start-date').value = '';
                 document.getElementById('end-date').value = '';
@@ -746,12 +747,9 @@ document.addEventListener('DOMContentLoaded', () => {
     checkNavbarRows();
 
     // Periodic updates
-    setInterval(fetchProfile, 600000); // Update profile every 10 minutes
-    setInterval(() => {
-        console.log('Attempting to update charts...');
-        renderCharts();
-    }, 86400000); // Update charts every day
-    setInterval(renderPortfolioHistoryChart, 86400000); // Update portfolio chart every day
+    setInterval(fetchProfile, 3 * 600000);                          // Update profile every 30 minutes
+    setInterval(() => { renderCharts(); }, 8 * 60 * 60 * 1000);    // Update charts every 8 hour
+    setInterval(renderPortfolioHistoryChart, 8 * 60 * 60 * 1000); // Update portfolio chart every 8 hour
 
     // Navbar row detection on resize
     window.addEventListener('resize', checkNavbarRows);
