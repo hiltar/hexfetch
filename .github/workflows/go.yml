@@ -34,6 +34,8 @@ jobs:
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
       with:
-        files: hexfetch-arm hexfetch
+        files: |
+          hexfetch-arm
+          hexfetch
         draft: true
         
