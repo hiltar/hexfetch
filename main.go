@@ -242,7 +242,7 @@ func startDailyHEXJSONUpdate() {
 	go func() {
 		for {
 			now := time.Now().UTC()
-			nextMidnight := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
+			nextMidnight := now.Truncate(24 * time.Hour).Add(24 * time.Hour + 3 * time.Hour)
 			delay := nextMidnight.Sub(now)
 
 			debugLog("Scheduling next HEXJSON update in", delay, "(at", nextMidnight, "UTC)")
