@@ -333,7 +333,6 @@ function fetchProfile() {
                             const liquidHEXValue = userLiquidHEX * data.price_Pulsechain;
                             document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
                         });
-                    renderPortfolioHistoryChart();
                 });
 
             const activeMinersDiv = document.getElementById('active-miners');
@@ -748,8 +747,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Periodic updates
     setInterval(fetchProfile, 3 * 600000);                          // Update profile every 30 minutes
-    setInterval(() => { renderCharts(); }, 8 * 60 * 60 * 1000);    // Update charts every 8 hour
-    setInterval(renderPortfolioHistoryChart, 8 * 60 * 60 * 1000); // Update portfolio chart every 8 hour
+    setInterval(() => { renderCharts(); }, 4 * 60 * 60 * 1000);    // Update charts every 4 hour
+    setInterval(renderPortfolioHistoryChart, 4 * 60 * 60 * 1000); // Update portfolio chart every 4 hour
 
     // Navbar row detection on resize
     window.addEventListener('resize', checkNavbarRows);
