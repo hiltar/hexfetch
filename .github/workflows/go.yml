@@ -22,14 +22,12 @@ jobs:
         
     - name: Build
       run: |
-        go mod init hexfetch
+        go mod init hexfetch || true
         go mod tidy
         CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -trimpath -ldflags="-s -w" -o hexfetch-arm
-        CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags="-s -w" -o hexfetch
-        go version -m hexfetch-arm
-        upx --best --lzma hexfetch-arm
-        upx --best --lzma hexfetch
-    
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -trimpath -ldflags="-s -w" -o hexfetch
+        upx --best --lzma hexfetch*
+
     - name: Upload to GitHub Release
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
@@ -37,5 +35,4 @@ jobs:
         files: |
           hexfetch-arm
           hexfetch
-        draft: true
-        
+          draft: true
