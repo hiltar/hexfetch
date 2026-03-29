@@ -226,7 +226,7 @@ function renderPortfolioHistoryChart() {
                 data: {
                     labels: portfolioData.map(d => d.day),
                     datasets: [{
-                        label: 'Portfolio Value (USD)',
+                        label: 'Value',
                         data: portfolioData.map(d => d.value),
                         borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
                         backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
@@ -248,7 +248,7 @@ function renderPortfolioHistoryChart() {
                         x: {
                             title: {
                                 display: true,
-                                text: 'PulseChain Day',
+                                text: 'Day',
                                 color: isDarkTheme ? '#ffffff' : '#000000'
                             },
                             ticks: {
@@ -286,7 +286,7 @@ function renderPortfolioHistoryChart() {
                                     return 'Day ' + tooltipItems[0].label;
                                 },
                                 label: function(context) {
-                                    return 'Portfolio Value: $' + formatWithCommas(context.raw.toFixed(2));
+                                    return 'Value: $' + formatWithCommas(context.raw.toFixed(2));
                                 }
                             }
                         }
@@ -489,8 +489,9 @@ function renderCharts() {
                             data: config.data.map(entry => entry[config.field]),
                             borderColor: config.borderColor,
                             fill: false,
-                            pointRadius: 3,
-                            tension: 0.1
+                            pointRadius: 0,
+                            pointHoverRadius: 5,
+                            tension: 0.25
                         }]
                     },
                     options: {
