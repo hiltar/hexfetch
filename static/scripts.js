@@ -321,6 +321,10 @@ function fetchProfile() {
                 .then(data => {
                     const totalValue = totalTShares * data.tsharePrice_Pulsechain;
                     document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
+                    const dailyInterestHEX = totalTShares * data.payoutPerTshare_Pulsechain;
+                    const dailyInterestUSD = dailyInterestHEX * data.price_Pulsechain;
+                    document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2));
+                    document.getElementById('interest-usd').textContent = formatWithCommas(dailyInterestUSD.toFixed(2));
                 });
 
             fetch('/api/config')
