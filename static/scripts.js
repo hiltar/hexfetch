@@ -12,7 +12,7 @@ let chartInstances = {
 let userTotalTShares = 0;
 let userLiquidHEX = 0;
 let historicalStartDay = 1260;
-let liveDataCache = null;           // ← Optimized: cache latest live data
+let liveDataCache = null;
 
 // Live data timer variables
 let liveDataIntervalId = null;
@@ -88,16 +88,15 @@ function formatWithCommas(num) {
 }
 
 // =============================================
-// LIVE DATA (Optimized)
+// LIVE DATA
 // =============================================
 async function fetchLiveData() {
     try {
         const response = await fetch('/api/live-data');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
-        liveDataCache = data;   // Cache for other functions
+        liveDataCache = data;
 
-        // Update Live Data tab
         document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
         document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
         document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
@@ -109,7 +108,6 @@ async function fetchLiveData() {
         document.getElementById('last-updated').textContent = `Last updated: ${timestamp}`;
         document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
 
-        // Reset countdown
         nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
         updateCountdown();
     } catch (error) {
@@ -144,7 +142,7 @@ function setupLiveDataInterval(frequencyInMinutes) {
 }
 
 // =============================================
-// PROFILE (Optimized with Promise.all)
+// PROFILE
 // =============================================
 async function fetchProfile() {
     try {
@@ -158,7 +156,6 @@ async function fetchProfile() {
         const liveData = await liveRes.json();
         const config = await configRes.json();
 
-        // Cache live data
         liveDataCache = liveData;
 
         let totalTShares = 0;
@@ -176,7 +173,6 @@ async function fetchProfile() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
-        // Use cached live data
         const totalValue = totalTShares * liveData.tsharePrice_Pulsechain;
         document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
 
@@ -185,12 +181,10 @@ async function fetchProfile() {
         document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
         document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
 
-        // Liquid HEX
         userLiquidHEX = config.liquidHEX || 0;
         const liquidHEXValue = userLiquidHEX * liveData.price_Pulsechain;
         document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
 
-        // Render active miners
         const activeMinersDiv = document.getElementById('active-miners');
         activeMinersDiv.innerHTML = '';
         if (activeMiners.length === 0) {
@@ -368,7 +362,6 @@ function renderCharts() {
             const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
             const latestData = sortedData[sortedData.length - 1] || {};
 
-            // Update chart value displays
             document.getElementById('price-value').textContent = latestData.pricePulseX ? `$${latestData.pricePulseX.toFixed(4)}` : '$0.0000';
             document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX ? `${formatWithCommas(latestData.tshareRateHEX.toFixed(2))} HEX` : '0.00 HEX';
             document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(2))} HEX` : '0.00 HEX';
@@ -430,6 +423,9 @@ function fetchSettings() {
             document.getElementById('liquid-hex').value = config.liquidHEX || '';
             document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
             historicalStartDay = config.historicalStartDay || 1260;
+
+            // Start live data countdown immediately on page load
+            setupLiveDataInterval(config.liveDataFrequency);
         });
 
     fetch('/api/miners')
@@ -603,7 +599,6 @@ function checkNavbarRows() {
 // INITIALIZATION
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize datepickers
     $('.datepicker').datepicker({
         format: 'dd-mm-yyyy',
         autoclose: true,
@@ -612,18 +607,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.title = 'HEX Stats';
 
-    // Initial data load
     fetchProfile();
     fetchLiveData();
-    fetchSettings();           // Loads frequency + miners list
+    fetchSettings();
     renderCharts();
 
-    // Periodic updates
-    setInterval(fetchProfile, 30 * 60 * 1000);           // every 30 min
-    setInterval(renderCharts, 4 * 60 * 60 * 1000);       // every 4 hours
+    setInterval(fetchProfile, 30 * 60 * 1000);
+    setInterval(renderCharts, 4 * 60 * 60 * 1000);
     setInterval(renderPortfolioHistoryChart, 4 * 60 * 60 * 1000);
 
-    // Navbar responsiveness
     window.addEventListener('resize', checkNavbarRows);
     checkNavbarRows();
 });
