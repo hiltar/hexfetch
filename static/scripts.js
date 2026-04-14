@@ -14,11 +14,9 @@ let userLiquidHEX = 0;
 let historicalStartDay = 1260;
 let liveDataCache = null;
 
-// Live data timer variables
-let liveDataIntervalId = null;
-let countdownIntervalId = null;
-let nextRefreshTime = Date.now();
+let ws = null;
 let currentFrequency = 15;
+let nextRefreshTime = Date.now();
 
 // =============================================
 // HELPERS
@@ -26,19 +24,10 @@ let currentFrequency = 15;
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
     const notification = document.createElement('div');
-    notification.className = `notification alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
-    notification.setAttribute('role', 'alert');
-    notification.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
+    notification.className = `alert alert-${type} alert-dismissible fade show`;
+    notification.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
     container.appendChild(notification);
-
-    setTimeout(() => {
-        notification.classList.remove('show');
-        notification.classList.add('fade');
-        setTimeout(() => notification.remove(), 150);
-    }, 3000);
+    setTimeout(() => notification.remove(), 3500);
 }
 
 function showConfirmModal(title, message) {
@@ -52,9 +41,7 @@ function showConfirmModal(title, message) {
                         <h5 class="modal-title">${title}</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <div class="modal-body">
-                        <p>${message}</p>
-                    </div>
+                    <div class="modal-body"><p>${message}</p></div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
@@ -63,7 +50,6 @@ function showConfirmModal(title, message) {
             </div>
         `;
         document.body.appendChild(modal);
-
         const bsModal = new bootstrap.Modal(modal, { backdrop: 'static', keyboard: false });
         bsModal.show();
 
@@ -88,15 +74,43 @@ function formatWithCommas(num) {
 }
 
 // =============================================
-// LIVE DATA
+// LIVE INDICATOR (Green "Live" badge)
 // =============================================
-async function fetchLiveData() {
-    try {
-        const response = await fetch('/api/live-data');
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
+function updateLiveIndicator(connected) {
+    let indicator = document.getElementById('live-indicator');
+    if (!indicator) {
+        indicator = document.createElement('span');
+        indicator.id = 'live-indicator';
+        indicator.className = 'badge ms-2';
+        indicator.style.fontSize = '0.75rem';
+        document.getElementById('refresh-timer').appendChild(indicator);
+    }
+    if (connected) {
+        indicator.innerHTML = '● Live';
+        indicator.className = 'badge bg-success ms-2';
+    } else {
+        indicator.innerHTML = '● Disconnected';
+        indicator.className = 'badge bg-secondary ms-2';
+    }
+}
+
+// =============================================
+// WEBSOCKET LIVE UPDATES
+// =============================================
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
+
+    ws.onopen = () => {
+        console.log('✅ WebSocket connected');
+        updateLiveIndicator(true);
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
         liveDataCache = data;
 
+        // Update Live Data tab instantly
         document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
         document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
         document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
@@ -105,18 +119,24 @@ async function fetchLiveData() {
         document.getElementById('beat').textContent = formatWithCommas(data.beat);
 
         const timestamp = new Date().toLocaleTimeString();
-        document.getElementById('last-updated').textContent = `Last updated: ${timestamp}`;
+        document.getElementById('last-updated').textContent = `Live • ${timestamp}`;
         document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
 
         nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
         updateCountdown();
-    } catch (error) {
-        console.error('Error fetching live data:', error);
-        document.getElementById('last-updated').textContent = `Error updating data: ${error.message}`;
-        document.title = 'HEX Stats';
-    }
+    };
+
+    ws.onclose = () => {
+        updateLiveIndicator(false);
+        setTimeout(connectWebSocket, 5000); // auto-reconnect
+    };
+
+    ws.onerror = (err) => console.error('WebSocket error:', err);
 }
 
+// =============================================
+// COUNTDOWN
+// =============================================
 function updateCountdown() {
     const remainingMs = Math.max(0, nextRefreshTime - Date.now());
     const totalSec = Math.floor(remainingMs / 1000);
@@ -125,38 +145,18 @@ function updateCountdown() {
     document.getElementById('countdown').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-function setupLiveDataInterval(frequencyInMinutes) {
-    if (liveDataIntervalId) clearInterval(liveDataIntervalId);
-    if (countdownIntervalId) clearInterval(countdownIntervalId);
-
-    currentFrequency = frequencyInMinutes;
-    nextRefreshTime = Date.now() + frequencyInMinutes * 60 * 1000;
-
-    countdownIntervalId = setInterval(updateCountdown, 1000);
-    updateCountdown();
-
-    liveDataIntervalId = setInterval(() => {
-        console.log(`Fetching live data every ${frequencyInMinutes} minute(s)...`);
-        fetchLiveData();
-    }, frequencyInMinutes * 60 * 1000);
-}
-
 // =============================================
-// PROFILE
+// PROFILE (uses cached live data from WebSocket)
 // =============================================
 async function fetchProfile() {
     try {
-        const [minersRes, liveRes, configRes] = await Promise.all([
+        const [minersRes, configRes] = await Promise.all([
             fetch('/api/miners'),
-            fetch('/api/live-data'),
             fetch('/api/config')
         ]);
 
         const miners = await minersRes.json();
-        const liveData = await liveRes.json();
         const config = await configRes.json();
-
-        liveDataCache = liveData;
 
         let totalTShares = 0;
         let activeMiners = [];
@@ -173,17 +173,20 @@ async function fetchProfile() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
-        const totalValue = totalTShares * liveData.tsharePrice_Pulsechain;
-        document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
+        // Use liveDataCache from WebSocket (no extra HTTP call)
+        if (liveDataCache) {
+            const totalValue = totalTShares * liveDataCache.tsharePrice_Pulsechain;
+            document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
 
-        const dailyInterestHEX = totalTShares * liveData.payoutPerTshare_Pulsechain;
-        const dailyInterestUSD = dailyInterestHEX * liveData.price_Pulsechain;
-        document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
-        document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
+            const dailyInterestHEX = totalTShares * liveDataCache.payoutPerTshare_Pulsechain;
+            const dailyInterestUSD = dailyInterestHEX * liveDataCache.price_Pulsechain;
+            document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
+            document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
 
-        userLiquidHEX = config.liquidHEX || 0;
-        const liquidHEXValue = userLiquidHEX * liveData.price_Pulsechain;
-        document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+            userLiquidHEX = config.liquidHEX || 0;
+            const liquidHEXValue = userLiquidHEX * liveDataCache.price_Pulsechain;
+            document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+        }
 
         const activeMinersDiv = document.getElementById('active-miners');
         activeMinersDiv.innerHTML = '';
@@ -408,7 +411,6 @@ function renderCharts() {
         })
         .catch(error => {
             console.error('Error rendering charts:', error);
-            document.querySelectorAll('.chart-container').forEach(c => c.innerHTML = `<p style="color: var(--text-color); text-align: center;">Error loading chart: ${error.message}</p>`);
         });
 }
 
@@ -423,9 +425,7 @@ function fetchSettings() {
             document.getElementById('liquid-hex').value = config.liquidHEX || '';
             document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
             historicalStartDay = config.historicalStartDay || 1260;
-
-            // Start live data countdown immediately on page load
-            setupLiveDataInterval(config.liveDataFrequency);
+            currentFrequency = config.liveDataFrequency;
         });
 
     fetch('/api/miners')
@@ -462,7 +462,6 @@ function saveFrequency() {
     .then(response => {
         if (response.ok) {
             showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
-            setupLiveDataInterval(frequency);
         } else {
             showNotification('Error saving frequency', 'danger');
         }
@@ -608,9 +607,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.title = 'HEX Stats';
 
     fetchProfile();
-    fetchLiveData();
     fetchSettings();
     renderCharts();
+    connectWebSocket();
 
     setInterval(fetchProfile, 30 * 60 * 1000);
     setInterval(renderCharts, 4 * 60 * 60 * 1000);
