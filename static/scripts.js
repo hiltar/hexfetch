@@ -17,6 +17,7 @@ let liveDataCache = null;
 let ws = null;
 let currentFrequency = 15;
 let nextRefreshTime = Date.now();
+let countdownIntervalId = null;
 
 // =============================================
 // HELPERS
@@ -57,10 +58,7 @@ function showConfirmModal(title, message) {
         const cancelBtn = modal.querySelector('.btn-secondary');
         const closeBtn = modal.querySelector('.btn-close');
 
-        const cleanup = () => {
-            bsModal.hide();
-            modal.remove();
-        };
+        const cleanup = () => { bsModal.hide(); modal.remove(); };
 
         confirmBtn.addEventListener('click', () => { cleanup(); resolve(true); });
         cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
@@ -95,7 +93,7 @@ function updateLiveIndicator(connected) {
 }
 
 // =============================================
-// WEBSOCKET LIVE UPDATES
+// WEBSOCKET
 // =============================================
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -133,7 +131,7 @@ function connectWebSocket() {
 }
 
 // =============================================
-// COUNTDOWN
+// COUNTDOWN (now properly ticking every second)
 // =============================================
 function updateCountdown() {
     const remainingMs = Math.max(0, nextRefreshTime - Date.now());
@@ -143,8 +141,14 @@ function updateCountdown() {
     document.getElementById('countdown').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+function startCountdownTicker() {
+    if (countdownIntervalId) clearInterval(countdownIntervalId);
+    countdownIntervalId = setInterval(updateCountdown, 1000);
+    updateCountdown(); // immediate update
+}
+
 // =============================================
-// PROFILE (uses cached live data from WebSocket)
+// PROFILE
 // =============================================
 async function fetchProfile() {
     try {
@@ -406,13 +410,11 @@ function renderCharts() {
                 });
             });
         })
-        .catch(error => {
-            console.error('Error rendering charts:', error);
-        });
+        .catch(error => console.error('Error rendering charts:', error));
 }
 
 // =============================================
-// SETTINGS & MINERS
+// SETTINGS
 // =============================================
 function fetchSettings() {
     fetch('/api/config')
@@ -423,8 +425,10 @@ function fetchSettings() {
             document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
             historicalStartDay = config.historicalStartDay || 1260;
             currentFrequency = config.liveDataFrequency;
+
+            // Start countdown with correct frequency
             nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-            updateCountdown();
+            startCountdownTicker();
         });
 
     fetch('/api/miners')
@@ -572,7 +576,7 @@ async function deleteMiner(index) {
 }
 
 // =============================================
-// NAVBAR RESPONSIVENESS
+// NAVBAR
 // =============================================
 function checkNavbarRows() {
     const navbarNav = document.querySelector('#navbarNav');
