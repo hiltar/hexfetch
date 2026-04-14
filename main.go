@@ -10,19 +10,17 @@ import (
     "os"
     "path/filepath"
     "reflect"
+    "strconv"
     "sync"
     "time"
 
     jsoniter "github.com/json-iterator/go"
     "github.com/cenkalti/backoff/v4"
+    "github.com/gorilla/websocket"
 )
 
 //go:embed static
 var staticFiles embed.FS
-
-// =============================================
-// CONFIGURATION
-// =============================================
 
 const (
     dataDir                  = "/opt/hexfetch"
@@ -54,9 +52,28 @@ var (
 )
 
 // =============================================
+// WEBSOCKET HUB
+// =============================================
+var wsHub = struct {
+    clients    map[*websocket.Conn]struct{}
+    broadcast  chan LiveData
+    register   chan *websocket.Conn
+    unregister chan *websocket.Conn
+    mu         sync.RWMutex
+}{
+    clients:    make(map[*websocket.Conn]struct{}),
+    broadcast:  make(chan LiveData, 10),
+    register:   make(chan *websocket.Conn, 10),
+    unregister: make(chan *websocket.Conn, 10),
+}
+
+var upgrader = websocket.Upgrader{
+    CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// =============================================
 // DATA STRUCTURES
 // =============================================
-
 type HEXJSONEntry struct {
     CurrentDay         int     `json:"currentDay"`
     TshareRateHEX      float64 `json:"tshareRateHEX"`
@@ -92,7 +109,6 @@ type Config struct {
 // =============================================
 // CONFIG MANAGER
 // =============================================
-
 type ConfigManager struct {
     mu          sync.RWMutex
     config      Config
@@ -159,7 +175,6 @@ func (cm *ConfigManager) Subscribe() chan struct{} {
 // =============================================
 // HELPERS
 // =============================================
-
 func debugLog(v ...any) {
     if os.Getenv("DEBUG") == "true" {
         log.Println(v...)
@@ -182,7 +197,6 @@ func getMaxDay(data HEXJSON) int {
 // =============================================
 // DATA FETCHING
 // =============================================
-
 func fetchHEXJSON() (HEXJSON, error) {
     var data HEXJSON
     b := backoff.NewExponentialBackOff()
@@ -224,7 +238,6 @@ func fetchLiveData() (LiveData, error) {
 // =============================================
 // LOCAL STORAGE
 // =============================================
-
 func loadLocalHEXJSON() (HEXJSON, error) {
     hexJSONMutex.RLock()
     defer hexJSONMutex.RUnlock()
@@ -269,7 +282,7 @@ func startDailyHEXJSONUpdate() {
     go func() {
         for {
             now := time.Now().UTC()
-            nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour) // tomorrow at 03:00 UTC
+            nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour)
             time.Sleep(nextUpdate.Sub(now))
 
             debugLog("Running daily HEXJSON update...")
@@ -363,12 +376,10 @@ func saveConfig(cfg Config) error {
 // =============================================
 // API HANDLERS
 // =============================================
-
 func handleLiveData(w http.ResponseWriter, r *http.Request) {
     liveDataMutex.RLock()
     data := latestLiveData
     liveDataMutex.RUnlock()
-
     buf := bufferPool.Get().(*bytes.Buffer)
     defer bufferPool.Put(buf)
     buf.Reset()
@@ -404,8 +415,6 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Invalid miner data", http.StatusBadRequest)
         return
     }
-
-    // Fixed: separate Parse calls
     if _, err := time.Parse(dateLayout, miner.StartDate); err != nil {
         http.Error(w, "Invalid start date format (DD-MM-YYYY)", http.StatusBadRequest)
         return
@@ -414,7 +423,6 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Invalid end date format (DD-MM-YYYY)", http.StatusBadRequest)
         return
     }
-
     miners, _ := loadMiners()
     miners = append(miners, miner)
     if err := saveMiners(miners); err != nil {
@@ -503,32 +511,60 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // =============================================
-// MAIN
+// WEBSOCKET HANDLER
 // =============================================
-
-func main() {
-    if err := os.MkdirAll(dataDir, 0755); err != nil {
-        log.Fatal("Failed to create data directory:", err)
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+    conn, err := upgrader.Upgrade(w, r, nil)
+    if err != nil {
+        return
     }
 
-    // Initial data load
-    if err := updateLocalHEXJSON(); err != nil {
-        debugLog("Initial HEXJSON load failed:", err)
-    }
-    startDailyHEXJSONUpdate()
+    wsHub.register <- conn
 
-    cfg, _ := loadConfig()
-    configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
-    configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+    liveDataMutex.RLock()
+    current := latestLiveData
+    liveDataMutex.RUnlock()
+    _ = conn.WriteJSON(current)
 
-    // Initial live data
-    if data, err := fetchLiveData(); err == nil {
-        liveDataMutex.Lock()
-        latestLiveData = data
-        liveDataMutex.Unlock()
-    }
+    go func() {
+        defer func() {
+            wsHub.unregister <- conn
+            conn.Close()
+        }()
+        for {
+            if _, _, err := conn.ReadMessage(); err != nil {
+                return
+            }
+        }
+    }()
+}
 
-    // Live data goroutine with dynamic frequency
+func startWebSocketHub() {
+    go func() {
+        for {
+            select {
+            case client := <-wsHub.register:
+                wsHub.mu.Lock()
+                wsHub.clients[client] = struct{}{}
+                wsHub.mu.Unlock()
+            case client := <-wsHub.unregister:
+                wsHub.mu.Lock()
+                delete(wsHub.clients, client)
+                wsHub.mu.Unlock()
+            case data := <-wsHub.broadcast:
+                wsHub.mu.RLock()
+                for client := range wsHub.clients {
+                    if err := client.WriteJSON(data); err != nil {
+                        client.Close()
+                    }
+                }
+                wsHub.mu.RUnlock()
+            }
+        }
+    }()
+}
+
+func startLiveDataFetcher() {
     go func() {
         ticker := time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
         changeCh := configManager.Subscribe()
@@ -541,14 +577,41 @@ func main() {
                     liveDataMutex.Lock()
                     latestLiveData = data
                     liveDataMutex.Unlock()
+                    wsHub.broadcast <- data
                 }
             case <-changeCh:
                 ticker.Reset(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
             }
         }
     }()
+}
 
-    // Static files + API routes
+// =============================================
+// MAIN
+// =============================================
+func main() {
+    if err := os.MkdirAll(dataDir, 0755); err != nil {
+        log.Fatal("Failed to create data directory:", err)
+    }
+
+    if err := updateLocalHEXJSON(); err != nil {
+        debugLog("Initial HEXJSON load failed:", err)
+    }
+    startDailyHEXJSONUpdate()
+
+    cfg, _ := loadConfig()
+    configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
+    configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+
+    if data, err := fetchLiveData(); err == nil {
+        liveDataMutex.Lock()
+        latestLiveData = data
+        liveDataMutex.Unlock()
+    }
+
+    startWebSocketHub()
+    startLiveDataFetcher()
+
     subFS, _ := fs.Sub(staticFiles, "static")
     http.Handle("/", http.FileServer(http.FS(subFS)))
 
@@ -559,6 +622,7 @@ func main() {
     http.HandleFunc("/api/end-miner", handleEndMiner)
     http.HandleFunc("/api/delete-miner", handleDeleteMiner)
     http.HandleFunc("/api/config", handleConfig)
+    http.HandleFunc("/ws/live", handleWebSocket)
 
     log.Println("🚀 HEX Stats server starting on :5555")
     log.Fatal(http.ListenAndServe(":5555", nil))
