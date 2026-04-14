@@ -91,7 +91,7 @@ type Config struct {
 }
 
 // =============================================
-// CONFIG MANAGER (thread-safe)
+// CONFIG MANAGER
 // =============================================
 
 type ConfigManager struct {
@@ -223,7 +223,7 @@ func fetchLiveData() (LiveData, error) {
 }
 
 // =============================================
-// LOCAL STORAGE (HEXJSON + Miners + Config)
+// LOCAL STORAGE
 // =============================================
 
 func loadLocalHEXJSON() (HEXJSON, error) {
@@ -270,7 +270,7 @@ func startDailyHEXJSONUpdate() {
     go func() {
         for {
             now := time.Now().UTC()
-            nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour) // tomorrow 03:00 UTC
+            nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour) // tomorrow at 03:00 UTC
             time.Sleep(nextUpdate.Sub(now))
 
             debugLog("Running daily HEXJSON update...")
@@ -283,7 +283,6 @@ func startDailyHEXJSONUpdate() {
     }()
 }
 
-// Miners
 func loadMiners() ([]Miner, error) {
     path := filepath.Join(dataDir, "miners.json")
     file, err := os.Open(path)
@@ -314,7 +313,6 @@ func saveMiners(miners []Miner) error {
     return enc.Encode(miners)
 }
 
-// Config
 func loadConfig() (Config, error) {
     path := filepath.Join(dataDir, "config.json")
     file, err := os.Open(path)
@@ -397,8 +395,6 @@ func handleMiners(w http.ResponseWriter, r *http.Request) {
     w.Write(buf.Bytes())
 }
 
-// ... (handleAddMiner, handleEndMiner, handleDeleteMiner, handleConfig remain functionally identical but cleaner)
-
 func handleAddMiner(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -409,10 +405,16 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Invalid miner data", http.StatusBadRequest)
         return
     }
-    if _, err := time.Parse(dateLayout, miner.StartDate); err != nil || _, err := time.Parse(dateLayout, miner.EndDate); err != nil {
-        http.Error(w, "Invalid date format (DD-MM-YYYY)", http.StatusBadRequest)
+
+    if _, err := time.Parse(dateLayout, miner.StartDate); err != nil {
+        http.Error(w, "Invalid start date format (DD-MM-YYYY)", http.StatusBadRequest)
         return
     }
+    if _, err := time.Parse(dateLayout, miner.EndDate); err != nil {
+        http.Error(w, "Invalid end date format (DD-MM-YYYY)", http.StatusBadRequest)
+        return
+    }
+
     miners, _ := loadMiners()
     miners = append(miners, miner)
     if err := saveMiners(miners); err != nil {
@@ -422,7 +424,51 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
     w.WriteHeader(http.StatusCreated)
 }
 
-// (handleEndMiner, handleDeleteMiner, handleConfig are unchanged in logic — just cleaned up)
+func handleEndMiner(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    var req struct{ Index int `json:"index"` }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+    miners, err := loadMiners()
+    if err != nil || req.Index < 0 || req.Index >= len(miners) {
+        http.Error(w, "Invalid miner index", http.StatusBadRequest)
+        return
+    }
+    miners[req.Index].Status = "completed"
+    if err := saveMiners(miners); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+}
+
+func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    var req struct{ Index int `json:"index"` }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+    miners, err := loadMiners()
+    if err != nil || req.Index < 0 || req.Index >= len(miners) {
+        http.Error(w, "Invalid miner index", http.StatusBadRequest)
+        return
+    }
+    miners = append(miners[:req.Index], miners[req.Index+1:]...)
+    if err := saveMiners(miners); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+}
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
     if r.Method == http.MethodGet {
