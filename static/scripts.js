@@ -110,7 +110,7 @@ function connectWebSocket() {
         const data = JSON.parse(event.data);
         liveDataCache = data;
 
-        // Update Live Data tab instantly
+        // Update Live Data tab
         document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
         document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
         document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
@@ -128,10 +128,8 @@ function connectWebSocket() {
 
     ws.onclose = () => {
         updateLiveIndicator(false);
-        setTimeout(connectWebSocket, 5000); // auto-reconnect
+        setTimeout(connectWebSocket, 5000);
     };
-
-    ws.onerror = (err) => console.error('WebSocket error:', err);
 }
 
 // =============================================
@@ -173,7 +171,6 @@ async function fetchProfile() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
-        // Use liveDataCache from WebSocket (no extra HTTP call)
         if (liveDataCache) {
             const totalValue = totalTShares * liveDataCache.tsharePrice_Pulsechain;
             document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
@@ -426,6 +423,8 @@ function fetchSettings() {
             document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
             historicalStartDay = config.historicalStartDay || 1260;
             currentFrequency = config.liveDataFrequency;
+            nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
+            updateCountdown();
         });
 
     fetch('/api/miners')
