@@ -72,7 +72,7 @@ function formatWithCommas(num) {
 }
 
 // =============================================
-// LIVE INDICATOR (Green "Live" badge)
+// LIVE INDICATOR
 // =============================================
 function updateLiveIndicator(connected) {
     let indicator = document.getElementById('live-indicator');
@@ -131,7 +131,7 @@ function connectWebSocket() {
 }
 
 // =============================================
-// COUNTDOWN (now properly ticking every second)
+// COUNTDOWN
 // =============================================
 function updateCountdown() {
     const remainingMs = Math.max(0, nextRefreshTime - Date.now());
@@ -144,7 +144,7 @@ function updateCountdown() {
 function startCountdownTicker() {
     if (countdownIntervalId) clearInterval(countdownIntervalId);
     countdownIntervalId = setInterval(updateCountdown, 1000);
-    updateCountdown(); // immediate update
+    updateCountdown();
 }
 
 // =============================================
@@ -175,18 +175,28 @@ async function fetchProfile() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
+        // Use liveDataCache from WebSocket
         if (liveDataCache) {
+            // Total T-Shares Value
             const totalValue = totalTShares * liveDataCache.tsharePrice_Pulsechain;
             document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
 
+            // Daily Interest
             const dailyInterestHEX = totalTShares * liveDataCache.payoutPerTshare_Pulsechain;
             const dailyInterestUSD = dailyInterestHEX * liveDataCache.price_Pulsechain;
             document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
             document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
 
+            // Liquid HEX Value
             userLiquidHEX = config.liquidHEX || 0;
             const liquidHEXValue = userLiquidHEX * liveDataCache.price_Pulsechain;
             document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+        } else {
+            // Fallback if no live data yet
+            document.getElementById('total-value').textContent = '0.00';
+            document.getElementById('interest-hex').textContent = '0.00 HEX';
+            document.getElementById('interest-usd').textContent = '$0.00';
+            document.getElementById('liquid-hex-value').textContent = '0.00';
         }
 
         const activeMinersDiv = document.getElementById('active-miners');
@@ -426,7 +436,6 @@ function fetchSettings() {
             historicalStartDay = config.historicalStartDay || 1260;
             currentFrequency = config.liveDataFrequency;
 
-            // Start countdown with correct frequency
             nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
             startCountdownTicker();
         });
