@@ -13,11 +13,10 @@ let userTotalTShares = 0;
 let userLiquidHEX = 0;
 let historicalStartDay = 1260;
 let liveDataCache = null;
-
-let ws = null;
-let currentFrequency = 15;
-let nextRefreshTime = Date.now();
 let countdownIntervalId = null;
+let nextRefreshTime = Date.now();
+let currentFrequency = 15;
+let wsConnection = null;
 
 // =============================================
 // HELPERS
@@ -25,10 +24,19 @@ let countdownIntervalId = null;
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
     const notification = document.createElement('div');
-    notification.className = `alert alert-${type} alert-dismissible fade show`;
-    notification.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+    notification.className = `notification alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+    notification.setAttribute('role', 'alert');
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
     container.appendChild(notification);
-    setTimeout(() => notification.remove(), 3500);
+
+    setTimeout(() => {
+        notification.classList.remove('show');
+        notification.classList.add('fade');
+        setTimeout(() => notification.remove(), 150);
+    }, 3000);
 }
 
 function showConfirmModal(title, message) {
@@ -42,7 +50,9 @@ function showConfirmModal(title, message) {
                         <h5 class="modal-title">${title}</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <div class="modal-body"><p>${message}</p></div>
+                    <div class="modal-body">
+                        <p>${message}</p>
+                    </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
@@ -51,6 +61,7 @@ function showConfirmModal(title, message) {
             </div>
         `;
         document.body.appendChild(modal);
+
         const bsModal = new bootstrap.Modal(modal, { backdrop: 'static', keyboard: false });
         bsModal.show();
 
@@ -58,7 +69,10 @@ function showConfirmModal(title, message) {
         const cancelBtn = modal.querySelector('.btn-secondary');
         const closeBtn = modal.querySelector('.btn-close');
 
-        const cleanup = () => { bsModal.hide(); modal.remove(); };
+        const cleanup = () => {
+            bsModal.hide();
+            modal.remove();
+        };
 
         confirmBtn.addEventListener('click', () => { cleanup(); resolve(true); });
         cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
@@ -72,67 +86,39 @@ function formatWithCommas(num) {
 }
 
 // =============================================
-// LIVE INDICATOR
+// LIVE DATA – now WebSocket driven
 // =============================================
-function updateLiveIndicator(connected) {
-    let indicator = document.getElementById('live-indicator');
-    if (!indicator) {
-        indicator = document.createElement('span');
-        indicator.id = 'live-indicator';
-        indicator.className = 'badge ms-2';
-        indicator.style.fontSize = '0.75rem';
-        document.getElementById('refresh-timer').appendChild(indicator);
-    }
-    if (connected) {
-        indicator.innerHTML = '● Live';
-        indicator.className = 'badge bg-success ms-2';
-    } else {
-        indicator.innerHTML = '● Disconnected';
-        indicator.className = 'badge bg-secondary ms-2';
+
+function updateLiveDataUI(data) {
+    liveDataCache = data;
+
+    document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
+    document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
+    document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
+    document.getElementById('payout').textContent = data.payoutPerTshare_Pulsechain.toFixed(1);
+    document.getElementById('penalties').textContent = formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain));
+    document.getElementById('beat').textContent = formatWithCommas(data.beat);
+
+    const timestamp = new Date().toLocaleTimeString();
+    document.getElementById('last-updated').textContent = `Last updated: ${timestamp}`;
+    document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
+    nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
+    updateCountdown();
+}
+
+async function fetchLiveData() {
+    try {
+        const response = await fetch('/api/live-data');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        updateLiveDataUI(data);
+    } catch (error) {
+        console.error('Error fetching initial live data:', error);
+        document.getElementById('last-updated').textContent = `Error updating data: ${error.message}`;
+        document.title = 'HEX Stats';
     }
 }
 
-// =============================================
-// WEBSOCKET
-// =============================================
-function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
-
-    ws.onopen = () => {
-        console.log('✅ WebSocket connected');
-        updateLiveIndicator(true);
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        liveDataCache = data;
-
-        // Update Live Data tab
-        document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
-        document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
-        document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
-        document.getElementById('payout').textContent = data.payoutPerTshare_Pulsechain.toFixed(1);
-        document.getElementById('penalties').textContent = formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain));
-        document.getElementById('beat').textContent = formatWithCommas(data.beat);
-
-        const timestamp = new Date().toLocaleTimeString();
-        document.getElementById('last-updated').textContent = `Live • ${timestamp}`;
-        document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
-
-        nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-        updateCountdown();
-    };
-
-    ws.onclose = () => {
-        updateLiveIndicator(false);
-        setTimeout(connectWebSocket, 5000);
-    };
-}
-
-// =============================================
-// COUNTDOWN
-// =============================================
 function updateCountdown() {
     const remainingMs = Math.max(0, nextRefreshTime - Date.now());
     const totalSec = Math.floor(remainingMs / 1000);
@@ -141,10 +127,47 @@ function updateCountdown() {
     document.getElementById('countdown').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-function startCountdownTicker() {
+function connectLiveWebSocket() {
+    if (wsConnection) wsConnection.close();
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsConnection = new WebSocket(`${protocol}//${window.location.host}/ws/live-data`);
+
+    wsConnection.onopen = () => {
+        console.log('✅ WebSocket connected – live updates via push');
+    };
+
+    wsConnection.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            updateLiveDataUI(data);
+        } catch (e) {
+            console.error('WebSocket message parse error', e);
+        }
+    };
+
+    wsConnection.onclose = () => {
+        console.log('WebSocket closed – reconnecting in 5 seconds...');
+        setTimeout(connectLiveWebSocket, 5000);
+    };
+
+    wsConnection.onerror = (err) => {
+        console.error('WebSocket error', err);
+    };
+}
+
+function setupLiveDataInterval(frequencyInMinutes) {
+    currentFrequency = frequencyInMinutes;
+    nextRefreshTime = Date.now() + frequencyInMinutes * 60 * 1000;
+
     if (countdownIntervalId) clearInterval(countdownIntervalId);
     countdownIntervalId = setInterval(updateCountdown, 1000);
     updateCountdown();
+
+    // ensure WebSocket is connected (reconnect only if needed)
+    if (!wsConnection || wsConnection.readyState === WebSocket.CLOSED || wsConnection.readyState === WebSocket.CLOSING) {
+        connectLiveWebSocket();
+    }
 }
 
 // =============================================
@@ -152,13 +175,17 @@ function startCountdownTicker() {
 // =============================================
 async function fetchProfile() {
     try {
-        const [minersRes, configRes] = await Promise.all([
+        const [minersRes, liveRes, configRes] = await Promise.all([
             fetch('/api/miners'),
+            fetch('/api/live-data'),
             fetch('/api/config')
         ]);
 
         const miners = await minersRes.json();
+        const liveData = await liveRes.json();
         const config = await configRes.json();
+
+        liveDataCache = liveData;
 
         let totalTShares = 0;
         let activeMiners = [];
@@ -175,29 +202,17 @@ async function fetchProfile() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
-        // Use liveDataCache from WebSocket
-        if (liveDataCache) {
-            // Total T-Shares Value
-            const totalValue = totalTShares * liveDataCache.tsharePrice_Pulsechain;
-            document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
+        const totalValue = totalTShares * liveData.tsharePrice_Pulsechain;
+        document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
 
-            // Daily Interest
-            const dailyInterestHEX = totalTShares * liveDataCache.payoutPerTshare_Pulsechain;
-            const dailyInterestUSD = dailyInterestHEX * liveDataCache.price_Pulsechain;
-            document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
-            document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
+        const dailyInterestHEX = totalTShares * liveData.payoutPerTshare_Pulsechain;
+        const dailyInterestUSD = dailyInterestHEX * liveData.price_Pulsechain;
+        document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
+        document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
 
-            // Liquid HEX Value
-            userLiquidHEX = config.liquidHEX || 0;
-            const liquidHEXValue = userLiquidHEX * liveDataCache.price_Pulsechain;
-            document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
-        } else {
-            // Fallback if no live data yet
-            document.getElementById('total-value').textContent = '0.00';
-            document.getElementById('interest-hex').textContent = '0.00 HEX';
-            document.getElementById('interest-usd').textContent = '$0.00';
-            document.getElementById('liquid-hex-value').textContent = '0.00';
-        }
+        userLiquidHEX = config.liquidHEX || 0;
+        const liquidHEXValue = userLiquidHEX * liveData.price_Pulsechain;
+        document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
 
         const activeMinersDiv = document.getElementById('active-miners');
         activeMinersDiv.innerHTML = '';
@@ -420,11 +435,14 @@ function renderCharts() {
                 });
             });
         })
-        .catch(error => console.error('Error rendering charts:', error));
+        .catch(error => {
+            console.error('Error rendering charts:', error);
+            document.querySelectorAll('.chart-container').forEach(c => c.innerHTML = `<p style="color: var(--text-color); text-align: center;">Error loading chart: ${error.message}</p>`);
+        });
 }
 
 // =============================================
-// SETTINGS
+// SETTINGS & MINERS
 // =============================================
 function fetchSettings() {
     fetch('/api/config')
@@ -434,10 +452,8 @@ function fetchSettings() {
             document.getElementById('liquid-hex').value = config.liquidHEX || '';
             document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
             historicalStartDay = config.historicalStartDay || 1260;
-            currentFrequency = config.liveDataFrequency;
 
-            nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-            startCountdownTicker();
+            setupLiveDataInterval(config.liveDataFrequency);
         });
 
     fetch('/api/miners')
@@ -474,6 +490,7 @@ function saveFrequency() {
     .then(response => {
         if (response.ok) {
             showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
+            setupLiveDataInterval(frequency);
         } else {
             showNotification('Error saving frequency', 'danger');
         }
@@ -585,7 +602,7 @@ async function deleteMiner(index) {
 }
 
 // =============================================
-// NAVBAR
+// NAVBAR RESPONSIVENESS
 // =============================================
 function checkNavbarRows() {
     const navbarNav = document.querySelector('#navbarNav');
@@ -619,9 +636,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.title = 'HEX Stats';
 
     fetchProfile();
+    fetchLiveData();
     fetchSettings();
     renderCharts();
-    connectWebSocket();
 
     setInterval(fetchProfile, 30 * 60 * 1000);
     setInterval(renderCharts, 4 * 60 * 60 * 1000);
