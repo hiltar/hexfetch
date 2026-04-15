@@ -54,11 +54,12 @@ var (
     json = jsoniter.ConfigCompatibleWithStandardLibrary
 
     // WebSocket broadcaster
-    wsClients   = make(map[*websocket.Conn]bool)
-    wsClientsMu sync.Mutex
-    wsUpgrader  = websocket.Upgrader{
-        CheckOrigin: func(r *http.Request) bool { return true },
-    }
+    wsClients      = make(map[*websocket.Conn]bool)
+    wsClientsMu    sync.Mutex
+    wsUpgrader     = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+    wsActiveMu     sync.Mutex
+    wsActiveTicker *time.Ticker
+    wsActiveDone   = make(chan struct{})
 )
 
 // =============================================
@@ -277,7 +278,7 @@ func startDailyHEXJSONUpdate() {
     go func() {
         for {
             now := time.Now().UTC()
-            nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour) // tomorrow at 03:00 UTC
+            nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour)
             time.Sleep(nextUpdate.Sub(now))
 
             debugLog("Running daily HEXJSON update...")
@@ -369,8 +370,61 @@ func saveConfig(cfg Config) error {
 }
 
 // =============================================
-// WEB SOCKET BROADCASTER
+// WEB SOCKET MANAGEMENT
 // =============================================
+
+func startLiveDataFetcher() {
+    wsActiveMu.Lock()
+    if wsActiveTicker != nil {
+        wsActiveMu.Unlock()
+        return // already running
+    }
+
+    wsActiveTicker = time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
+    wsActiveMu.Unlock()
+
+    go func() {
+        debugLog("Live data fetcher started (clients connected)")
+
+        // Initial fetch immediately when first client connects
+        if data, err := fetchLiveData(); err == nil {
+            liveDataMutex.Lock()
+            latestLiveData = data
+            liveDataMutex.Unlock()
+            broadcastLiveData(data)
+        }
+
+        for {
+            select {
+            case <-wsActiveTicker.C:
+                if data, err := fetchLiveData(); err == nil {
+                    liveDataMutex.Lock()
+                    latestLiveData = data
+                    liveDataMutex.Unlock()
+                    broadcastLiveData(data)
+                }
+            case <-wsActiveDone:
+                debugLog("Live data fetcher stopped (no clients connected)")
+                return
+            }
+        }
+    }()
+}
+
+func stopLiveDataFetcher() {
+    wsActiveMu.Lock()
+    if wsActiveTicker != nil {
+        wsActiveTicker.Stop()
+        wsActiveTicker = nil
+        wsActiveMu.Unlock()
+        select {
+        case wsActiveDone <- struct{}{}:
+        default:
+        }
+        return
+    }
+    wsActiveMu.Unlock()
+}
 
 func broadcastLiveData(data LiveData) {
     wsClientsMu.Lock()
@@ -398,14 +452,18 @@ func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
     }
 
     wsClientsMu.Lock()
+    wasEmpty := len(wsClients) == 0
     wsClients[conn] = true
     wsClientsMu.Unlock()
+
+    if wasEmpty {
+        startLiveDataFetcher() // start fetching when first client connects
+    }
 
     // send current live data immediately
     liveDataMutex.RLock()
     currentData := latestLiveData
     liveDataMutex.RUnlock()
-
     if err := conn.WriteJSON(currentData); err != nil {
         conn.Close()
         wsClientsMu.Lock()
@@ -420,7 +478,12 @@ func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
         if err != nil {
             wsClientsMu.Lock()
             delete(wsClients, conn)
+            nowEmpty := len(wsClients) == 0
             wsClientsMu.Unlock()
+
+            if nowEmpty {
+                stopLiveDataFetcher() // stop fetching when last client disconnects
+            }
             conn.Close()
             return
         }
@@ -472,7 +535,6 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Fixed: separate Parse calls
     if _, err := time.Parse(dateLayout, miner.StartDate); err != nil {
         http.Error(w, "Invalid start date format (DD-MM-YYYY)", http.StatusBadRequest)
         return
@@ -588,34 +650,6 @@ func main() {
     configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
     configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
 
-    // Initial live data
-    if data, err := fetchLiveData(); err == nil {
-        liveDataMutex.Lock()
-        latestLiveData = data
-        liveDataMutex.Unlock()
-    }
-
-    // Live data goroutine with dynamic frequency + WebSocket broadcast
-    go func() {
-        ticker := time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
-        changeCh := configManager.Subscribe()
-        defer ticker.Stop()
-
-        for {
-            select {
-            case <-ticker.C:
-                if data, err := fetchLiveData(); err == nil {
-                    liveDataMutex.Lock()
-                    latestLiveData = data
-                    liveDataMutex.Unlock()
-                    broadcastLiveData(data)
-                }
-            case <-changeCh:
-                ticker.Reset(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
-            }
-        }
-    }()
-
     // Static files + API routes
     subFS, _ := fs.Sub(staticFiles, "static")
     http.Handle("/", http.FileServer(http.FS(subFS)))
@@ -629,6 +663,6 @@ func main() {
     http.HandleFunc("/api/config", handleConfig)
     http.HandleFunc("/ws/live-data", handleLiveWebSocket)
 
-    log.Println("🚀 HEX Stats server starting on :5555")
+    log.Println("🚀 HEX Stats server starting on :5555 (Smart WebSocket live data enabled)")
     log.Fatal(http.ListenAndServe(":5555", nil))
 }
