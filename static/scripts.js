@@ -1,6 +1,3 @@
-// =============================================
-// GLOBAL STATE
-// =============================================
 let chartInstances = {
     priceChart: null,
     tshareRateChart: null,
@@ -86,7 +83,7 @@ function formatWithCommas(num) {
 }
 
 // =============================================
-// LIVE DATA – now WebSocket driven
+// LIVE DATA
 // =============================================
 
 function updateLiveDataUI(data) {
@@ -102,21 +99,9 @@ function updateLiveDataUI(data) {
     const timestamp = new Date().toLocaleTimeString();
     document.getElementById('last-updated').textContent = `Last updated: ${timestamp}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
+
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
-}
-
-async function fetchLiveData() {
-    try {
-        const response = await fetch('/api/live-data');
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        updateLiveDataUI(data);
-    } catch (error) {
-        console.error('Error fetching initial live data:', error);
-        document.getElementById('last-updated').textContent = `Error updating data: ${error.message}`;
-        document.title = 'HEX Stats';
-    }
 }
 
 function updateCountdown() {
@@ -133,27 +118,16 @@ function connectLiveWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     wsConnection = new WebSocket(`${protocol}//${window.location.host}/ws/live-data`);
 
-    wsConnection.onopen = () => {
-        console.log('✅ WebSocket connected – live updates via push');
-    };
-
+    wsConnection.onopen = () => console.log('✅ WebSocket connected');
     wsConnection.onmessage = (event) => {
         try {
-            const data = JSON.parse(event.data);
-            updateLiveDataUI(data);
+            updateLiveDataUI(JSON.parse(event.data));
         } catch (e) {
-            console.error('WebSocket message parse error', e);
+            console.error('WebSocket parse error', e);
         }
     };
-
-    wsConnection.onclose = () => {
-        console.log('WebSocket closed – reconnecting in 5 seconds...');
-        setTimeout(connectLiveWebSocket, 5000);
-    };
-
-    wsConnection.onerror = (err) => {
-        console.error('WebSocket error', err);
-    };
+    wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
+    wsConnection.onerror = (err) => console.error('WebSocket error', err);
 }
 
 function setupLiveDataInterval(frequencyInMinutes) {
@@ -164,29 +138,29 @@ function setupLiveDataInterval(frequencyInMinutes) {
     countdownIntervalId = setInterval(updateCountdown, 1000);
     updateCountdown();
 
-    // ensure WebSocket is connected (reconnect only if needed)
-    if (!wsConnection || wsConnection.readyState === WebSocket.CLOSED || wsConnection.readyState === WebSocket.CLOSING) {
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
         connectLiveWebSocket();
     }
 }
 
-// =============================================
-// PROFILE
-// =============================================
-async function fetchProfile() {
+async function initialLoad() {
     try {
-        const [minersRes, liveRes, configRes] = await Promise.all([
+        const [minersRes, liveRes, configRes, hexjsonRes] = await Promise.all([
             fetch('/api/miners'),
             fetch('/api/live-data'),
-            fetch('/api/config')
+            fetch('/api/config'),
+            fetch('/api/hexjson')
         ]);
 
         const miners = await minersRes.json();
         const liveData = await liveRes.json();
         const config = await configRes.json();
+        const hexjsonData = await hexjsonRes.json();
 
         liveDataCache = liveData;
+        updateLiveDataUI(liveData);
 
+        // Profile calculations
         let totalTShares = 0;
         let activeMiners = [];
         let minerIndices = [];
@@ -214,31 +188,215 @@ async function fetchProfile() {
         const liquidHEXValue = userLiquidHEX * liveData.price_Pulsechain;
         document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
 
+        // Render active miners
         const activeMinersDiv = document.getElementById('active-miners');
         activeMinersDiv.innerHTML = '';
         if (activeMiners.length === 0) {
             document.getElementById('profile-message').textContent = 'Empty profile. Please add HEX miners in Settings.';
-            return;
+        } else {
+            document.getElementById('profile-message').textContent = '';
+            activeMiners.forEach((miner, index) => {
+                const endDateObj = new Date(miner.endDate.split('-').reverse().join('-'));
+                const isMatured = endDateObj <= new Date();
+                const daysLeft = isMatured ? 0 : Math.ceil((endDateObj - new Date()) / (1000 * 60 * 60 * 24));
+
+                const minerDiv = document.createElement('div');
+                minerDiv.className = 'miner-item';
+                minerDiv.innerHTML = `
+                    <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)} ${isMatured ? '(Matured)' : `(${daysLeft} days left)`}</span>
+                    ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
+                `;
+                activeMinersDiv.appendChild(minerDiv);
+            });
         }
-        document.getElementById('profile-message').textContent = '';
 
-        activeMiners.forEach((miner, index) => {
-            const endDateObj = new Date(miner.endDate.split('-').reverse().join('-'));
-            const isMatured = endDateObj <= new Date();
-            const daysLeft = isMatured ? 0 : Math.ceil((endDateObj - new Date()) / (1000 * 60 * 60 * 24));
+        // Settings fields
+        document.getElementById('frequency').value = config.liveDataFrequency;
+        document.getElementById('liquid-hex').value = config.liquidHEX || '';
+        document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
+        historicalStartDay = config.historicalStartDay || 1260;
 
+        // Existing miners list in Settings
+        const existingMinersDiv = document.getElementById('existing-miners');
+        existingMinersDiv.innerHTML = '';
+        miners.forEach((miner, index) => {
             const minerDiv = document.createElement('div');
             minerDiv.className = 'miner-item';
             minerDiv.innerHTML = `
-                <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)} ${isMatured ? '(Matured)' : `(${daysLeft} days left)`}</span>
-                ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
+                <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</span>
+                <button class="btn btn-sm btn-danger" onclick="deleteMiner(${index})">Delete</button>
             `;
-            activeMinersDiv.appendChild(minerDiv);
+            existingMinersDiv.appendChild(minerDiv);
         });
 
-        renderPortfolioHistoryChart();
+        setupLiveDataInterval(config.liveDataFrequency);
+        renderChartsWithData(hexjsonData);
+        renderPortfolioHistoryChartWithData(hexjsonData);
+
     } catch (error) {
-        console.error('Error fetching profile:', error);
+        console.error('Error during initial load:', error);
+        showNotification('Failed to load initial data. Please refresh the page.', 'danger');
+    }
+}
+
+// =============================================
+// CHARTS
+// =============================================
+function renderChartsWithData(data) {
+    const sortedData = [...data].sort((a, b) => a.currentDay - b.currentDay);
+    const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
+    const latestData = sortedData[sortedData.length - 1] || {};
+
+    document.getElementById('price-value').textContent = latestData.pricePulseX ? `$${latestData.pricePulseX.toFixed(4)}` : '$0.0000';
+    document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX ? `${formatWithCommas(latestData.tshareRateHEX.toFixed(2))} HEX` : '0.00 HEX';
+    document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(2))} HEX` : '0.00 HEX';
+    document.getElementById('daily-payout-value').textContent = latestData.dailyPayoutHEX ? `${formatWithCommas(latestData.dailyPayoutHEX.toFixed(2))} HEX` : '0.00 HEX';
+
+    const isDarkTheme = true;
+    const chartConfigs = [
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', borderColor: isDarkTheme ? '#00b7eb' : '#007bff', data: priceFilteredData },
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', borderColor: isDarkTheme ? '#00cc99' : '#28a745', data: sortedData },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', borderColor: isDarkTheme ? '#9966ff' : '#9900cc', data: sortedData },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', borderColor: isDarkTheme ? '#ff6f61' : '#dc3545', data: sortedData }
+    ];
+
+    chartConfigs.forEach(config => {
+        if (chartInstances[config.id]) chartInstances[config.id].destroy();
+        const ctx = document.getElementById(config.id).getContext('2d');
+        chartInstances[config.id] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: config.data.map(entry => entry.currentDay),
+                datasets: [{
+                    label: config.label,
+                    data: config.data.map(entry => entry[config.field]),
+                    borderColor: config.borderColor,
+                    fill: false,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    tension: 0.25
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
+                    y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
+                },
+                plugins: {
+                    legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } }
+                }
+            }
+        });
+    });
+}
+
+function renderPortfolioHistoryChartWithData(rawData) {
+    const sortedData = [...rawData].sort((a, b) => a.currentDay - b.currentDay);
+    const filteredData = sortedData.filter(entry => entry.currentDay >= historicalStartDay);
+    if (filteredData.length === 0) return;
+
+    const portfolioData = filteredData.map(entry => {
+        const hexPrice = entry.pricePulseX || 0;
+        const tsharePrice = entry.tshareRateHEX * hexPrice;
+        const portfolioValue = (userTotalTShares * tsharePrice) + (userLiquidHEX * hexPrice);
+        return { day: entry.currentDay, value: portfolioValue };
+    });
+
+    const startVal = portfolioData[0].value;
+    const currVal = portfolioData[portfolioData.length - 1].value;
+    const athVal = Math.max(...portfolioData.map(d => d.value));
+    const growth = currVal - startVal;
+    const growthPct = startVal > 0 ? (growth / startVal) * 100 : 0;
+
+    document.getElementById('hist-start-day-label').textContent = historicalStartDay;
+    document.getElementById('hist-start-value').textContent = '$' + formatWithCommas(startVal.toFixed(2));
+    document.getElementById('hist-current-value').textContent = '$' + formatWithCommas(currVal.toFixed(2));
+    document.getElementById('hist-ath').textContent = '$' + formatWithCommas(athVal.toFixed(2));
+
+    const growthEl = document.getElementById('hist-growth');
+    growthEl.textContent = (growth >= 0 ? '+' : '') + '$' + formatWithCommas(growth.toFixed(2));
+    growthEl.className = growth >= 0 ? 'h5 fw-bold text-success' : 'h5 fw-bold text-danger';
+
+    const pctEl = document.getElementById('hist-growth-pct');
+    pctEl.textContent = (growth >= 0 ? '+' : '') + growthPct.toFixed(2) + '%';
+    pctEl.className = growth >= 0 ? 'small fw-bold text-success' : 'small fw-bold text-danger';
+
+    const isDarkTheme = true;
+    if (chartInstances.historicalValueChart) chartInstances.historicalValueChart.destroy();
+
+    const ctx = document.getElementById('historicalValueChart').getContext('2d');
+    chartInstances.historicalValueChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: portfolioData.map(d => d.day),
+            datasets: [{
+                label: 'Value',
+                data: portfolioData.map(d => d.value),
+                borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
+                backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
+                borderWidth: 3,
+                tension: 0.25,
+                fill: true,
+                pointRadius: 0,
+                pointHoverRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            scales: {
+                x: { title: { display: true, text: 'Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', maxTicksLimit: 15 } },
+                y: { title: { display: true, text: 'Portfolio Value (USD)', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', callback: v => '$' + formatWithCommas(Math.round(v)) } }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    displayColors: false,
+                    backgroundColor: isDarkTheme ? '#343a40' : '#ffffff',
+                    titleColor: isDarkTheme ? '#ffffff' : '#000000',
+                    bodyColor: isDarkTheme ? '#ffffff' : '#000000',
+                    borderColor: isDarkTheme ? '#6c757d' : '#dee2e6',
+                    borderWidth: 1,
+                    callbacks: {
+                        title: items => 'Day ' + items[0].label,
+                        label: ctx => 'Value: $' + formatWithCommas(ctx.raw.toFixed(2))
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderCharts() {
+    fetch('/api/hexjson').then(r => r.json()).then(renderChartsWithData).catch(console.error);
+}
+
+function renderPortfolioHistoryChart() {
+    fetch('/api/hexjson').then(r => r.json()).then(renderPortfolioHistoryChartWithData).catch(console.error);
+}
+
+// =============================================
+// PROFILE, SETTINGS & MINERS ACTIONS
+// =============================================
+async function endMiner(index) {
+    const confirmed = await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?');
+    if (confirmed) {
+        fetch('/api/end-miner', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index })
+        })
+        .then(response => {
+            if (response.ok) {
+                showNotification('Miner ended successfully', 'success');
+                initialLoad();   // refresh everything
+            } else {
+                showNotification('Error ending miner', 'danger');
+            }
+        });
     }
 }
 
@@ -272,281 +430,6 @@ function showCompletedMiners() {
         });
 }
 
-async function endMiner(index) {
-    const confirmed = await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?');
-    if (confirmed) {
-        fetch('/api/end-miner', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index })
-        })
-        .then(response => {
-            if (response.ok) {
-                showNotification('Miner ended successfully', 'success');
-                fetchProfile();
-            } else {
-                showNotification('Error ending miner', 'danger');
-            }
-        });
-    }
-}
-
-// =============================================
-// CHARTS
-// =============================================
-function renderPortfolioHistoryChart() {
-    fetch('/api/hexjson')
-        .then(response => {
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            return response.json();
-        })
-        .then(rawData => {
-            const sortedData = [...rawData].sort((a, b) => a.currentDay - b.currentDay);
-            const filteredData = sortedData.filter(entry => entry.currentDay >= historicalStartDay);
-            if (filteredData.length === 0) return;
-
-            const portfolioData = filteredData.map(entry => {
-                const hexPrice = entry.pricePulseX || 0;
-                const tsharePrice = entry.tshareRateHEX * hexPrice;
-                const portfolioValue = (userTotalTShares * tsharePrice) + (userLiquidHEX * hexPrice);
-                return { day: entry.currentDay, value: portfolioValue };
-            });
-
-            const startVal = portfolioData[0].value;
-            const currVal = portfolioData[portfolioData.length - 1].value;
-            const athVal = Math.max(...portfolioData.map(d => d.value));
-            const growth = currVal - startVal;
-            const growthPct = startVal > 0 ? (growth / startVal) * 100 : 0;
-
-            document.getElementById('hist-start-day-label').textContent = historicalStartDay;
-            document.getElementById('hist-start-value').textContent = '$' + formatWithCommas(startVal.toFixed(2));
-            document.getElementById('hist-current-value').textContent = '$' + formatWithCommas(currVal.toFixed(2));
-            document.getElementById('hist-ath').textContent = '$' + formatWithCommas(athVal.toFixed(2));
-
-            const growthEl = document.getElementById('hist-growth');
-            growthEl.textContent = (growth >= 0 ? '+' : '') + '$' + formatWithCommas(growth.toFixed(2));
-            growthEl.className = growth >= 0 ? 'h5 fw-bold text-success' : 'h5 fw-bold text-danger';
-
-            const pctEl = document.getElementById('hist-growth-pct');
-            pctEl.textContent = (growth >= 0 ? '+' : '') + growthPct.toFixed(2) + '%';
-            pctEl.className = growth >= 0 ? 'small fw-bold text-success' : 'small fw-bold text-danger';
-
-            const isDarkTheme = true;
-            if (chartInstances.historicalValueChart) chartInstances.historicalValueChart.destroy();
-
-            const ctx = document.getElementById('historicalValueChart').getContext('2d');
-            chartInstances.historicalValueChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: portfolioData.map(d => d.day),
-                    datasets: [{
-                        label: 'Value',
-                        data: portfolioData.map(d => d.value),
-                        borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
-                        backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
-                        borderWidth: 3,
-                        tension: 0.25,
-                        fill: true,
-                        pointRadius: 0,
-                        pointHoverRadius: 5
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { intersect: false, mode: 'index' },
-                    scales: {
-                        x: { title: { display: true, text: 'Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', maxTicksLimit: 15 } },
-                        y: { title: { display: true, text: 'Portfolio Value (USD)', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', callback: v => '$' + formatWithCommas(Math.round(v)) } }
-                    },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            displayColors: false,
-                            backgroundColor: isDarkTheme ? '#343a40' : '#ffffff',
-                            titleColor: isDarkTheme ? '#ffffff' : '#000000',
-                            bodyColor: isDarkTheme ? '#ffffff' : '#000000',
-                            borderColor: isDarkTheme ? '#6c757d' : '#dee2e6',
-                            borderWidth: 1,
-                            callbacks: {
-                                title: items => 'Day ' + items[0].label,
-                                label: ctx => 'Value: $' + formatWithCommas(ctx.raw.toFixed(2))
-                            }
-                        }
-                    }
-                }
-            });
-        })
-        .catch(error => console.error('Error rendering historical portfolio chart:', error));
-}
-
-function renderCharts() {
-    fetch('/api/hexjson')
-        .then(response => {
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            return response.json();
-        })
-        .then(data => {
-            const sortedData = [...data].sort((a, b) => a.currentDay - b.currentDay);
-            const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
-            const latestData = sortedData[sortedData.length - 1] || {};
-
-            document.getElementById('price-value').textContent = latestData.pricePulseX ? `$${latestData.pricePulseX.toFixed(4)}` : '$0.0000';
-            document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX ? `${formatWithCommas(latestData.tshareRateHEX.toFixed(2))} HEX` : '0.00 HEX';
-            document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(2))} HEX` : '0.00 HEX';
-            document.getElementById('daily-payout-value').textContent = latestData.dailyPayoutHEX ? `${formatWithCommas(latestData.dailyPayoutHEX.toFixed(2))} HEX` : '0.00 HEX';
-
-            const isDarkTheme = true;
-            const chartConfigs = [
-                { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', borderColor: isDarkTheme ? '#00b7eb' : '#007bff', data: priceFilteredData },
-                { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', borderColor: isDarkTheme ? '#00cc99' : '#28a745', data: sortedData },
-                { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', borderColor: isDarkTheme ? '#9966ff' : '#9900cc', data: sortedData },
-                { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', borderColor: isDarkTheme ? '#ff6f61' : '#dc3545', data: sortedData }
-            ];
-
-            chartConfigs.forEach(config => {
-                if (chartInstances[config.id]) chartInstances[config.id].destroy();
-                const ctx = document.getElementById(config.id).getContext('2d');
-                chartInstances[config.id] = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: config.data.map(entry => entry.currentDay),
-                        datasets: [{
-                            label: config.label,
-                            data: config.data.map(entry => entry[config.field]),
-                            borderColor: config.borderColor,
-                            fill: false,
-                            pointRadius: 0,
-                            pointHoverRadius: 5,
-                            tension: 0.25
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
-                            y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
-                        },
-                        plugins: {
-                            legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } }
-                        }
-                    }
-                });
-            });
-        })
-        .catch(error => {
-            console.error('Error rendering charts:', error);
-            document.querySelectorAll('.chart-container').forEach(c => c.innerHTML = `<p style="color: var(--text-color); text-align: center;">Error loading chart: ${error.message}</p>`);
-        });
-}
-
-// =============================================
-// SETTINGS & MINERS
-// =============================================
-function fetchSettings() {
-    fetch('/api/config')
-        .then(response => response.json())
-        .then(config => {
-            document.getElementById('frequency').value = config.liveDataFrequency;
-            document.getElementById('liquid-hex').value = config.liquidHEX || '';
-            document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
-            historicalStartDay = config.historicalStartDay || 1260;
-
-            setupLiveDataInterval(config.liveDataFrequency);
-        });
-
-    fetch('/api/miners')
-        .then(response => response.json())
-        .then(miners => {
-            const existingMinersDiv = document.getElementById('existing-miners');
-            existingMinersDiv.innerHTML = '';
-            miners.forEach((miner, index) => {
-                const minerDiv = document.createElement('div');
-                minerDiv.className = 'miner-item';
-                minerDiv.innerHTML = `
-                    <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</span>
-                    <button class="btn btn-sm btn-danger" onclick="deleteMiner(${index})">Delete</button>
-                `;
-                existingMinersDiv.appendChild(minerDiv);
-            });
-        });
-}
-
-function saveFrequency() {
-    const frequency = parseInt(document.getElementById('frequency').value);
-    if (frequency <= 0) {
-        showNotification('Frequency must be a positive integer', 'danger');
-        return;
-    }
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
-    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
-            setupLiveDataInterval(frequency);
-        } else {
-            showNotification('Error saving frequency', 'danger');
-        }
-    });
-}
-
-function saveLiquidHEX() {
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value);
-    if (isNaN(liquidHEX) || liquidHEX < 0) {
-        showNotification('Liquid HEX must be a non-negative number', 'danger');
-        return;
-    }
-    const frequency = parseInt(document.getElementById('frequency').value) || 15;
-    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification('Liquid HEX saved successfully', 'success');
-            userLiquidHEX = liquidHEX;
-            fetchProfile();
-        } else {
-            showNotification('Error saving Liquid HEX', 'danger');
-        }
-    });
-}
-
-function saveHistoricalStartDay() {
-    const histStart = parseInt(document.getElementById('hist-start-day').value);
-    if (isNaN(histStart) || histStart < 1) {
-        showNotification('Starting day must be a positive integer', 'danger');
-        return;
-    }
-    const frequency = parseInt(document.getElementById('frequency').value) || 15;
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification(`Historical chart starting day set to ${histStart}`, 'success');
-            historicalStartDay = histStart;
-            renderPortfolioHistoryChart();
-        } else {
-            showNotification('Error saving historical start day', 'danger');
-        }
-    });
-}
-
 function addMiner() {
     const startDate = document.getElementById('start-date').value;
     const endDate = document.getElementById('end-date').value;
@@ -570,11 +453,10 @@ function addMiner() {
     .then(response => {
         if (response.ok) {
             showNotification('Miner added successfully', 'success');
-            fetchProfile();
-            fetchSettings();
             document.getElementById('start-date').value = '';
             document.getElementById('end-date').value = '';
             document.getElementById('tshares').value = '';
+            initialLoad();
         } else {
             showNotification('Error adding miner', 'danger');
         }
@@ -592,13 +474,84 @@ async function deleteMiner(index) {
         .then(response => {
             if (response.ok) {
                 showNotification('Miner deleted successfully', 'success');
-                fetchSettings();
-                fetchProfile();
+                initialLoad();
             } else {
                 showNotification('Error deleting miner', 'danger');
             }
         });
     }
+}
+
+function saveFrequency() {
+    const frequency = parseInt(document.getElementById('frequency').value);
+    if (frequency <= 0) {
+        showNotification('Frequency must be a positive integer', 'danger');
+        return;
+    }
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
+    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
+    })
+    .then(response => {
+        if (response.ok) {
+            showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
+            initialLoad();
+        } else {
+            showNotification('Error saving frequency', 'danger');
+        }
+    });
+}
+
+function saveLiquidHEX() {
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value);
+    if (isNaN(liquidHEX) || liquidHEX < 0) {
+        showNotification('Liquid HEX must be a non-negative number', 'danger');
+        return;
+    }
+    const frequency = parseInt(document.getElementById('frequency').value) || 15;
+    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
+    })
+    .then(response => {
+        if (response.ok) {
+            showNotification('Liquid HEX saved successfully', 'success');
+            initialLoad();
+        } else {
+            showNotification('Error saving Liquid HEX', 'danger');
+        }
+    });
+}
+
+function saveHistoricalStartDay() {
+    const histStart = parseInt(document.getElementById('hist-start-day').value);
+    if (isNaN(histStart) || histStart < 1) {
+        showNotification('Starting day must be a positive integer', 'danger');
+        return;
+    }
+    const frequency = parseInt(document.getElementById('frequency').value) || 15;
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
+    })
+    .then(response => {
+        if (response.ok) {
+            showNotification(`Historical chart starting day set to ${histStart}`, 'success');
+            initialLoad();
+        } else {
+            showNotification('Error saving historical start day', 'danger');
+        }
+    });
 }
 
 // =============================================
@@ -634,15 +587,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.title = 'HEX Stats';
-
-    fetchProfile();
-    fetchLiveData();
-    fetchSettings();
-    renderCharts();
-
-    setInterval(fetchProfile, 30 * 60 * 1000);
+    initialLoad();
+    setInterval(initialLoad, 30 * 60 * 1000);
     setInterval(renderCharts, 4 * 60 * 60 * 1000);
-    setInterval(renderPortfolioHistoryChart, 4 * 60 * 60 * 1000);
 
     window.addEventListener('resize', checkNavbarRows);
     checkNavbarRows();
