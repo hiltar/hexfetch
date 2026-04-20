@@ -585,11 +585,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const datepickerOptions = {
         format: 'dd-mm-yyyy',
         autohide: true,
-        todayHighlight: true,
         buttonClass: 'btn',
         prevButton: '<i class="bi bi-chevron-left"></i>',
-        nextButton: '<i class="bi bi-chevron-right"></i>',
-        clearButton: true
+        nextButton: '<i class="bi bi-chevron-right"></i>'
     };
 
     const startDateInput = document.getElementById('start-date');
