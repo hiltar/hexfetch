@@ -462,8 +462,7 @@ body {
     }
 }
 
-/* ==================== VANILLAJS-DATEPICKER DARK THEME ==================== */
-/* Full dark mode override for vanillajs-datepicker (v1.3.4 + bs5 CSS) */
+/* ==================== VANILLAJS-DATEPICKER ==================== */
 
 .datepicker {
     z-index: 1050 !important;
@@ -477,14 +476,17 @@ body {
 .datepicker-picker {
     background-color: var(--card-bg) !important;
     color: var(--text-color) !important;
+    border-radius: 8px !important;
 }
 
-.datepicker-header {
+/* Header & navigation */
+.datepicker-header,
+.datepicker-title {
     background-color: var(--card-bg) !important;
+    color: var(--text-color) !important;
     border-bottom: 1px solid var(--border-color) !important;
 }
 
-.datepicker-title,
 .datepicker-switch,
 .datepicker .prev,
 .datepicker .next {
@@ -498,73 +500,65 @@ body {
     background-color: transparent !important;
 }
 
-.datepicker table {
-    background-color: var(--card-bg) !important;
-}
-
-.datepicker table th,
-.datepicker table td {
-    color: var(--text-color) !important;
-    border-color: var(--border-color) !important;
-}
-
-/* Weekday headers */
-.datepicker table thead tr th {
-    color: var(--primary-bg) !important;
-    font-weight: 600 !important;
-}
-
-/* Day cells */
-.datepicker table td.day {
+/* All cells (days, months, years) */
+.datepicker-cell {
     color: var(--text-color) !important;
 }
 
-.datepicker table td.day:hover {
-    background-color: #495057 !important;
-    color: var(--text-color) !important;
-}
-
-/* Today */
-.datepicker table td.today {
-    background-color: rgba(0, 183, 235, 0.2) !important;
-    color: var(--text-color) !important;
-    font-weight: bold !important;
-}
-
-/* Selected / Active day */
-.datepicker table td.active,
-.datepicker table td.active:hover {
+/* HOVER on any cell → uses your primary color */
+.datepicker-cell:hover,
+.datepicker-cell.focused:not(.selected) {
     background-color: var(--primary-bg) !important;
     color: var(--primary-text) !important;
     border-radius: 4px !important;
 }
 
-/* Other-month days */
-.datepicker table td.old,
-.datepicker table td.new {
+/* Today in days view */
+.datepicker-cell.today:not(.selected) {
+    background-color: rgba(0, 183, 235, 0.25) !important;
+    color: var(--text-color) !important;
+    font-weight: bold !important;
+}
+
+.datepicker-cell.today:not(.selected):hover,
+.datepicker-cell.today.focused:not(.selected) {
+    background-color: var(--primary-bg) !important;
+    color: var(--primary-text) !important;
+}
+
+/* Selected cell (any view) */
+.datepicker-cell.selected,
+.datepicker-cell.selected:hover {
+    background-color: var(--primary-bg) !important;
+    color: var(--primary-text) !important;
+    font-weight: 600 !important;
+}
+
+/* Other-month / other-year cells */
+.datepicker-cell.next,
+.datepicker-cell.prev {
     color: #8a8f96 !important;
 }
 
-/* Disabled days */
-.datepicker table td.disabled,
-.datepicker table td.disabled:hover {
+/* Disabled cells */
+.datepicker-cell.disabled {
     color: #6c757d !important;
-    background-color: transparent !important;
     cursor: not-allowed !important;
 }
 
-/* Footer buttons (Clear / Today) */
-.datepicker .datepicker-footer button {
+/* Footer (Clear / Today buttons) */
+.datepicker-footer button {
     color: var(--text-color) !important;
     background-color: transparent !important;
     border-color: var(--border-color) !important;
 }
 
-.datepicker .datepicker-footer button:hover {
+.datepicker-footer button:hover {
     background-color: #495057 !important;
     color: var(--primary-bg) !important;
 }
 
+/* Dropdown positioning */
 .datepicker-dropdown {
     z-index: 1060 !important;
 }
