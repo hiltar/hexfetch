@@ -603,3 +603,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('resize', checkNavbarRows);
     checkNavbarRows();
+});
