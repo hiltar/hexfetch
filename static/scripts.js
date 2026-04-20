@@ -580,17 +580,26 @@ function checkNavbarRows() {
 // INITIALIZATION
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
-    $('.datepicker').datepicker({
-        format: 'dd-mm-yyyy',
-        autoclose: true,
-        todayHighlight: true
-    });
-
     document.title = 'HEX Stats';
+
+    const datepickerOptions = {
+        format: 'dd-mm-yyyy',
+        autohide: true,
+        todayHighlight: true,
+        buttonClass: 'btn',
+        prevButton: '<i class="bi bi-chevron-left"></i>',
+        nextButton: '<i class="bi bi-chevron-right"></i>',
+        clearButton: true
+    };
+
+    const startDateInput = document.getElementById('start-date');
+    const endDateInput = document.getElementById('end-date');
+    if (startDateInput) new Datepicker(startDateInput, datepickerOptions);
+    if (endDateInput) new Datepicker(endDateInput, datepickerOptions);
+
     initialLoad();
-    setInterval(initialLoad, 30 * 60 * 1000);
+    setInterval(initialLoad, 10 * 60 * 1000);
     setInterval(renderCharts, 4 * 60 * 60 * 1000);
 
     window.addEventListener('resize', checkNavbarRows);
     checkNavbarRows();
-});
