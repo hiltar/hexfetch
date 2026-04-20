@@ -593,10 +593,23 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const startDateInput = document.getElementById('start-date');
-    const endDateInput = document.getElementById('end-date');
-    if (startDateInput) new Datepicker(startDateInput, datepickerOptions);
-    if (endDateInput) new Datepicker(endDateInput, datepickerOptions);
+    const endDateInput   = document.getElementById('end-date');
 
+    let startDatepicker, endDatepicker;
+
+    if (startDateInput) startDatepicker = new Datepicker(startDateInput, datepickerOptions);
+    if (endDateInput)   endDatepicker   = new Datepicker(endDateInput,   datepickerOptions);
+
+    const startBtn = document.getElementById('start-date-btn');
+    const endBtn   = document.getElementById('end-date-btn');
+
+    if (startBtn && startDatepicker) {
+        startBtn.addEventListener('click', () => startDatepicker.show());
+    }
+    if (endBtn && endDatepicker) {
+        endBtn.addEventListener('click', () => endDatepicker.show());
+    }
+    
     initialLoad();
     setInterval(initialLoad, 10 * 60 * 1000);
     setInterval(renderCharts, 4 * 60 * 60 * 1000);
