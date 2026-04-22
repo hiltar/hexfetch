@@ -663,6 +663,6 @@ func main() {
     http.HandleFunc("/api/config", handleConfig)
     http.HandleFunc("/ws/live-data", handleLiveWebSocket)
 
-    log.Println("🚀 HEX Stats server starting on :5555 (Smart WebSocket live data enabled)")
+    log.Println("⬢ HEX Stats server starting on :5555 ⬢")
     log.Fatal(http.ListenAndServe(":5555", nil))
 }
