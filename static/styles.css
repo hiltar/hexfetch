@@ -97,6 +97,10 @@
     text-align: center;
     margin-bottom: 0.5rem;
 }
+.chart-container canvas {
+    width: 100% !important;
+    height: 300px !important;
+}
 .chart-value {
     text-align: center;
     font-size: 1.1rem;
