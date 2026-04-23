@@ -143,6 +143,107 @@
     to { transform: translateX(0); opacity: 1; }
 }
 
+/* ==================== VANILLAJS-DATEPICKER ==================== */
+
+.datepicker {
+    z-index: 1050 !important;
+    background-color: var(--card-bg) !important;
+    color: var(--text-color) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4) !important;
+}
+
+.datepicker-picker {
+    background-color: var(--card-bg) !important;
+    color: var(--text-color) !important;
+    border-radius: 8px !important;
+}
+
+/* Header & navigation */
+.datepicker-header,
+.datepicker-title {
+    background-color: var(--card-bg) !important;
+    color: var(--text-color) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+}
+
+.datepicker-switch,
+.datepicker .prev,
+.datepicker .next {
+    color: var(--text-color) !important;
+}
+
+.datepicker .prev:hover,
+.datepicker .next:hover,
+.datepicker-switch:hover {
+    color: var(--primary-bg) !important;
+    background-color: transparent !important;
+}
+
+/* All cells (days, months, years) */
+.datepicker-cell {
+    color: var(--text-color) !important;
+}
+
+/* HOVER on any cell → uses your primary color */
+.datepicker-cell:hover,
+.datepicker-cell.focused:not(.selected) {
+    background-color: var(--primary-bg) !important;
+    color: var(--primary-text) !important;
+    border-radius: 4px !important;
+}
+
+/* Today in days view */
+.datepicker-cell.today:not(.selected) {
+    background-color: rgba(0, 183, 235, 0.25) !important;
+    color: var(--text-color) !important;
+    font-weight: bold !important;
+}
+
+.datepicker-cell.today:not(.selected):hover,
+.datepicker-cell.today.focused:not(.selected) {
+    background-color: var(--primary-bg) !important;
+    color: var(--primary-text) !important;
+}
+
+/* Selected cell (any view) */
+.datepicker-cell.selected,
+.datepicker-cell.selected:hover {
+    background-color: var(--primary-bg) !important;
+    color: var(--primary-text) !important;
+    font-weight: 600 !important;
+}
+
+/* Other-month / other-year cells */
+.datepicker-cell.next,
+.datepicker-cell.prev {
+    color: #8a8f96 !important;
+}
+
+/* Disabled cells */
+.datepicker-cell.disabled {
+    color: #6c757d !important;
+    cursor: not-allowed !important;
+}
+
+/* Footer (Clear / Today buttons) */
+.datepicker-footer button {
+    color: var(--text-color) !important;
+    background-color: transparent !important;
+    border-color: var(--border-color) !important;
+}
+
+.datepicker-footer button:hover {
+    background-color: #495057 !important;
+    color: var(--primary-bg) !important;
+}
+
+/* Dropdown positioning */
+.datepicker-dropdown {
+    z-index: 1060 !important;
+}
+
 /* Mobile Adjustments */
 @media (max-width: 768px) {
     .hide-mobile { display: none; }
