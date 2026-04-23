@@ -5,178 +5,170 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HEX Stats</title>
     <link rel="icon" type="image/webp" href="/icon.webp">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vanillajs-datepicker@1.3.4/dist/css/datepicker.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vanillajs-datepicker@1.3.4/dist/css/datepicker-bs5.min.css">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div id="notification-container"></div>
+    <div id="notification-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1100;"></div>
 
-    <main class="container">
-        <header class="app-header">
-            <div class="brand">
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="d-flex align-items-center gap-3">
                 <img src="/icon.webp" alt="HEX Stats Logo" id="logo">
-                <h1>HEX Stats</h1>
+                <h1 class="mb-0">HEX Stats</h1>
             </div>
-            <div class="refresh-timer">
-                <small class="text-muted">Live Data Refresh: <strong id="countdown">15:00</strong></small>
+            <div id="refresh-timer" class="text-muted small">
+                Live Data Refresh:  <span id="countdown" class="fw-bold text-primary">15:00</span>
             </div>
-        </header>
-
-        <nav class="tabs-nav">
-            <ul>
-                <li><a href="#" class="tab-link active" data-target="profile"><i class="bi bi-person-fill"></i> <span class="hide-mobile">Profile</span></a></li>
-                <li><a href="#" class="tab-link" data-target="live-data"><i class="bi bi-broadcast"></i> <span class="hide-mobile">Live Data</span></a></li>
-                <li><a href="#" class="tab-link" data-target="chart"><i class="bi bi-bar-chart-fill"></i> <span class="hide-mobile">Charts</span></a></li>
-                <li><a href="#" class="tab-link" data-target="settings"><i class="bi bi-gear-fill"></i> <span class="hide-mobile">Settings</span></a></li>
-            </ul>
+        </div>
+        <nav class="navbar navbar-expand-sm" id="hexTabs">
+            <div class="container-fluid">
+                <!-- Hamburger button -->
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <!-- Nav items -->
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav nav-tabs w-100" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="profile-tab" data-bs-toggle="tab" href="#profile" role="tab" aria-controls="profile" aria-selected="true"><i class="bi bi-person-fill me-1"></i> Profile</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="live-data-tab" data-bs-toggle="tab" href="#live-data" role="tab" aria-controls="live-data" aria-selected="false"><i class="bi bi-broadcast me-1"></i> Live Data</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="chart-tab" data-bs-toggle="tab" href="#chart" role="tab" aria-controls="chart" aria-selected="false"><i class="bi bi-bar-chart-fill me-1"></i> Charts</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settings" role="tab" aria-controls="settings" aria-selected="false"><i class="bi bi-gear-fill me-1"></i> Settings</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
         </nav>
-
-        <div id="tab-contents">
-            
-            <section id="profile" class="tab-section active">
+        <div class="tab-content mt-3">
+            <div class="tab-pane fade show active" id="profile" role="tabpanel">
                 <h2>Profile</h2>
                 <p id="profile-message"></p>
-                
-                <div class="stat-box">
-                    <strong>Total T-Shares:</strong> <span id="total-tshares" class="fw-bold">0.00</span>
-                </div>
-                <div class="stat-box">
-                    <strong>Total T-Shares Value:</strong> $<span id="total-value" class="fw-bold">0.00</span>
-                </div>
-                <div class="stat-box">
-                    <strong>Liquid HEX Value:</strong> $<span id="liquid-hex-value" class="fw-bold">0.00</span>
-                </div>
+                <p class="total-tshares"><strong>Total T-Shares:</strong> <span id="total-tshares">0.00</span></p>
+                <p class="total-value"><strong>Total T-Shares Value:</strong> $<span id="total-value">0.00</span></p>
+                <p class="liquid-hex-value"><strong>Liquid HEX Value:</strong> $<span id="liquid-hex-value">0.00</span></p>
                 
                 <div id="portfolio-history" class="mt-4">
                     <h3>Historical Portfolio Value</h3>
-                    
-                    <div class="grid text-center portfolio-grid">
-                        <article>
-                            <small class="text-muted">Starting (Day <span id="hist-start-day-label">1260</span>)</small>
-                            <div id="hist-start-value"><strong>$0.00</strong></div>
-                        </article>
-                        <article>
-                            <small class="text-muted">Current</small>
-                            <div id="hist-current-value"><strong>$0.00</strong></div>
-                        </article>
-                        <article>
-                            <small class="text-muted">All-Time High</small>
-                            <div id="hist-ath" class="text-success"><strong>$0.00</strong></div>
-                        </article>
-                        <article>
-                            <small class="text-muted">Growth</small>
-                            <div id="hist-growth"><strong>$0.00</strong></div>
-                            <small id="hist-growth-pct">0.00%</small>
-                        </article>
-                        <article>
-                            <small class="text-muted">Daily Interest</small>
-                            <div id="interest-hex"><strong>0.00 HEX</strong></div>
-                            <div id="interest-usd"><strong>$0.00</strong></div>
-                        </article>
+                    <div class="row g-3 mb-3 text-center small">
+                        <div class="col">
+                            <div class="text-muted">Starting (Day <span id="hist-start-day-label">1260</span>)</div>
+                            <div class="h5 fw-bold" id="hist-start-value">$0.00</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">Current</div>
+                            <div class="h5 fw-bold" id="hist-current-value">$0.00</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">All-Time High</div>
+                            <div class="h5 fw-bold text-success" id="hist-ath">$0.00</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">Growth</div>
+                            <div class="h5 fw-bold" id="hist-growth">$0.00</div>
+                            <div class="small fw-bold" id="hist-growth-pct">0.00%</div>
+                        </div>
+                        <div class="col">
+                            <div class="text-muted">Daily Interest</div>
+                            <div class="h5 fw-bold" id="interest-hex">0.00 HEX</div>
+                            <div class="h5 fw-bold" id="interest-usd">$0.00</div>
+                        </div>
                     </div>
-
-                    <article class="chart-container">
+                    <div class="chart-container w-100">
                         <canvas id="historicalValueChart" height="360"></canvas>
-                    </article>
+                    </div>
                 </div>
 
                 <h3>Active Miners</h3>
                 <div id="active-miners"></div>
-                <button onclick="showCompletedMiners()" class="secondary">View Completed Miners</button>
-            </section>
-
-            <section id="live-data" class="tab-section" style="display: none;">
+                <div class="mt-3">
+                    <button class="btn btn-primary" onclick="showCompletedMiners()">View Completed Miners</button>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="live-data" role="tabpanel">
                 <h2>Live Data</h2>
-                <article id="live-data-content" class="live-data text-center">
+                <div id="live-data-content" class="live-data">
                     <p><strong>Price:</strong> $<span id="price">0.00</span></p>
                     <p><strong>T-Share Price:</strong> $<span id="tshare-price">0.00</span></p>
                     <p><strong>T-Share Rate:</strong> <span id="tshare-rate">0</span> HEX</p>
                     <p><strong>Payout Per T-Share:</strong> <span id="payout">0.0</span> HEX</p>
                     <p><strong>Penalties:</strong> <span id="penalties">0</span> HEX</p>
                     <p><strong>Beat:</strong> <span id="beat">0</span></p>
-                    <hr>
-                    <small id="last-updated" class="text-muted">Last updated: Waiting for data...</small>
-                </article>
-            </section>
-
-            <section id="chart" class="tab-section" style="display: none;">
+                    <p id="last-updated">Last updated: Waiting for data...</p>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="chart" role="tabpanel">
                 <h2>Charts</h2>
-                
-                <article class="chart-container">
+                <div class="chart-container">
                     <h3>HEX Price</h3>
                     <p id="price-value" class="chart-value">$0.0000</p>
                     <canvas id="priceChart"></canvas>
-                </article>
-
-                <article class="chart-container">
+                </div>
+                <div class="chart-container">
                     <h3>T-Share Rate</h3>
                     <p id="tshare-rate-value" class="chart-value">0.00 HEX</p>
                     <canvas id="tshareRateChart"></canvas>
-                </article>
-
-                <article class="chart-container">
+                </div>
+                <div class="chart-container">
                     <h3>Payout Per T-Share</h3>
                     <p id="payout-per-tshare-value" class="chart-value">0.00 HEX</p>
                     <canvas id="payoutPerTshareChart"></canvas>
-                </article>
-
-                <article class="chart-container">
+                </div>
+                <div class="chart-container">
                     <h3>Daily Payout</h3>
                     <p id="daily-payout-value" class="chart-value">0.00 HEX</p>
                     <canvas id="dailyPayoutChart"></canvas>
-                </article>
-            </section>
-
-            <section id="settings" class="tab-section" style="display: none;">
+                </div>
+            </div>
+            <div class="tab-pane fade" id="settings" role="tabpanel">
                 <h2>Settings</h2>
-                
-                <article>
-                    <h3>Live Data</h3>
-                    <label>
-                        Update Frequency (minutes):
-                        <input type="number" id="frequency" min="1">
-                    </label>
-                    <button onclick="saveFrequency()">Save Frequency</button>
-                </article>
-
-                <article>
-                    <h3>Liquid HEX</h3>
-                    <label>
-                        Liquid HEX Amount:
-                        <input type="number" id="liquid-hex" min="0" step="0.01">
-                    </label>
-                    <button onclick="saveLiquidHEX()">Save Liquid HEX</button>
-                </article>
-
-                <article>
-                    <h3>Historical Chart</h3>
-                    <label>
-                        Starting Day for Historical Chart (e.g. 1420):
-                        <input type="number" id="hist-start-day" min="1" value="1260">
-                    </label>
-                    <button onclick="saveHistoricalStartDay()">Save Starting Day</button>
-                </article>
-
-                <article>
-                    <h3>Add New Miner</h3>
-                    <div class="grid">
-                        <label>Start Date: <input type="text" id="start-date" placeholder="01-01-2023"></label>
-                        <label>End Date: <input type="text" id="end-date" placeholder="01-01-2024"></label>
-                        <label>T-Shares: <input type="number" id="tshares" min="0" step="0.01"></label>
-                    </div>
-                    <button onclick="addMiner()"><i class="bi bi-plus-circle"></i> Add Miner</button>
-                </article>
-
-                <article>
-                    <h3>Existing Miners</h3>
-                    <div id="existing-miners"></div>
-                </article>
-            </section>
+                <h3>Live Data Settings</h3>
+                <div class="mb-3">
+                    <label for="frequency" class="form-label">Update Frequency (minutes):</label>
+                    <input type="number" id="frequency" class="form-control" min="1">
+                    <button class="btn btn-primary mt-2" onclick="saveFrequency()">Save Frequency</button>
+                </div>
+                <h3>Liquid HEX Settings</h3>
+                <div class="mb-3">
+                    <label for="liquid-hex" class="form-label">Liquid HEX Amount:</label>
+                    <input type="number" id="liquid-hex" class="form-control" min="0" step="0.01">
+                    <button class="btn btn-primary mt-2" onclick="saveLiquidHEX()">Save Liquid HEX</button>
+                </div>
+                <h3>Historical Chart Settings</h3>
+                <div class="mb-3">
+                    <label for="hist-start-day" class="form-label">Starting Day for Historical Chart (e.g. 1420):</label>
+                    <input type="number" id="hist-start-day" class="form-control" min="1" value="1260">
+                    <button class="btn btn-primary mt-2" onclick="saveHistoricalStartDay()">Save Starting Day</button>
+                </div>
+                <h3>Add New Miner</h3>
+                <div class="mb-3">
+                    <label for="start-date" class="form-label">Start Date:</label>
+                    <input type="text" id="start-date" class="form-control" placeholder="01-01-2023">
+                </div>
+                <div class="mb-3">
+                    <label for="end-date" class="form-label">End Date:</label>
+                    <input type="text" id="end-date" class="form-control" placeholder="01-01-2024">
+                </div>
+                <div class="mb-3">
+                    <label for="tshares" class="form-label">T-Shares:</label>
+                    <input type="number" id="tshares" class="form-control" min="0" step="0.01">
+                </div>
+                <button class="btn btn-primary" onclick="addMiner()"><i class="bi bi-plus-circle me-1"></i> Add Miner</button>
+                <h3>Existing Miners</h3>
+                <div id="existing-miners"></div>
+            </div>
         </div>
-    </main>
+    </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vanillajs-datepicker@1.3.4/dist/js/datepicker-full.min.js"></script>
     <script src="scripts.js"></script>
