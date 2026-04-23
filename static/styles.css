@@ -261,7 +261,7 @@ body {
 
 /* Chart container styling */
 .chart-container {
-    max-width: 600px;
+    width: 100%;
     margin: 20px auto;
     padding: 10px;
     background-color: var(--card-bg);
@@ -372,12 +372,8 @@ body {
     }
 }
 
-/* Responsive grid for larger screens */
-@media (min-width: 992px) {
-    .chart-container {
-        max-width: 800px;
-    }
-}
+/* Responsive grid for larger screens - removed max-width restriction */
+/* (no additional media query needed now) */
 
 /* ==================== REFRESH TIMER  ==================== */
 #refresh-timer {
