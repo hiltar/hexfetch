@@ -280,12 +280,22 @@ function renderChartsWithData(data) {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
                 scales: {
                     x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
                     y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
                 },
                 plugins: {
-                    legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } }
+                    legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } },
+                    tooltip: {
+                        callbacks: {
+                            title: (tooltipItems) => `Day ${tooltipItems[0].label}`,
+                            label: (tooltipItem) => `${config.label}: ${tooltipItem.raw.toFixed(2)}`
+                        }
+                    }
                 }
             }
         });
