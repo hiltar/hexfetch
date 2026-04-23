@@ -373,20 +373,33 @@ func saveConfig(cfg Config) error {
 // WEB SOCKET MANAGEMENT
 // =============================================
 
-func startLiveDataFetcher() {
+func startLiveDataFetcher(configChangeCh <-chan struct{}) {
     wsActiveMu.Lock()
     if wsActiveTicker != nil {
         wsActiveMu.Unlock()
         return // already running
     }
 
-    wsActiveTicker = time.NewTicker(time.Duration(configManager.GetLiveDataFrequency()) * time.Minute)
+    // Create initial ticker
+    freq := configManager.GetLiveDataFrequency()
+    wsActiveTicker = time.NewTicker(time.Duration(freq) * time.Minute)
     wsActiveMu.Unlock()
 
     go func() {
         debugLog("Live data fetcher started (clients connected)")
 
-        // Initial fetch immediately when first client connects
+        // Helper to update ticker frequency
+        updateTicker := func(newFreq int) {
+            wsActiveMu.Lock()
+            defer wsActiveMu.Unlock()
+            if wsActiveTicker != nil {
+                wsActiveTicker.Stop()
+                wsActiveTicker = time.NewTicker(time.Duration(newFreq) * time.Minute)
+                debugLog("Live data fetcher ticker updated to", newFreq, "minutes")
+            }
+        }
+
+        // Initial fetch immediately
         if data, err := fetchLiveData(); err == nil {
             liveDataMutex.Lock()
             latestLiveData = data
@@ -403,8 +416,19 @@ func startLiveDataFetcher() {
                     liveDataMutex.Unlock()
                     broadcastLiveData(data)
                 }
+            case <-configChangeCh:
+                // Frequency may have changed; update ticker
+                newFreq := configManager.GetLiveDataFrequency()
+                updateTicker(newFreq)
             case <-wsActiveDone:
                 debugLog("Live data fetcher stopped (no clients connected)")
+                // Clean up ticker
+                wsActiveMu.Lock()
+                if wsActiveTicker != nil {
+                    wsActiveTicker.Stop()
+                    wsActiveTicker = nil
+                }
+                wsActiveMu.Unlock()
                 return
             }
         }
@@ -457,7 +481,9 @@ func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
     wsClientsMu.Unlock()
 
     if wasEmpty {
-        startLiveDataFetcher() // start fetching when first client connects
+        // Subscribe to config changes and start fetcher
+        configChangeCh := configManager.Subscribe()
+        startLiveDataFetcher(configChangeCh)
     }
 
     // send current live data immediately
