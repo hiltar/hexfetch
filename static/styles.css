@@ -11,48 +11,106 @@
 .text-success { color: #28a745; }
 .text-danger { color: #dc3545; }
 .mt-4 { margin-top: 1.5rem; }
+.fw-bold { font-weight: bold; }
 
-/* Custom Layout adjustments */
-.refresh-container {
-    text-align: right;
-    margin-bottom: 1.5rem;
+/* Header Layout */
+.app-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
 }
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.brand img {
+    width: 48px;
+    height: 48px;
+}
+.brand h1 {
+    margin: 0;
+    font-size: 2rem;
+}
+#countdown { color: var(--pico-primary); }
 
-#countdown {
+/* Tabs Navbar Layout */
+.tabs-nav {
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    margin-bottom: 2rem;
+}
+.tabs-nav ul {
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+}
+.tabs-nav a.tab-link {
+    display: block;
+    padding: 0.75rem 1rem;
+    color: var(--pico-muted-color);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-bottom-color 0.2s;
+}
+.tabs-nav a.tab-link:hover {
     color: var(--pico-primary);
 }
-
-.chart-container {
-    padding: 1rem;
-    margin-bottom: 1.5rem;
+.tabs-nav a.tab-link.active {
+    color: var(--pico-color);
+    border-bottom-color: var(--pico-primary);
+    font-weight: 600;
 }
 
+/* Stat Box Containers (Top of Profile) */
+.stat-box {
+    background-color: var(--pico-card-background-color);
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--pico-card-border-color);
+    border-radius: var(--pico-border-radius);
+    margin-bottom: 1rem;
+    font-size: 1.25rem;
+    box-shadow: var(--pico-card-box-shadow);
+}
+.stat-box strong { color: var(--pico-primary); }
+
+/* Historical Grid Cards */
+.portfolio-grid article {
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+.portfolio-grid article div {
+    font-size: 1.35rem;
+    margin-top: 0.25rem;
+}
+
+/* Charts Containers */
+.chart-container {
+    padding: 1rem;
+    margin-bottom: 2rem;
+}
 .chart-container h3 {
     text-align: center;
     margin-bottom: 0.5rem;
 }
-
 .chart-value {
     text-align: center;
     font-size: 1.1rem;
     font-weight: bold;
 }
 
-/* Tabs */
-.tab-link.active {
-    color: var(--pico-primary);
-    border-bottom: 2px solid var(--pico-primary);
-}
-
-/* Active Miners Flexbox Override */
+/* Active Miners list styling */
 .miner-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0;
+    padding: 0.75rem 0;
     border-bottom: 1px solid var(--pico-form-element-border-color);
 }
-
 .miner-item button {
     width: auto;
     margin-bottom: 0;
@@ -78,10 +136,7 @@
     border-left: 4px solid var(--pico-primary);
     animation: slideIn 0.3s ease-out;
 }
-
-.notification-toast.danger {
-    border-left-color: var(--pico-del-color);
-}
+.notification-toast.danger { border-left-color: var(--pico-del-color); }
 
 @keyframes slideIn {
     from { transform: translateX(100%); opacity: 0; }
@@ -91,5 +146,6 @@
 /* Mobile Adjustments */
 @media (max-width: 768px) {
     .hide-mobile { display: none; }
-    .grid { grid-template-columns: 1fr; }
+    .app-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+    .refresh-timer { align-self: flex-end; }
 }
