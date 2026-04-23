@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HEX Stats</title>
     <link rel="icon" type="image/webp" href="/icon.webp">
-    <link rel="stylesheet" href="pico.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vanillajs-datepicker@1.3.4/dist/css/datepicker.min.css">
     <link rel="stylesheet" href="styles.css">
@@ -14,13 +14,17 @@
     <div id="notification-container"></div>
 
     <main class="container">
-        <nav>
-            <ul>
-                <li>
-                    <img src="/icon.webp" alt="HEX Stats Logo" id="logo" style="width: 32px; height: 32px; vertical-align: middle; margin-right: 8px;">
-                    <strong>HEX Stats</strong>
-                </li>
-            </ul>
+        <header class="app-header">
+            <div class="brand">
+                <img src="/icon.webp" alt="HEX Stats Logo" id="logo">
+                <h1>HEX Stats</h1>
+            </div>
+            <div class="refresh-timer">
+                <small class="text-muted">Live Data Refresh: <strong id="countdown">15:00</strong></small>
+            </div>
+        </header>
+
+        <nav class="tabs-nav">
             <ul>
                 <li><a href="#" class="tab-link active" data-target="profile"><i class="bi bi-person-fill"></i> <span class="hide-mobile">Profile</span></a></li>
                 <li><a href="#" class="tab-link" data-target="live-data"><i class="bi bi-broadcast"></i> <span class="hide-mobile">Live Data</span></a></li>
@@ -29,56 +33,50 @@
             </ul>
         </nav>
 
-        <div class="refresh-container">
-            <small class="text-muted">Live Data Refresh: <strong id="countdown">15:00</strong></small>
-        </div>
-
         <div id="tab-contents">
+            
             <section id="profile" class="tab-section active">
                 <h2>Profile</h2>
                 <p id="profile-message"></p>
                 
-                <div class="grid">
-                    <article>
-                        <strong>Total T-Shares</strong>
-                        <h3 id="total-tshares">0.00</h3>
-                    </article>
-                    <article>
-                        <strong>Total T-Shares Value</strong>
-                        <h3>$<span id="total-value">0.00</span></h3>
-                    </article>
-                    <article>
-                        <strong>Liquid HEX Value</strong>
-                        <h3>$<span id="liquid-hex-value">0.00</span></h3>
-                    </article>
+                <div class="stat-box">
+                    <strong>Total T-Shares:</strong> <span id="total-tshares" class="fw-bold">0.00</span>
+                </div>
+                <div class="stat-box">
+                    <strong>Total T-Shares Value:</strong> $<span id="total-value" class="fw-bold">0.00</span>
+                </div>
+                <div class="stat-box">
+                    <strong>Liquid HEX Value:</strong> $<span id="liquid-hex-value" class="fw-bold">0.00</span>
                 </div>
                 
                 <div id="portfolio-history" class="mt-4">
                     <h3>Historical Portfolio Value</h3>
-                    <div class="grid text-center">
-                        <div>
+                    
+                    <div class="grid text-center portfolio-grid">
+                        <article>
                             <small class="text-muted">Starting (Day <span id="hist-start-day-label">1260</span>)</small>
                             <div id="hist-start-value"><strong>$0.00</strong></div>
-                        </div>
-                        <div>
+                        </article>
+                        <article>
                             <small class="text-muted">Current</small>
                             <div id="hist-current-value"><strong>$0.00</strong></div>
-                        </div>
-                        <div>
+                        </article>
+                        <article>
                             <small class="text-muted">All-Time High</small>
                             <div id="hist-ath" class="text-success"><strong>$0.00</strong></div>
-                        </div>
-                        <div>
+                        </article>
+                        <article>
                             <small class="text-muted">Growth</small>
                             <div id="hist-growth"><strong>$0.00</strong></div>
                             <small id="hist-growth-pct">0.00%</small>
-                        </div>
-                        <div>
+                        </article>
+                        <article>
                             <small class="text-muted">Daily Interest</small>
                             <div id="interest-hex"><strong>0.00 HEX</strong></div>
                             <div id="interest-usd"><strong>$0.00</strong></div>
-                        </div>
+                        </article>
                     </div>
+
                     <article class="chart-container">
                         <canvas id="historicalValueChart" height="360"></canvas>
                     </article>
@@ -91,7 +89,7 @@
 
             <section id="live-data" class="tab-section" style="display: none;">
                 <h2>Live Data</h2>
-                <article id="live-data-content" class="live-data">
+                <article id="live-data-content" class="live-data text-center">
                     <p><strong>Price:</strong> $<span id="price">0.00</span></p>
                     <p><strong>T-Share Price:</strong> $<span id="tshare-price">0.00</span></p>
                     <p><strong>T-Share Rate:</strong> <span id="tshare-rate">0</span> HEX</p>
@@ -105,30 +103,30 @@
 
             <section id="chart" class="tab-section" style="display: none;">
                 <h2>Charts</h2>
-                <div class="grid">
-                    <article class="chart-container">
-                        <h3>HEX Price</h3>
-                        <p id="price-value" class="chart-value">$0.0000</p>
-                        <canvas id="priceChart"></canvas>
-                    </article>
-                    <article class="chart-container">
-                        <h3>T-Share Rate</h3>
-                        <p id="tshare-rate-value" class="chart-value">0.00 HEX</p>
-                        <canvas id="tshareRateChart"></canvas>
-                    </article>
-                </div>
-                <div class="grid">
-                    <article class="chart-container">
-                        <h3>Payout Per T-Share</h3>
-                        <p id="payout-per-tshare-value" class="chart-value">0.00 HEX</p>
-                        <canvas id="payoutPerTshareChart"></canvas>
-                    </article>
-                    <article class="chart-container">
-                        <h3>Daily Payout</h3>
-                        <p id="daily-payout-value" class="chart-value">0.00 HEX</p>
-                        <canvas id="dailyPayoutChart"></canvas>
-                    </article>
-                </div>
+                
+                <article class="chart-container">
+                    <h3>HEX Price</h3>
+                    <p id="price-value" class="chart-value">$0.0000</p>
+                    <canvas id="priceChart"></canvas>
+                </article>
+
+                <article class="chart-container">
+                    <h3>T-Share Rate</h3>
+                    <p id="tshare-rate-value" class="chart-value">0.00 HEX</p>
+                    <canvas id="tshareRateChart"></canvas>
+                </article>
+
+                <article class="chart-container">
+                    <h3>Payout Per T-Share</h3>
+                    <p id="payout-per-tshare-value" class="chart-value">0.00 HEX</p>
+                    <canvas id="payoutPerTshareChart"></canvas>
+                </article>
+
+                <article class="chart-container">
+                    <h3>Daily Payout</h3>
+                    <p id="daily-payout-value" class="chart-value">0.00 HEX</p>
+                    <canvas id="dailyPayoutChart"></canvas>
+                </article>
             </section>
 
             <section id="settings" class="tab-section" style="display: none;">
@@ -164,18 +162,9 @@
                 <article>
                     <h3>Add New Miner</h3>
                     <div class="grid">
-                        <label>
-                            Start Date:
-                            <input type="text" id="start-date" placeholder="01-01-2023">
-                        </label>
-                        <label>
-                            End Date:
-                            <input type="text" id="end-date" placeholder="01-01-2024">
-                        </label>
-                        <label>
-                            T-Shares:
-                            <input type="number" id="tshares" min="0" step="0.01">
-                        </label>
+                        <label>Start Date: <input type="text" id="start-date" placeholder="01-01-2023"></label>
+                        <label>End Date: <input type="text" id="end-date" placeholder="01-01-2024"></label>
+                        <label>T-Shares: <input type="number" id="tshares" min="0" step="0.01"></label>
                     </div>
                     <button onclick="addMiner()"><i class="bi bi-plus-circle"></i> Add Miner</button>
                 </article>
