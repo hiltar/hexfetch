@@ -1,6 +1,3 @@
-// =============================================
-// GLOBAL STATE
-// =============================================
 let chartInstances = {
     priceChart: null,
     tshareRateChart: null,
@@ -19,81 +16,65 @@ let currentFrequency = 15;
 let wsConnection = null;
 
 // =============================================
-// PICO UI HANDLERS (Tabs, Modals, Notifications)
+// HELPERS
 // =============================================
-
-// Tab Switching Logic
-document.addEventListener('DOMContentLoaded', () => {
-    const tabLinks = document.querySelectorAll('.tab-link');
-    const tabSections = document.querySelectorAll('.tab-section');
-
-    tabLinks.forEach(link => {
-        link.addEventListener('click', (e) => {
-            e.preventDefault();
-            
-            // Remove active states
-            tabLinks.forEach(l => l.classList.remove('active'));
-            tabSections.forEach(s => s.style.display = 'none');
-            
-            // Set new active states
-            link.classList.add('active');
-            const targetId = link.getAttribute('data-target');
-            document.getElementById(targetId).style.display = 'block';
-        });
-    });
-
-    // Initialize Datepickers
-    const startDateElem = document.getElementById('start-date');
-    const endDateElem = document.getElementById('end-date');
-    if (startDateElem) new Datepicker(startDateElem, { format: 'mm-dd-yyyy' });
-    if (endDateElem) new Datepicker(endDateElem, { format: 'mm-dd-yyyy' });
-
-    // Initial Data Load
-    initialLoad();
-});
-
-// Notifications
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
-    const toast = document.createElement('article');
-    toast.className = `notification-toast ${type === 'danger' ? 'danger' : ''}`;
-    toast.innerHTML = `<strong>${type === 'success' ? '✅' : '❌'}</strong> ${message}`;
-    
-    container.appendChild(toast);
+    const notification = document.createElement('div');
+    notification.className = `notification alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+    notification.setAttribute('role', 'alert');
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    container.appendChild(notification);
 
     setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
+        notification.classList.remove('show');
+        notification.classList.add('fade');
+        setTimeout(() => notification.remove(), 150);
     }, 3000);
 }
 
-// Native <dialog> Modal for Confirmation
 function showConfirmModal(title, message) {
     return new Promise((resolve) => {
-        const dialog = document.createElement('dialog');
-        dialog.innerHTML = `
-            <article>
-                <header>
-                    <strong>${title}</strong>
-                </header>
-                <p>${message}</p>
-                <footer>
-                    <button class="secondary cancel-btn" style="width: auto; margin-right: 10px;">Cancel</button>
-                    <button class="confirm-btn" style="width: auto;">Confirm</button>
-                </footer>
-            </article>
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">${title}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>${message}</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
+                    </div>
+                </div>
+            </div>
         `;
-        document.body.appendChild(dialog);
-        dialog.showModal();
+        document.body.appendChild(modal);
+
+        const bsModal = new bootstrap.Modal(modal, { backdrop: 'static', keyboard: false });
+        bsModal.show();
+
+        const confirmBtn = modal.querySelector('.confirm-btn');
+        const cancelBtn = modal.querySelector('.btn-secondary');
+        const closeBtn = modal.querySelector('.btn-close');
 
         const cleanup = () => {
-            dialog.close();
-            dialog.remove();
+            bsModal.hide();
+            modal.remove();
         };
 
-        dialog.querySelector('.confirm-btn').addEventListener('click', () => { cleanup(); resolve(true); });
-        dialog.querySelector('.cancel-btn').addEventListener('click', () => { cleanup(); resolve(false); });
+        confirmBtn.addEventListener('click', () => { cleanup(); resolve(true); });
+        cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
+        closeBtn.addEventListener('click', () => { cleanup(); resolve(false); });
+        modal.addEventListener('hidden.bs.modal', () => { cleanup(); resolve(false); });
     });
 }
 
@@ -102,7 +83,7 @@ function formatWithCommas(num) {
 }
 
 // =============================================
-// LIVE DATA WEBSOCKET & TIMER
+// LIVE DATA
 // =============================================
 
 function updateLiveDataUI(data) {
@@ -162,10 +143,6 @@ function setupLiveDataInterval(frequencyInMinutes) {
     }
 }
 
-// =============================================
-// INITIAL LOAD & DOM POPULATION
-// =============================================
-
 async function initialLoad() {
     try {
         const [minersRes, liveRes, configRes, hexjsonRes] = await Promise.all([
@@ -204,8 +181,8 @@ async function initialLoad() {
 
         const dailyInterestHEX = totalTShares * liveData.payoutPerTshare_Pulsechain;
         const dailyInterestUSD = dailyInterestHEX * liveData.price_Pulsechain;
-        document.getElementById('interest-hex').innerHTML = `<strong>${formatWithCommas(dailyInterestHEX.toFixed(2))} HEX</strong>`;
-        document.getElementById('interest-usd').innerHTML = `<strong>$${formatWithCommas(dailyInterestUSD.toFixed(2))}</strong>`;
+        document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
+        document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
 
         userLiquidHEX = config.liquidHEX || 0;
         const liquidHEXValue = userLiquidHEX * liveData.price_Pulsechain;
@@ -227,7 +204,7 @@ async function initialLoad() {
                 minerDiv.className = 'miner-item';
                 minerDiv.innerHTML = `
                     <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)} ${isMatured ? '(Matured)' : `(${daysLeft} days left)`}</span>
-                    ${isMatured ? `<button class="secondary outline" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
+                    ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
                 `;
                 activeMinersDiv.appendChild(minerDiv);
             });
@@ -247,7 +224,7 @@ async function initialLoad() {
             minerDiv.className = 'miner-item';
             minerDiv.innerHTML = `
                 <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</span>
-                <button class="secondary outline" onclick="deleteMiner(${index})">Delete</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteMiner(${index})">Delete</button>
             `;
             existingMinersDiv.appendChild(minerDiv);
         });
@@ -265,7 +242,6 @@ async function initialLoad() {
 // =============================================
 // CHARTS
 // =============================================
-
 function renderChartsWithData(data) {
     const sortedData = [...data].sort((a, b) => a.currentDay - b.currentDay);
     const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
@@ -276,15 +252,13 @@ function renderChartsWithData(data) {
     document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(2))} HEX` : '0.00 HEX';
     document.getElementById('daily-payout-value').textContent = latestData.dailyPayoutHEX ? `${formatWithCommas(latestData.dailyPayoutHEX.toFixed(2))} HEX` : '0.00 HEX';
 
+    const isDarkTheme = true;
     const chartConfigs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', borderColor: '#00b7eb', data: priceFilteredData },
-        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', borderColor: '#00cc99', data: sortedData },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', borderColor: '#9966ff', data: sortedData },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', borderColor: '#ff6f61', data: sortedData }
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', borderColor: isDarkTheme ? '#00b7eb' : '#007bff', data: priceFilteredData },
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', borderColor: isDarkTheme ? '#00cc99' : '#28a745', data: sortedData },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', borderColor: isDarkTheme ? '#9966ff' : '#9900cc', data: sortedData },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', borderColor: isDarkTheme ? '#ff6f61' : '#dc3545', data: sortedData }
     ];
-
-    // Read Pico's computed text color for Charts styling
-    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || '#ffffff';
 
     chartConfigs.forEach(config => {
         if (chartInstances[config.id]) chartInstances[config.id].destroy();
@@ -307,11 +281,11 @@ function renderChartsWithData(data) {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { title: { display: true, text: 'Current Day', color: textColor }, ticks: { color: textColor } },
-                    y: { title: { display: true, text: config.label, color: textColor }, ticks: { color: textColor } }
+                    x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
+                    y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
                 },
                 plugins: {
-                    legend: { labels: { color: textColor } }
+                    legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } }
                 }
             }
         });
@@ -337,21 +311,19 @@ function renderPortfolioHistoryChartWithData(rawData) {
     const growthPct = startVal > 0 ? (growth / startVal) * 100 : 0;
 
     document.getElementById('hist-start-day-label').textContent = historicalStartDay;
-    document.getElementById('hist-start-value').innerHTML = `<strong>$${formatWithCommas(startVal.toFixed(2))}</strong>`;
-    document.getElementById('hist-current-value').innerHTML = `<strong>$${formatWithCommas(currVal.toFixed(2))}</strong>`;
-    document.getElementById('hist-ath').innerHTML = `<strong>$${formatWithCommas(athVal.toFixed(2))}</strong>`;
+    document.getElementById('hist-start-value').textContent = '$' + formatWithCommas(startVal.toFixed(2));
+    document.getElementById('hist-current-value').textContent = '$' + formatWithCommas(currVal.toFixed(2));
+    document.getElementById('hist-ath').textContent = '$' + formatWithCommas(athVal.toFixed(2));
 
     const growthEl = document.getElementById('hist-growth');
-    growthEl.innerHTML = `<strong>${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}</strong>`;
-    growthEl.className = growth >= 0 ? 'text-success' : 'text-danger';
+    growthEl.textContent = (growth >= 0 ? '+' : '') + '$' + formatWithCommas(growth.toFixed(2));
+    growthEl.className = growth >= 0 ? 'h5 fw-bold text-success' : 'h5 fw-bold text-danger';
 
     const pctEl = document.getElementById('hist-growth-pct');
     pctEl.textContent = (growth >= 0 ? '+' : '') + growthPct.toFixed(2) + '%';
-    pctEl.className = growth >= 0 ? 'text-success' : 'text-danger';
+    pctEl.className = growth >= 0 ? 'small fw-bold text-success' : 'small fw-bold text-danger';
 
-    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || '#ffffff';
-    const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--pico-background-color').trim() || '#11191f';
-
+    const isDarkTheme = true;
     if (chartInstances.historicalValueChart) chartInstances.historicalValueChart.destroy();
 
     const ctx = document.getElementById('historicalValueChart').getContext('2d');
@@ -362,8 +334,8 @@ function renderPortfolioHistoryChartWithData(rawData) {
             datasets: [{
                 label: 'Value',
                 data: portfolioData.map(d => d.value),
-                borderColor: '#00b7eb',
-                backgroundColor: 'rgba(0,183,235,0.2)',
+                borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
+                backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
                 borderWidth: 3,
                 tension: 0.25,
                 fill: true,
@@ -376,17 +348,17 @@ function renderPortfolioHistoryChartWithData(rawData) {
             maintainAspectRatio: false,
             interaction: { intersect: false, mode: 'index' },
             scales: {
-                x: { title: { display: true, text: 'Day', color: textColor }, ticks: { color: textColor, maxTicksLimit: 15 } },
-                y: { title: { display: true, text: 'Portfolio Value (USD)', color: textColor }, ticks: { color: textColor, callback: v => '$' + formatWithCommas(Math.round(v)) } }
+                x: { title: { display: true, text: 'Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', maxTicksLimit: 15 } },
+                y: { title: { display: true, text: 'Portfolio Value (USD)', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', callback: v => '$' + formatWithCommas(Math.round(v)) } }
             },
             plugins: {
                 legend: { display: false },
                 tooltip: {
                     displayColors: false,
-                    backgroundColor: bgColor,
-                    titleColor: textColor,
-                    bodyColor: textColor,
-                    borderColor: '#6c757d',
+                    backgroundColor: isDarkTheme ? '#343a40' : '#ffffff',
+                    titleColor: isDarkTheme ? '#ffffff' : '#000000',
+                    bodyColor: isDarkTheme ? '#ffffff' : '#000000',
+                    borderColor: isDarkTheme ? '#6c757d' : '#dee2e6',
                     borderWidth: 1,
                     callbacks: {
                         title: items => 'Day ' + items[0].label,
@@ -407,42 +379,8 @@ function renderPortfolioHistoryChart() {
 }
 
 // =============================================
-// MINERS AND SETTINGS ACTIONS
+// PROFILE, SETTINGS & MINERS ACTIONS
 // =============================================
-
-function showCompletedMiners() {
-    fetch('/api/miners')
-        .then(response => response.json())
-        .then(miners => {
-            const completedMiners = miners.filter(miner => miner.status === 'completed');
-            const dialog = document.createElement('dialog');
-            
-            const minersHtml = completedMiners.length === 0 
-                ? '<p>No completed miners.</p>' 
-                : completedMiners.map(miner => `<p>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</p>`).join('');
-
-            dialog.innerHTML = `
-                <article>
-                    <header>
-                        <button aria-label="Close" class="close" id="close-modal-x"></button>
-                        <strong>Completed Miners</strong>
-                    </header>
-                    ${minersHtml}
-                    <footer>
-                        <button class="secondary cancel-btn" style="width: auto;">Close</button>
-                    </footer>
-                </article>
-            `;
-            document.body.appendChild(dialog);
-            dialog.showModal();
-
-            const cleanup = () => { dialog.close(); dialog.remove(); };
-            
-            dialog.querySelector('.cancel-btn').addEventListener('click', cleanup);
-            dialog.querySelector('#close-modal-x').addEventListener('click', cleanup);
-        });
-}
-
 async function endMiner(index) {
     const confirmed = await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?');
     if (confirmed) {
@@ -454,7 +392,7 @@ async function endMiner(index) {
         .then(response => {
             if (response.ok) {
                 showNotification('Miner ended successfully', 'success');
-                initialLoad();   
+                initialLoad();   // refresh everything
             } else {
                 showNotification('Error ending miner', 'danger');
             }
@@ -462,8 +400,71 @@ async function endMiner(index) {
     }
 }
 
+function showCompletedMiners() {
+    fetch('/api/miners')
+        .then(response => response.json())
+        .then(miners => {
+            const completedMiners = miners.filter(miner => miner.status === 'completed');
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Completed Miners</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            ${completedMiners.length === 0 ? '<p>No completed miners.</p>' : completedMiners.map(miner => `<p>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</p>`).join('')}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+            modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        });
+}
+
+function addMiner() {
+    const startDate = document.getElementById('start-date').value;
+    const endDate = document.getElementById('end-date').value;
+    const tShares = parseFloat(document.getElementById('tshares').value);
+
+    if (!startDate || !endDate || isNaN(tShares) || tShares <= 0) {
+        showNotification('Please fill all fields with valid data', 'danger');
+        return;
+    }
+    const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+        showNotification('Dates must be in DD-MM-YYYY format', 'danger');
+        return;
+    }
+
+    fetch('/api/add-miner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate, endDate, tShares })
+    })
+    .then(response => {
+        if (response.ok) {
+            showNotification('Miner added successfully', 'success');
+            document.getElementById('start-date').value = '';
+            document.getElementById('end-date').value = '';
+            document.getElementById('tshares').value = '';
+            initialLoad();
+        } else {
+            showNotification('Error adding miner', 'danger');
+        }
+    });
+}
+
 async function deleteMiner(index) {
-    const confirmed = await showConfirmModal('Delete Miner', 'Are you sure you want to permanently delete this miner?');
+    const confirmed = await showConfirmModal('Delete Miner', 'Do you want to delete this HEX miner?');
     if (confirmed) {
         fetch('/api/delete-miner', {
             method: 'POST',
@@ -473,7 +474,7 @@ async function deleteMiner(index) {
         .then(response => {
             if (response.ok) {
                 showNotification('Miner deleted successfully', 'success');
-                initialLoad();   
+                initialLoad();
             } else {
                 showNotification('Error deleting miner', 'danger');
             }
@@ -481,108 +482,136 @@ async function deleteMiner(index) {
     }
 }
 
-function addMiner() {
-    const startDate = document.getElementById('start-date').value;
-    const endDate = document.getElementById('end-date').value;
-    const tShares = parseFloat(document.getElementById('tshares').value);
-
-    if (!startDate || !endDate || isNaN(tShares) || tShares <= 0) {
-        showNotification('Please fill in all fields correctly.', 'danger');
-        return;
-    }
-
-    const newMiner = {
-        startDate: startDate,
-        endDate: endDate,
-        tShares: tShares,
-        status: 'active'
-    };
-
-    fetch('/api/add-miner', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newMiner)
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification('Miner added successfully!', 'success');
-            document.getElementById('start-date').value = '';
-            document.getElementById('end-date').value = '';
-            document.getElementById('tshares').value = '';
-            initialLoad(); 
-        } else {
-            showNotification('Failed to add miner.', 'danger');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('An error occurred.', 'danger');
-    });
-}
-
 function saveFrequency() {
-    const frequency = parseInt(document.getElementById('frequency').value, 10);
-    if (isNaN(frequency) || frequency < 1) {
-        showNotification('Please enter a valid frequency greater than 0.', 'danger');
+    const frequency = parseInt(document.getElementById('frequency').value);
+    if (frequency <= 0) {
+        showNotification('Frequency must be a positive integer', 'danger');
         return;
     }
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
+    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
 
     fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency })
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
     })
     .then(response => {
         if (response.ok) {
-            showNotification('Update frequency saved.', 'success');
-            setupLiveDataInterval(frequency);
+            showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
+            initialLoad();
         } else {
-            showNotification('Failed to save frequency.', 'danger');
+            showNotification('Error saving frequency', 'danger');
         }
     });
 }
 
 function saveLiquidHEX() {
-    const liquidHex = parseFloat(document.getElementById('liquid-hex').value);
-    if (isNaN(liquidHex) || liquidHex < 0) {
-        showNotification('Please enter a valid amount.', 'danger');
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value);
+    if (isNaN(liquidHEX) || liquidHEX < 0) {
+        showNotification('Liquid HEX must be a non-negative number', 'danger');
         return;
     }
+    const frequency = parseInt(document.getElementById('frequency').value) || 15;
+    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
 
     fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liquidHEX: liquidHex })
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
     })
     .then(response => {
         if (response.ok) {
-            showNotification('Liquid HEX saved.', 'success');
+            showNotification('Liquid HEX saved successfully', 'success');
             initialLoad();
         } else {
-            showNotification('Failed to save Liquid HEX.', 'danger');
+            showNotification('Error saving Liquid HEX', 'danger');
         }
     });
 }
 
 function saveHistoricalStartDay() {
-    const day = parseInt(document.getElementById('hist-start-day').value, 10);
-    if (isNaN(day) || day < 1) {
-        showNotification('Please enter a valid starting day.', 'danger');
+    const histStart = parseInt(document.getElementById('hist-start-day').value);
+    if (isNaN(histStart) || histStart < 1) {
+        showNotification('Starting day must be a positive integer', 'danger');
         return;
     }
+    const frequency = parseInt(document.getElementById('frequency').value) || 15;
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
 
     fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ historicalStartDay: day })
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
     })
     .then(response => {
         if (response.ok) {
-            showNotification('Historical start day saved.', 'success');
-            historicalStartDay = day;
-            renderPortfolioHistoryChart(); 
+            showNotification(`Historical chart starting day set to ${histStart}`, 'success');
+            initialLoad();
         } else {
-            showNotification('Failed to save historical start day.', 'danger');
+            showNotification('Error saving historical start day', 'danger');
         }
     });
 }
+
+// =============================================
+// NAVBAR RESPONSIVENESS
+// =============================================
+function checkNavbarRows() {
+    const navbarNav = document.querySelector('#navbarNav');
+    const navItems = document.querySelectorAll('.navbar-nav .nav-item');
+    const toggler = document.querySelector('.navbar-toggler');
+    if (!navbarNav || !toggler || navItems.length === 0) return;
+
+    const firstTop = navItems[0].getBoundingClientRect().top;
+    const lastTop = navItems[navItems.length - 1].getBoundingClientRect().top;
+    const isWrapping = Math.abs(lastTop - firstTop) > 10;
+
+    if (isWrapping && window.innerWidth >= 576) {
+        navbarNav.classList.add('collapse', 'navbar-collapse');
+        toggler.style.display = 'block';
+    } else if (window.innerWidth >= 576) {
+        navbarNav.classList.remove('collapse', 'navbar-collapse');
+        toggler.style.display = 'none';
+    }
+}
+
+// =============================================
+// INITIALIZATION
+// =============================================
+document.addEventListener('DOMContentLoaded', () => {
+    document.title = 'HEX Stats';
+
+    const datepickerOptions = {
+        format: 'dd-mm-yyyy',
+        autohide: true,
+        buttonClass: 'btn',
+        prevButton: '<i class="bi bi-chevron-left"></i>',
+        nextButton: '<i class="bi bi-chevron-right"></i>'
+    };
+
+    const startDateInput = document.getElementById('start-date');
+    const endDateInput   = document.getElementById('end-date');
+
+    let startDatepicker, endDatepicker;
+
+    if (startDateInput) startDatepicker = new Datepicker(startDateInput, datepickerOptions);
+    if (endDateInput)   endDatepicker   = new Datepicker(endDateInput,   datepickerOptions);
+
+    const startBtn = document.getElementById('start-date-btn');
+    const endBtn   = document.getElementById('end-date-btn');
+
+    if (startBtn && startDatepicker) {
+        startBtn.addEventListener('click', () => startDatepicker.show());
+    }
+    if (endBtn && endDatepicker) {
+        endBtn.addEventListener('click', () => endDatepicker.show());
+    }
+    
+    initialLoad();
+    setInterval(initialLoad, 10 * 60 * 1000);
+    setInterval(renderCharts, 4 * 60 * 60 * 1000);
+
+    window.addEventListener('resize', checkNavbarRows);
+    checkNavbarRows();
+});
