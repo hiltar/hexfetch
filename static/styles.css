@@ -1,150 +1,465 @@
 :root {
-    --primary: #00b7eb;
-    --pico-primary: var(--primary);
-    --pico-primary-background: var(--primary);
-    --pico-primary-hover: #009acc;
+    --bg-color: #212529;
+    --text-color: #ffffff;
+    --card-bg: #343a40;
+    --primary-bg: #00b7eb;
+    --primary-text: #ffffff;
+    --input-bg: #495057;
+    --input-text: #ffffff;
+    --nav-bg: #343a40;
+    --nav-text: #ffffff;
+    --nav-active-bg: #495057;
+    --border-color: #6c757d;
 }
 
-/* Custom Utilities */
-.text-center { text-align: center; }
-.text-muted { color: var(--pico-muted-color); }
-.text-success { color: #28a745; }
-.text-danger { color: #dc3545; }
-.mt-4 { margin-top: 1.5rem; }
-.fw-bold { font-weight: bold; }
-
-/* Header Layout */
-.app-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 2rem;
-    margin-bottom: 1rem;
-}
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-}
-.brand img {
-    width: 48px;
-    height: 48px;
-}
-.brand h1 {
-    margin: 0;
-    font-size: 2rem;
-}
-#countdown { color: var(--pico-primary); }
-
-/* Tabs Navbar Layout */
-.tabs-nav {
-    border-bottom: 1px solid var(--pico-muted-border-color);
-    margin-bottom: 2rem;
-}
-.tabs-nav ul {
-    display: flex;
-    gap: 1rem;
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    overflow-x: auto;
-}
-.tabs-nav a.tab-link {
-    display: block;
-    padding: 0.75rem 1rem;
-    color: var(--pico-muted-color);
-    text-decoration: none;
-    border-bottom: 2px solid transparent;
-    transition: color 0.2s, border-bottom-color 0.2s;
-}
-.tabs-nav a.tab-link:hover {
-    color: var(--pico-primary);
-}
-.tabs-nav a.tab-link.active {
-    color: var(--pico-color);
-    border-bottom-color: var(--pico-primary);
-    font-weight: 600;
+/* General styles */
+body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
 }
 
-/* Stat Box Containers (Top of Profile) */
-.stat-box {
-    background-color: var(--pico-card-background-color);
-    padding: 1rem 1.5rem;
-    border: 1px solid var(--pico-card-border-color);
-    border-radius: var(--pico-border-radius);
-    margin-bottom: 1rem;
-    font-size: 1.25rem;
-    box-shadow: var(--pico-card-box-shadow);
-}
-.stat-box strong { color: var(--pico-primary); }
-
-/* Historical Grid Cards */
-.portfolio-grid article {
-    padding: 1rem;
-    margin-bottom: 1rem;
-}
-.portfolio-grid article div {
-    font-size: 1.35rem;
-    margin-top: 0.25rem;
+/* Navbar styles */
+.navbar {
+    background-color: var(--nav-bg);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
 }
 
-/* Charts Containers */
-.chart-container {
-    padding: 1rem;
-    margin-bottom: 2rem;
+.navbar-nav.nav-tabs {
+    border-bottom: none; /* Remove default nav-tabs border */
 }
-.chart-container h3 {
+
+.nav-link {
+    color: var(--nav-text);
+    padding: 0.5rem 1rem;
+    transition: color 0.2s;
+}
+
+.nav-link:hover {
+    color: var(--primary-bg);
+}
+
+.nav-link.active {
+    background-color: var(--nav-active-bg);
+    color: var(--text-color);
+    border: none;
+    border-bottom: 2px solid var(--primary-bg);
+}
+
+.navbar-toggler {
+    border: none;
+    padding: 0.25rem 0.75rem;
+}
+
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(0, 0, 0, 0.55)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+[data-theme="dark"] .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255, 255, 255, 0.55)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+/* Mobile menu styles */
+@media (max-width: 575.98px) {
+    .navbar-nav {
+        padding: 1rem;
+    }
+    .nav-item {
+        margin-bottom: 0.5rem;
+    }
+    .nav-link {
+        font-size: 1.1rem;
+        padding: 0.5rem 0;
+    }
+    .nav-link.active {
+        border-bottom: none;
+        background-color: var(--primary-bg);
+        color: var(--primary-text);
+        border-radius: 4px;
+    }
+}
+
+/* Existing styles */
+.btn-primary {
+    background-color: var(--primary-bg);
+    border-color: var(--primary-bg);
+    color: var(--primary-text);
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+    border-color: #0056b3;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+
+.btn-danger:hover {
+    background-color: #c82333;
+    border-color: #c82333;
+}
+
+.form-control {
+    background-color: var(--input-bg);
+    color: var(--input-text);
+    border-color: var(--border-color);
+}
+
+.form-control:focus {
+    background-color: var(--input-bg);
+    color: var(--input-text);
+    border-color: var(--primary-bg);
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.live-data p {
     text-align: center;
-    margin-bottom: 0.5rem;
-}
-.chart-container canvas {
-    width: 100% !important;
-    height: 300px !important;
-}
-.chart-value {
-    text-align: center;
-    font-size: 1.1rem;
     font-weight: bold;
+    font-size: 24px;
+    margin: 10px 0;
+    color: var(--text-color);
 }
 
-/* Active Miners list styling */
 .miner-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--pico-form-element-border-color);
-}
-.miner-item button {
-    width: auto;
-    margin-bottom: 0;
-    padding: 0.25rem 0.75rem;
+    margin-bottom: 10px;
+    color: var(--text-color);
 }
 
-/* Notifications Overlay */
-#notification-container {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    z-index: 9999;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+/* Ensure icons align with text */
+.nav-link i {
+    vertical-align: middle;
+    margin-right: 5px;
 }
 
-.notification-toast {
-    margin: 0;
-    padding: 1rem;
+.btn i {
+    vertical-align: middle;
+}
+
+/* Ensure datepicker z-index and theme compatibility */
+.datepicker {
+    z-index: 1050;
+    background-color: var(--card-bg);
+    color: var(--text-color);
+}
+
+.datepicker table tr td,
+.datepicker table tr th {
+    color: var(--text-color);
+}
+
+.datepicker .datepicker-days .table-condensed {
+    background-color: var(--card-bg);
+}
+
+/* Theme toggle switch */
+.form-check-input:checked {
+    background-color: var(--primary-bg);
+    border-color: var(--primary-bg);
+}
+
+.form-check-label i {
+    vertical-align: middle;
+}
+
+/* Modal styling */
+.modal-content {
+    background-color: var(--card-bg);
+    color: var(--text-color);
+    border-color: var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header,
+.modal-footer {
+    border-color: var(--border-color);
+    background-color: var(--card-bg);
+}
+
+.modal-header .modal-title {
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.modal-body {
+    color: var(--text-color);
+}
+
+.modal-footer .btn-primary {
+    background-color: var(--primary-bg);
+    border-color: var(--primary-bg);
+}
+
+.modal-footer .btn-secondary {
+    background-color: #6c757d;
+    border-color: #6c757d;
+    color: var(--primary-text);
+}
+
+.modal-footer .btn-secondary:hover {
+    background-color: #5a6268;
+    border-color: #5a6268;
+}
+
+.modal .btn-close {
+    filter: var(--text-color) === '#000000' ? none : invert(1);
+}
+
+/* Notification styling */
+.notification {
     min-width: 250px;
-    box-shadow: var(--pico-card-box-shadow);
-    border-left: 4px solid var(--pico-primary);
-    animation: slideIn 0.3s ease-out;
+    max-width: 400px;
+    margin-bottom: 10px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    background-color: var(--card-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    transform: translateY(0);
 }
-.notification-toast.danger { border-left-color: var(--pico-del-color); }
 
-@keyframes slideIn {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
+.notification.alert-success {
+    background-color: #d4edda;
+    color: #155724;
+    border-color: #c3e6cb;
+}
+
+[data-theme="dark"] .notification.alert-success {
+    background-color: #2e7d32;
+    color: #ffffff;
+    border-color: #4caf50;
+}
+
+.notification.alert-danger {
+    background-color: #f8d7da;
+    color: #721c24;
+    border-color: #f5c6cb;
+}
+
+[data-theme="dark"] .notification.alert-danger {
+    background-color: #d32f2f;
+    color: #ffffff;
+    border-color: #ef5350;
+}
+
+.notification .btn-close {
+    filter: var(--text-color) === '#000000' ? none : invert(1);
+}
+
+/* Logo styling */
+#logo {
+    height: 40px;
+    width: auto;
+    vertical-align: middle;
+}
+
+/* Chart container styling */
+.chart-container {
+    max-width: 600px;
+    margin: 20px auto;
+    padding: 10px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.chart-container h3 {
+    text-align: center;
+    color: var(--text-color);
+    margin-bottom: 10px;
+}
+
+.chart-container canvas {
+    width: 100% !important;
+    height: 300px !important;
+}
+
+.chart-value {
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 10px;
+    padding: 5px;
+    background-color: var(--card-bg);
+    border-radius: 4px;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+
+/* Styling for Total T-Shares and Total T-Shares Value in Profile tab */
+#profile .total-tshares,
+#profile .total-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text-color);
+    background-color: var(--card-bg);
+    padding: 10px 15px;
+    margin: 10px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: background-color 0.3s, border-color 0.3s;
+}
+
+/* Highlight the strong text (label) */
+#profile .total-tshares strong,
+#profile .total-value strong {
+    color: var(--primary-bg);
+}
+
+/* Ensure span values stand out */
+#profile .total-tshares span,
+#profile .total-value span {
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+/* Styling for Liquid HEX Value in Profile tab */
+#profile .liquid-hex-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text-color);
+    background-color: var(--card-bg);
+    padding: 10px 15px;
+    margin: 10px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: background-color 0.3s, border-color 0.3s;
+}
+
+#profile .liquid-hex-value strong {
+    color: var(--primary-bg);
+}
+
+#profile .liquid-hex-value span {
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+/* Responsive adjustments for mobile */
+@media (max-width: 575.98px) {
+    #profile .total-tshares,
+    #profile .total-value,
+    #profile .liquid-hex-value {
+        font-size: 1.1rem;
+        padding: 8px 12px;
+    }
+    .notification {
+        min-width: 200px;
+        font-size: 0.9rem;
+        padding: 8px;
+    }
+    .modal-dialog {
+        margin: 0.5rem;
+    }
+    .modal-content {
+        font-size: 0.9rem;
+    }
+    .modal-footer .btn {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.9rem;
+    }
+    .chart-value {
+        display: none;
+    }
+}
+
+/* Responsive grid for larger screens */
+@media (min-width: 992px) {
+    .chart-container {
+        max-width: 800px;
+    }
+}
+
+/* ==================== REFRESH TIMER  ==================== */
+#refresh-timer {
+    color: var(--primary-bg) !important;
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+#refresh-timer .text-muted {
+    color: inherit !important;
+}
+
+
+#countdown {
+    color: var(--primary-bg) !important;
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: 0.5px;
+}
+
+/* ==================== PORTFOLIO HISTORY STATS ==================== */
+#portfolio-history .row > div {
+    padding: 14px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background-color: var(--card-bg);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+#portfolio-history .row > div:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+#portfolio-history .text-muted {
+    color: #00b7eb !important;
+    opacity: 0.92;
+    font-weight: 600;
+    font-size: 0.88rem;
+    letter-spacing: 0.3px;
+    margin-bottom: 4px;
+}
+
+#portfolio-history .h5 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin: 2px 0 0;
+    color: var(--text-color);
+}
+
+/* Growth percentage gets extra attention */
+#hist-growth-pct {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 3px;
+}
+
+/* All existing profile, liquid, total styles kept and enhanced */
+#profile .total-tshares,
+#profile .total-value,
+#profile .liquid-hex-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    background-color: var(--card-bg);
+    padding: 12px 16px;
+    margin: 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+/* Responsive */
+@media (max-width: 576px) {
+    #refresh-timer {
+        font-size: 0.9rem;
+        padding: 6px 10px;
+    }
+    #portfolio-history .row > div {
+        padding: 10px 8px;
+    }
+    #portfolio-history .h5 {
+        font-size: 1.2rem;
+    }
 }
 
 /* ==================== VANILLAJS-DATEPICKER ==================== */
@@ -246,11 +561,4 @@
 /* Dropdown positioning */
 .datepicker-dropdown {
     z-index: 1060 !important;
-}
-
-/* Mobile Adjustments */
-@media (max-width: 768px) {
-    .hide-mobile { display: none; }
-    .app-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
-    .refresh-timer { align-self: flex-end; }
 }
