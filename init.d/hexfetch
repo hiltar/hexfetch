@@ -3,7 +3,6 @@
 name="hexfetch"
 description="Run hexfetch from ramdisk"
 
-export SYSTEM=false
 command="/mnt/ramdisk/hexfetch/hexfetch-arm"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
