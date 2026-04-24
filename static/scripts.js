@@ -14,6 +14,8 @@ let countdownIntervalId = null;
 let nextRefreshTime = Date.now();
 let currentFrequency = 15;
 let wsConnection = null;
+let wsActive = false;               // true when WebSocket is live
+let saveInProgress = false;         // debounce flag for config saves
 
 // =============================================
 // HELPERS
@@ -85,7 +87,6 @@ function formatWithCommas(num) {
 // =============================================
 // LIVE DATA
 // =============================================
-
 function updateLiveDataUI(data) {
     liveDataCache = data;
 
@@ -118,7 +119,10 @@ function connectLiveWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     wsConnection = new WebSocket(`${protocol}//${window.location.host}/ws/live-data`);
 
-    wsConnection.onopen = () => console.log('✅ WebSocket connected');
+    wsConnection.onopen = () => {
+        console.log('✅ WebSocket connected');
+        wsActive = true;
+    };
     wsConnection.onmessage = (event) => {
         try {
             updateLiveDataUI(JSON.parse(event.data));
@@ -126,8 +130,14 @@ function connectLiveWebSocket() {
             console.error('WebSocket parse error', e);
         }
     };
-    wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
-    wsConnection.onerror = (err) => console.error('WebSocket error', err);
+    wsConnection.onclose = () => {
+        wsActive = false;
+        setTimeout(connectLiveWebSocket, 5000);
+    };
+    wsConnection.onerror = (err) => {
+        console.error('WebSocket error', err);
+        // onclose will fire after error, no need to force reconnect here
+    };
 }
 
 function setupLiveDataInterval(frequencyInMinutes) {
@@ -143,22 +153,26 @@ function setupLiveDataInterval(frequencyInMinutes) {
     }
 }
 
+// =============================================
+// DATA RETRIEVAL & UI UPDATE
+// =============================================
 async function initialLoad() {
     try {
-        const [minersRes, liveRes, configRes, hexjsonRes] = await Promise.all([
-            fetch('/api/miners'),
-            fetch('/api/live-data'),
-            fetch('/api/config'),
-            fetch('/api/hexjson')
-        ]);
-
-        const miners = await minersRes.json();
-        const liveData = await liveRes.json();
-        const config = await configRes.json();
-        const hexjsonData = await hexjsonRes.json();
-
-        liveDataCache = liveData;
-        updateLiveDataUI(liveData);
+        // If WebSocket is active, skip the live-data HTTP fetch to avoid redundancy.
+        const promises = [fetch('/api/miners'), fetch('/api/config'), fetch('/api/hexjson')];
+        if (!wsActive) {
+            promises.push(fetch('/api/live-data'));
+        }
+        const results = await Promise.all(promises);
+        let i = 0;
+        const miners = await results[i++].json();
+        const config = await results[i++].json();
+        const hexjsonData = await results[i++].json();
+        let liveData = null;
+        if (!wsActive) {
+            liveData = await results[i++].json();
+            updateLiveDataUI(liveData);
+        }
 
         // Profile calculations
         let totalTShares = 0;
@@ -176,19 +190,22 @@ async function initialLoad() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
-        const totalValue = totalTShares * liveData.tsharePrice_Pulsechain;
-        document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
+        const liveDataForCalc = wsActive ? liveDataCache : liveData;
+        if (liveDataForCalc) {
+            const totalValue = totalTShares * liveDataForCalc.tsharePrice_Pulsechain;
+            document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
 
-        const dailyInterestHEX = totalTShares * liveData.payoutPerTshare_Pulsechain;
-        const dailyInterestUSD = dailyInterestHEX * liveData.price_Pulsechain;
-        document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
-        document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
+            const dailyInterestHEX = totalTShares * liveDataForCalc.payoutPerTshare_Pulsechain;
+            const dailyInterestUSD = dailyInterestHEX * liveDataForCalc.price_Pulsechain;
+            document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
+            document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
 
-        userLiquidHEX = config.liquidHEX || 0;
-        const liquidHEXValue = userLiquidHEX * liveData.price_Pulsechain;
-        document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+            userLiquidHEX = config.liquidHEX || 0;
+            const liquidHEXValue = userLiquidHEX * liveDataForCalc.price_Pulsechain;
+            document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+        }
 
-        // Render active miners
+        // Active miners
         const activeMinersDiv = document.getElementById('active-miners');
         activeMinersDiv.innerHTML = '';
         if (activeMiners.length === 0) {
@@ -196,9 +213,12 @@ async function initialLoad() {
         } else {
             document.getElementById('profile-message').textContent = '';
             activeMiners.forEach((miner, index) => {
-                const endDateObj = new Date(miner.endDate.split('-').reverse().join('-'));
-                const isMatured = endDateObj <= new Date();
-                const daysLeft = isMatured ? 0 : Math.ceil((endDateObj - new Date()) / (1000 * 60 * 60 * 24));
+                // Use UTC maturity check to align with server date parsing
+                const [d, m, y] = miner.endDate.split('-');
+                const endDateUTC = Date.UTC(y, m - 1, d);
+                const nowUTC = Date.now();
+                const isMatured = endDateUTC <= nowUTC;
+                const daysLeft = isMatured ? 0 : Math.ceil((endDateUTC - nowUTC) / (1000 * 60 * 60 * 24));
 
                 const minerDiv = document.createElement('div');
                 minerDiv.className = 'miner-item';
@@ -230,8 +250,11 @@ async function initialLoad() {
         });
 
         setupLiveDataInterval(config.liveDataFrequency);
-        renderChartsWithData(hexjsonData);
-        renderPortfolioHistoryChartWithData(hexjsonData);
+        // Render charts only if Chart.js is loaded (i.e. user visited Charts tab)
+        if (window.Chart) {
+            renderChartsWithData(hexjsonData, true); // update, not recreate
+            renderPortfolioHistoryChartWithData(hexjsonData, true);
+        }
 
     } catch (error) {
         console.error('Error during initial load:', error);
@@ -240,9 +263,27 @@ async function initialLoad() {
 }
 
 // =============================================
-// CHARTS
+// CHARTS (with update optimisation)
 // =============================================
-function renderChartsWithData(data) {
+
+// Lazy-load Chart.js when the Charts tab is activated
+function loadChartJS() {
+    return new Promise((resolve, reject) => {
+        if (window.Chart) {
+            resolve();
+            return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js';
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Failed to load Chart.js'));
+        document.head.appendChild(script);
+    });
+}
+
+function renderChartsWithData(data, updateOnly = false) {
+    if (!window.Chart) return;
+
     const sortedData = [...data].sort((a, b) => a.currentDay - b.currentDay);
     const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
     const latestData = sortedData[sortedData.length - 1] || {};
@@ -261,48 +302,59 @@ function renderChartsWithData(data) {
     ];
 
     chartConfigs.forEach(config => {
-        if (chartInstances[config.id]) chartInstances[config.id].destroy();
-        const ctx = document.getElementById(config.id).getContext('2d');
-        chartInstances[config.id] = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: config.data.map(entry => entry.currentDay),
-                datasets: [{
-                    label: config.label,
-                    data: config.data.map(entry => entry[config.field]),
-                    borderColor: config.borderColor,
-                    fill: false,
-                    pointRadius: 0,
-                    pointHoverRadius: 5,
-                    tension: 0.25
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    intersect: false,
-                    mode: 'index'
+        const labels = config.data.map(e => e.currentDay);
+        const values = config.data.map(e => e[config.field]);
+
+        if (chartInstances[config.id]) {
+            const chart = chartInstances[config.id];
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = values;
+            chart.update('none');
+        } else {
+            const ctx = document.getElementById(config.id).getContext('2d');
+            chartInstances[config.id] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: config.label,
+                        data: values,
+                        borderColor: config.borderColor,
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 5,
+                        tension: 0.25
+                    }]
                 },
-                scales: {
-                    x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
-                    y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
-                },
-                plugins: {
-                    legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } },
-                    tooltip: {
-                        callbacks: {
-                            title: (tooltipItems) => `Day ${tooltipItems[0].label}`,
-                            label: (tooltipItem) => `${config.label}: ${tooltipItem.raw.toFixed(2)}`
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
+                        y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } },
+                        tooltip: {
+                            callbacks: {
+                                title: (tooltipItems) => `Day ${tooltipItems[0].label}`,
+                                label: (tooltipItem) => `${config.label}: ${tooltipItem.raw.toFixed(2)}`
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
+        }
     });
 }
 
-function renderPortfolioHistoryChartWithData(rawData) {
+function renderPortfolioHistoryChartWithData(rawData, updateOnly = false) {
+    if (!window.Chart) return;
+
     const sortedData = [...rawData].sort((a, b) => a.currentDay - b.currentDay);
     const filteredData = sortedData.filter(entry => entry.currentDay >= historicalStartDay);
     if (filteredData.length === 0) return;
@@ -334,62 +386,62 @@ function renderPortfolioHistoryChartWithData(rawData) {
     pctEl.className = growth >= 0 ? 'small fw-bold text-success' : 'small fw-bold text-danger';
 
     const isDarkTheme = true;
-    if (chartInstances.historicalValueChart) chartInstances.historicalValueChart.destroy();
+    const labels = portfolioData.map(d => d.day);
+    const values = portfolioData.map(d => d.value);
 
-    const ctx = document.getElementById('historicalValueChart').getContext('2d');
-    chartInstances.historicalValueChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: portfolioData.map(d => d.day),
-            datasets: [{
-                label: 'Value',
-                data: portfolioData.map(d => d.value),
-                borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
-                backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
-                borderWidth: 3,
-                tension: 0.25,
-                fill: true,
-                pointRadius: 0,
-                pointHoverRadius: 5
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { intersect: false, mode: 'index' },
-            scales: {
-                x: { title: { display: true, text: 'Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', maxTicksLimit: 15 } },
-                y: { title: { display: true, text: 'Portfolio Value (USD)', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', callback: v => '$' + formatWithCommas(Math.round(v)) } }
+    if (chartInstances.historicalValueChart) {
+        const chart = chartInstances.historicalValueChart;
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = values;
+        chart.update('none');
+    } else {
+        const ctx = document.getElementById('historicalValueChart').getContext('2d');
+        chartInstances.historicalValueChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Value',
+                    data: values,
+                    borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
+                    backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
+                    borderWidth: 3,
+                    tension: 0.25,
+                    fill: true,
+                    pointRadius: 0,
+                    pointHoverRadius: 5
+                }]
             },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    displayColors: false,
-                    backgroundColor: isDarkTheme ? '#343a40' : '#ffffff',
-                    titleColor: isDarkTheme ? '#ffffff' : '#000000',
-                    bodyColor: isDarkTheme ? '#ffffff' : '#000000',
-                    borderColor: isDarkTheme ? '#6c757d' : '#dee2e6',
-                    borderWidth: 1,
-                    callbacks: {
-                        title: items => 'Day ' + items[0].label,
-                        label: ctx => 'Value: $' + formatWithCommas(ctx.raw.toFixed(2))
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                scales: {
+                    x: { title: { display: true, text: 'Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', maxTicksLimit: 15 } },
+                    y: { title: { display: true, text: 'Portfolio Value (USD)', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', callback: v => '$' + formatWithCommas(Math.round(v)) } }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        displayColors: false,
+                        backgroundColor: isDarkTheme ? '#343a40' : '#ffffff',
+                        titleColor: isDarkTheme ? '#ffffff' : '#000000',
+                        bodyColor: isDarkTheme ? '#ffffff' : '#000000',
+                        borderColor: isDarkTheme ? '#6c757d' : '#dee2e6',
+                        borderWidth: 1,
+                        callbacks: {
+                            title: items => 'Day ' + items[0].label,
+                            label: ctx => 'Value: $' + formatWithCommas(ctx.raw.toFixed(2))
+                        }
                     }
                 }
             }
-        }
-    });
-}
-
-function renderCharts() {
-    fetch('/api/hexjson').then(r => r.json()).then(renderChartsWithData).catch(console.error);
-}
-
-function renderPortfolioHistoryChart() {
-    fetch('/api/hexjson').then(r => r.json()).then(renderPortfolioHistoryChartWithData).catch(console.error);
+        });
+    }
 }
 
 // =============================================
-// PROFILE, SETTINGS & MINERS ACTIONS
+// MINER ACTIONS
 // =============================================
 async function endMiner(index) {
     const confirmed = await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?');
@@ -402,7 +454,7 @@ async function endMiner(index) {
         .then(response => {
             if (response.ok) {
                 showNotification('Miner ended successfully', 'success');
-                initialLoad();   // refresh everything
+                initialLoad();
             } else {
                 showNotification('Error ending miner', 'danger');
             }
@@ -455,6 +507,10 @@ function addMiner() {
         return;
     }
 
+    // Prevent accidental double clicks
+    const btn = document.querySelector('button[onclick="addMiner()"]');
+    if (btn) btn.disabled = true;
+
     fetch('/api/add-miner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -470,6 +526,10 @@ function addMiner() {
         } else {
             showNotification('Error adding miner', 'danger');
         }
+    })
+    .catch(() => showNotification('Network error', 'danger'))
+    .finally(() => {
+        if (btn) btn.disabled = false;
     });
 }
 
@@ -492,102 +552,63 @@ async function deleteMiner(index) {
     }
 }
 
+// =============================================
+// DEBOUNCED CONFIG SAVE (used by all three save buttons)
+// =============================================
+function debouncedSaveConfig() {
+    if (saveInProgress) return;
+    saveInProgress = true;
+
+    const frequency = parseInt(document.getElementById('frequency').value) || 15;
+    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
+    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
+    })
+    .then(response => {
+        if (response.ok) {
+            showNotification('Settings saved', 'success');
+            initialLoad();
+        } else {
+            showNotification('Error saving settings', 'danger');
+        }
+    })
+    .catch(() => showNotification('Network error', 'danger'))
+    .finally(() => { saveInProgress = false; });
+}
+
 function saveFrequency() {
-    const frequency = parseInt(document.getElementById('frequency').value);
-    if (frequency <= 0) {
+    const freq = parseInt(document.getElementById('frequency').value);
+    if (isNaN(freq) || freq <= 0) {
         showNotification('Frequency must be a positive integer', 'danger');
         return;
     }
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
-    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification(`Live data update frequency set to ${frequency} minutes`, 'success');
-            initialLoad();
-        } else {
-            showNotification('Error saving frequency', 'danger');
-        }
-    });
+    debouncedSaveConfig();
 }
 
 function saveLiquidHEX() {
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value);
-    if (isNaN(liquidHEX) || liquidHEX < 0) {
-        showNotification('Liquid HEX must be a non-negative number', 'danger');
+    const liquid = parseFloat(document.getElementById('liquid-hex').value);
+    if (isNaN(liquid) || liquid < 0) {
+        showNotification('Liquid HEX must be non-negative', 'danger');
         return;
     }
-    const frequency = parseInt(document.getElementById('frequency').value) || 15;
-    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification('Liquid HEX saved successfully', 'success');
-            initialLoad();
-        } else {
-            showNotification('Error saving Liquid HEX', 'danger');
-        }
-    });
+    debouncedSaveConfig();
 }
 
 function saveHistoricalStartDay() {
-    const histStart = parseInt(document.getElementById('hist-start-day').value);
-    if (isNaN(histStart) || histStart < 1) {
+    const start = parseInt(document.getElementById('hist-start-day').value);
+    if (isNaN(start) || start < 1) {
         showNotification('Starting day must be a positive integer', 'danger');
         return;
     }
-    const frequency = parseInt(document.getElementById('frequency').value) || 15;
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification(`Historical chart starting day set to ${histStart}`, 'success');
-            initialLoad();
-        } else {
-            showNotification('Error saving historical start day', 'danger');
-        }
-    });
+    debouncedSaveConfig();
 }
 
 // =============================================
-// NAVBAR RESPONSIVENESS
-// =============================================
-function checkNavbarRows() {
-    const navbarNav = document.querySelector('#navbarNav');
-    const navItems = document.querySelectorAll('.navbar-nav .nav-item');
-    const toggler = document.querySelector('.navbar-toggler');
-    if (!navbarNav || !toggler || navItems.length === 0) return;
-
-    const firstTop = navItems[0].getBoundingClientRect().top;
-    const lastTop = navItems[navItems.length - 1].getBoundingClientRect().top;
-    const isWrapping = Math.abs(lastTop - firstTop) > 10;
-
-    if (isWrapping && window.innerWidth >= 576) {
-        navbarNav.classList.add('collapse', 'navbar-collapse');
-        toggler.style.display = 'block';
-    } else if (window.innerWidth >= 576) {
-        navbarNav.classList.remove('collapse', 'navbar-collapse');
-        toggler.style.display = 'none';
-    }
-}
-
-// =============================================
-// INITIALIZATION
+// INITIALIZATION & TAB LAZY LOADING
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
     document.title = 'HEX Stats';
@@ -602,26 +623,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const startDateInput = document.getElementById('start-date');
     const endDateInput   = document.getElementById('end-date');
+    if (startDateInput) new Datepicker(startDateInput, datepickerOptions);
+    if (endDateInput)   new Datepicker(endDateInput,   datepickerOptions);
 
-    let startDatepicker, endDatepicker;
-
-    if (startDateInput) startDatepicker = new Datepicker(startDateInput, datepickerOptions);
-    if (endDateInput)   endDatepicker   = new Datepicker(endDateInput,   datepickerOptions);
-
-    const startBtn = document.getElementById('start-date-btn');
-    const endBtn   = document.getElementById('end-date-btn');
-
-    if (startBtn && startDatepicker) {
-        startBtn.addEventListener('click', () => startDatepicker.show());
+    // Lazy-load Chart.js when the Charts tab is first shown
+    const chartTab = document.getElementById('chart-tab');
+    if (chartTab) {
+        chartTab.addEventListener('shown.bs.tab', () => {
+            loadChartJS().then(() => {
+                fetch('/api/hexjson').then(r => r.json()).then(data => {
+                    renderChartsWithData(data);
+                    renderPortfolioHistoryChartWithData(data);
+                });
+            }).catch(err => console.error(err));
+        });
     }
-    if (endBtn && endDatepicker) {
-        endBtn.addEventListener('click', () => endDatepicker.show());
-    }
-    
+
+    // Initial load and periodic refresh every 10 minutes
     initialLoad();
     setInterval(initialLoad, 10 * 60 * 1000);
-    setInterval(renderCharts, 4 * 60 * 60 * 1000);
-
-    window.addEventListener('resize', checkNavbarRows);
-    checkNavbarRows();
 });
