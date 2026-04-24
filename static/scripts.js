@@ -92,7 +92,7 @@ function updateLiveDataUI(data) {
     document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
     document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
     document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
-    document.getElementById('payout').textContent = data.payoutPerTshare_Pulsechain.toFixed(1);
+    document.getElementById('payout').textContent = data.payoutPerTshare_Pulsechain.toFixed(3);
     document.getElementById('penalties').textContent = formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain));
     document.getElementById('beat').textContent = formatWithCommas(data.beat);
 
