@@ -248,7 +248,7 @@ function renderChartsWithData(data) {
     const latestData = sortedData[sortedData.length - 1] || {};
 
     document.getElementById('price-value').textContent = latestData.pricePulseX ? `$${latestData.pricePulseX.toFixed(4)}` : '$0.0000';
-    document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX ? `${formatWithCommas(latestData.tshareRateHEX.toFixed(2))} HEX` : '0.00 HEX';
+    document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX ? `${formatWithCommas(latestData.tshareRateHEX)} HEX` : '0 HEX';
     document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(2))} HEX` : '0.00 HEX';
     document.getElementById('daily-payout-value').textContent = latestData.dailyPayoutHEX ? `${formatWithCommas(latestData.dailyPayoutHEX.toFixed(2))} HEX` : '0.00 HEX';
 
