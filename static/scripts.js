@@ -85,6 +85,31 @@ function formatWithCommas(num) {
 }
 
 // =============================================
+// PROFILE STATS HELPER
+// =============================================
+function updateProfileStats() {
+    if (!liveDataCache) {
+        // If no live data yet, zero out values
+        document.getElementById('total-value').textContent = '0.00';
+        document.getElementById('liquid-hex-value').textContent = '0.00';
+        document.getElementById('interest-hex').textContent = '0.00 HEX';
+        document.getElementById('interest-usd').textContent = '$0.00';
+        return;
+    }
+    const data = liveDataCache;
+    const totalValue = userTotalTShares * data.tsharePrice_Pulsechain;
+    document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
+
+    const dailyInterestHEX = userTotalTShares * data.payoutPerTshare_Pulsechain;
+    const dailyInterestUSD = dailyInterestHEX * data.price_Pulsechain;
+    document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
+    document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
+
+    const liquidHEXValue = userLiquidHEX * data.price_Pulsechain;
+    document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+}
+
+// =============================================
 // LIVE DATA
 // =============================================
 function updateLiveDataUI(data) {
@@ -103,6 +128,9 @@ function updateLiveDataUI(data) {
 
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
+
+    // Update profile tab values as well
+    updateProfileStats();
 }
 
 function updateCountdown() {
@@ -158,9 +186,9 @@ function setupLiveDataInterval(frequencyInMinutes) {
 // =============================================
 async function initialLoad() {
     try {
-        // If WebSocket is active, skip the live-data HTTP fetch to avoid redundancy.
+        // Always fetch live data if cache is empty; otherwise skip HTTP call.
         const promises = [fetch('/api/miners'), fetch('/api/config'), fetch('/api/hexjson')];
-        if (!wsActive) {
+        if (!liveDataCache) {
             promises.push(fetch('/api/live-data'));
         }
         const results = await Promise.all(promises);
@@ -169,7 +197,7 @@ async function initialLoad() {
         const config = await results[i++].json();
         const hexjsonData = await results[i++].json();
         let liveData = null;
-        if (!wsActive) {
+        if (!liveDataCache) {
             liveData = await results[i++].json();
             updateLiveDataUI(liveData);
         }
@@ -190,20 +218,8 @@ async function initialLoad() {
         userTotalTShares = totalTShares;
         document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
 
-        const liveDataForCalc = wsActive ? liveDataCache : liveData;
-        if (liveDataForCalc) {
-            const totalValue = totalTShares * liveDataForCalc.tsharePrice_Pulsechain;
-            document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
-
-            const dailyInterestHEX = totalTShares * liveDataForCalc.payoutPerTshare_Pulsechain;
-            const dailyInterestUSD = dailyInterestHEX * liveDataForCalc.price_Pulsechain;
-            document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
-            document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
-
-            userLiquidHEX = config.liquidHEX || 0;
-            const liquidHEXValue = userLiquidHEX * liveDataForCalc.price_Pulsechain;
-            document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
-        }
+        userLiquidHEX = config.liquidHEX || 0;
+        updateProfileStats();  // this will use liveDataCache (may be from WS or just fetched)
 
         // Active miners
         const activeMinersDiv = document.getElementById('active-miners');
