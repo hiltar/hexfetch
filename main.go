@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-    "embed"
+	"embed"
 	"fmt"
 	"io/fs"
 	"log"
@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -55,13 +56,13 @@ var (
 	// Live data fetcher state
 	fetcherCtx    context.Context
 	fetcherCancel context.CancelFunc
+	fetcherDone   chan struct{} // closed when goroutine exits
 	fetcherMu     sync.Mutex
 	fetcherActive bool
 
 	// Config notification
-	configChangeChan = make(chan struct{}, 1) // used to signal config changes
-	configSubsMu     sync.Mutex
-	configSubs       []chan struct{}
+	configSubsMu sync.Mutex
+	configSubs   []chan struct{}
 )
 
 // =============================================
@@ -132,11 +133,6 @@ func (cm *ConfigManager) SetLiveDataFrequency(frequency int) {
 		return
 	}
 	cm.config.LiveDataFrequency = frequency
-	// Notify fetcher and subscribers
-	select {
-	case configChangeChan <- struct{}{}:
-	default:
-	}
 	cm.broadcastChange()
 }
 
@@ -272,6 +268,10 @@ func loadLocalHEXJSON() (HEXJSON, error) {
 
 func saveLocalHEXJSON(data HEXJSON) {
 	hexJSONMutex.Lock()
+	// keep data sorted by day
+	sort.Slice(data, func(i, j int) bool {
+		return data[i].CurrentDay < data[j].CurrentDay
+	})
 	hexJSONData = data
 	hexJSONMutex.Unlock()
 }
@@ -293,7 +293,6 @@ func updateLocalHEXJSON() error {
 		if entry.CurrentDay > localMax {
 			newEntries = append(newEntries, entry)
 		}
-		// removed the break to be safe with ordering
 	}
 
 	if len(newEntries) > 0 {
@@ -421,19 +420,19 @@ func broadcastLiveData(data LiveData) {
 }
 
 // startLiveDataFetcher runs a goroutine that fetches live data at the configured interval.
-// It can be dynamically restarted when the frequency changes.
 func startLiveDataFetcher() {
 	fetcherMu.Lock()
 	defer fetcherMu.Unlock()
 
 	if fetcherActive {
-		return // already running
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	fetcherCtx = ctx
 	fetcherCancel = cancel
 	fetcherActive = true
+	fetcherDone = make(chan struct{})
 
 	configCh := configManager.Subscribe()
 
@@ -441,12 +440,16 @@ func startLiveDataFetcher() {
 		defer func() {
 			fetcherMu.Lock()
 			fetcherActive = false
+			if fetcherDone != nil {
+				close(fetcherDone)
+				fetcherDone = nil
+			}
 			fetcherMu.Unlock()
 			configManager.Unsubscribe(configCh)
 		}()
 
 		freq := configManager.GetLiveDataFrequency()
-		timer := time.NewTimer(0) // fire immediately
+		timer := time.NewTimer(0)
 		defer timer.Stop()
 
 		for {
@@ -463,11 +466,9 @@ func startLiveDataFetcher() {
 					liveDataMutex.Unlock()
 					broadcastLiveData(data)
 				}
-				// Reset timer for next fetch
 				freq = configManager.GetLiveDataFrequency()
 				timer.Reset(time.Duration(freq) * time.Minute)
 			case <-configCh:
-				// Frequency may have changed; reset the timer
 				newFreq := configManager.GetLiveDataFrequency()
 				if newFreq != freq {
 					freq = newFreq
@@ -489,6 +490,7 @@ func stopLiveDataFetcher() {
 	defer fetcherMu.Unlock()
 	if fetcherActive {
 		fetcherCancel()
+		<-fetcherDone // wait for goroutine to finish
 		fetcherActive = false
 	}
 }
@@ -521,7 +523,6 @@ func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// keep connection alive and detect disconnect
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
@@ -576,7 +577,6 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate dates
 	start, err := time.Parse(dateLayout, miner.StartDate)
 	if err != nil {
 		http.Error(w, "Invalid start date format (DD-MM-YYYY)", http.StatusBadRequest)
