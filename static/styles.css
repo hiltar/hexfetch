@@ -10,6 +10,7 @@
     --nav-text: #ffffff;
     --nav-active-bg: #495057;
     --border-color: #6c757d;
+    --btn-close-filter: invert(1);
 }
 
 /* General styles */
@@ -207,7 +208,7 @@ body {
 }
 
 .modal .btn-close {
-    filter: var(--text-color) === '#000000' ? none : invert(1);
+    filter: var(--btn-close-filter);
 }
 
 /* Notification styling */
@@ -249,7 +250,7 @@ body {
 }
 
 .notification .btn-close {
-    filter: var(--text-color) === '#000000' ? none : invert(1);
+    filter: var(--btn-close-filter);
 }
 
 /* Logo styling */
