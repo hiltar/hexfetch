@@ -5,7 +5,6 @@ let chartInstances = {
     dailyPayoutChart: null,
     historicalValueChart: null
 };
-
 let userTotalTShares = 0;
 let userLiquidHEX = 0;
 let historicalStartDay = 1260;
@@ -14,648 +13,433 @@ let countdownIntervalId = null;
 let nextRefreshTime = Date.now();
 let currentFrequency = 15;
 let wsConnection = null;
-let wsActive = false;               // true when WebSocket is live
-let saveInProgress = false;         // debounce flag for config saves
+let saveInProgress = false;
+window.HEXJSON_CACHE = [];
 
 // =============================================
-// HELPERS
+// CUSTOM DATEPICKER
+// =============================================
+function initSimpleDatepicker(input) {
+    if (!input) return;
+    let pickerEl = null;
+    let currentDate = new Date();
+    let isOpen = false;
+
+    if (input.value) {
+        const [d, m, y] = input.value.split('-').map(Number);
+        if (!isNaN(d) && !isNaN(m) && !isNaN(y)) currentDate = new Date(y, m - 1, d);
+    }
+
+    function positionPicker() {
+        if (!pickerEl || !isOpen) return;
+        const rect = input.getBoundingClientRect();
+        const pickerHeight = pickerEl.offsetHeight || 300;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        pickerEl.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 290))}px`;
+        pickerEl.style.top = (spaceBelow < pickerHeight + 10 && rect.top > pickerHeight + 10) 
+            ? `${rect.top - pickerHeight - 6}px` 
+            : `${rect.bottom + 6}px`;
+    }
+
+    function renderCalendar() {
+        if (pickerEl) pickerEl.remove();
+        pickerEl = document.createElement('div');
+        pickerEl.className = 'vanilla-datepicker';
+        
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+        const firstDay = new Date(year, month, 1).getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        const currentYear = new Date().getFullYear();
+        const startYear = currentYear - 2;
+        const endYear = currentYear + 16;
+        const yearOptions = Array.from({ length: endYear - startYear + 1 }, (_, i) => {
+            const y = startYear + i;
+            return `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`;
+        }).join('');
+
+        let html = `
+            <button class="dp-close" type="button" aria-label="Close">×</button>
+            <div class="dp-header">
+                <select class="dp-month">${monthNames.map((m, i) => `<option value="${i}" ${i===month?'selected':''}>${m}</option>`).join('')}</select>
+                <select class="dp-year">${yearOptions}</select>
+                <div class="dp-nav dp-prev" type="button">‹</div>
+                <div class="dp-nav dp-next" type="button">›</div>
+            </div>
+            <div class="dp-grid"><div>Su</div><div>Mo</div><div>Tu</div><div>We</div><div>Th</div><div>Fr</div><div>Sa</div></div>
+            <div class="dp-days">`;
+        
+        let day = 1;
+        for (let i = 0; i < 42; i++) {
+            if (i < firstDay || day > daysInMonth) {
+                html += `<div class="dp-day empty"></div>`;
+            } else {
+                const isToday = day === new Date().getDate() && month === new Date().getMonth() && year === new Date().getFullYear();
+                const isSelected = input.value === `${String(day).padStart(2,'0')}-${String(month+1).padStart(2,'0')}-${year}`;
+                html += `<div class="dp-day ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-day="${day}">${day}</div>`;
+                day++;
+            }
+        }
+        html += `</div>`;
+        pickerEl.innerHTML = html;
+        document.body.appendChild(pickerEl);
+        requestAnimationFrame(() => { positionPicker(); pickerEl.style.display = 'block'; });
+        isOpen = true;
+    }
+
+    function closePicker() {
+        if (pickerEl) { pickerEl.remove(); pickerEl = null; }
+        isOpen = false;
+    }
+
+    input.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); isOpen ? closePicker() : renderCalendar(); });
+    input.addEventListener('focus', (e) => e.preventDefault());
+
+    document.addEventListener('mousedown', (e) => {
+        if (isOpen && pickerEl && !pickerEl.contains(e.target) && e.target !== input) closePicker();
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!isOpen || !pickerEl || !pickerEl.contains(e.target)) return;
+        e.stopPropagation();
+        const target = e.target;
+        if (target.classList.contains('dp-close')) { closePicker(); return; }
+        if (target.classList.contains('dp-prev')) { currentDate.setMonth(currentDate.getMonth()-1); renderCalendar(); return; }
+        if (target.classList.contains('dp-next')) { currentDate.setMonth(currentDate.getMonth()+1); renderCalendar(); return; }
+        if (target.classList.contains('dp-month')) { currentDate.setMonth(parseInt(target.value)); renderCalendar(); return; }
+        if (target.classList.contains('dp-year')) { currentDate.setFullYear(parseInt(target.value)); renderCalendar(); return; }
+        if (target.classList.contains('dp-day') && !target.classList.contains('empty')) {
+            const d = parseInt(target.dataset.day);
+            input.value = `${String(d).padStart(2,'0')}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${currentDate.getFullYear()}`;
+            closePicker();
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+
+    window.addEventListener('scroll', positionPicker, { passive: true });
+    window.addEventListener('resize', positionPicker, { passive: true });
+}
+
+// =============================================
+// HELPERS & UI
 // =============================================
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
-    const notification = document.createElement('div');
-    notification.className = `notification alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
-    notification.setAttribute('role', 'alert');
-    notification.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-    container.appendChild(notification);
-
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
     setTimeout(() => {
-        notification.classList.remove('show');
-        notification.classList.add('fade');
-        setTimeout(() => notification.remove(), 150);
+        toast.style.opacity = '0'; toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
 
 function showConfirmModal(title, message) {
-    return new Promise((resolve) => {
-        const modal = document.createElement('div');
-        modal.className = 'modal fade';
-        modal.innerHTML = `
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">${title}</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                        <p>${message}</p>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="button" class="btn btn-primary confirm-btn">Confirm</button>
-                    </div>
-                </div>
-            </div>
+    return new Promise(resolve => {
+        const dialog = document.createElement('dialog');
+        dialog.className = 'modal';
+        dialog.innerHTML = `
+            <header class="modal-header"><h3>${title}</h3><button class="btn-close" aria-label="Close">×</button></header>
+            <p class="modal-body">${message}</p>
+            <footer class="modal-footer">
+                <button class="btn btn-secondary confirm-cancel">Cancel</button>
+                <button class="btn btn-danger confirm-action">Confirm</button>
+            </footer>
         `;
-        document.body.appendChild(modal);
+        document.body.appendChild(dialog);
+        dialog.showModal();
 
-        const bsModal = new bootstrap.Modal(modal, { backdrop: 'static', keyboard: false });
-        bsModal.show();
-
-        const confirmBtn = modal.querySelector('.confirm-btn');
-        const cancelBtn = modal.querySelector('.btn-secondary');
-        const closeBtn = modal.querySelector('.btn-close');
-
-        const cleanup = () => {
-            bsModal.hide();
-            modal.remove();
+        const cleanup = result => {
+            dialog.close();
+            dialog.remove();
+            resolve(result);
         };
 
-        confirmBtn.addEventListener('click', () => { cleanup(); resolve(true); });
-        cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
-        closeBtn.addEventListener('click', () => { cleanup(); resolve(false); });
-        modal.addEventListener('hidden.bs.modal', () => { cleanup(); resolve(false); });
+        dialog.querySelector('.btn-close').onclick = () => cleanup(false);
+        dialog.querySelector('.confirm-cancel').onclick = () => cleanup(false);
+        dialog.querySelector('.confirm-action').onclick = () => cleanup(true);
+        dialog.addEventListener('cancel', () => cleanup(false));
     });
 }
 
-function formatWithCommas(num) {
-    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+function showCompletedMiners() {
+    fetch('/api/miners').then(r => r.json()).then(miners => {
+        const list = document.getElementById('completed-miners-list');
+        if (!list) return;
+        list.innerHTML = '';
+        const completed = miners.filter(m => m.status === 'completed');
+        if (!completed.length) { 
+            list.innerHTML = '<li style="color:var(--text-muted)">No completed miners.</li>'; 
+        } else { 
+            completed.forEach(m => { 
+                const li = document.createElement('li'); 
+                li.textContent = `${m.startDate} to ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)}`; 
+                list.appendChild(li); 
+            }); 
+        }
+        const modal = document.getElementById('completed-miners-modal');
+        if (modal) modal.showModal();
+    }).catch(() => showNotification('Failed to load miners', 'danger'));
 }
 
+function formatWithCommas(num) { return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+
 // =============================================
-// PROFILE STATS HELPER
+// TAB & CHART MANAGEMENT
+// =============================================
+function renderAllCharts() {
+    if (!window.Chart || !Array.isArray(window.HEXJSON_CACHE) || window.HEXJSON_CACHE.length === 0) return;
+    renderChartsWithData(window.HEXJSON_CACHE);
+    renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
+    requestAnimationFrame(() => Object.values(chartInstances).forEach(c => c?.resize()));
+}
+
+
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        // Switch tabs
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        
+        btn.classList.add('active');
+        const targetTab = document.getElementById(btn.dataset.tab);
+        targetTab.classList.add('active');
+
+        // Render charts for the activated tab
+        if (btn.dataset.tab === 'charts') {
+            renderAllCharts();
+        } else if (btn.dataset.tab === 'profile') {
+            if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
+                renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
+            }
+        }
+    });
+});
+
+
+document.getElementById('show-completed-btn').addEventListener('click', showCompletedMiners);
+document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => { btn.addEventListener('click', () => { const d = btn.closest('dialog'); if(d) d.close(); }); });
+
+// =============================================
+// PROFILE & LIVE DATA
 // =============================================
 function updateProfileStats() {
-    if (!liveDataCache) {
-        // If no live data yet, zero out values
-        document.getElementById('total-value').textContent = '0.00';
-        document.getElementById('liquid-hex-value').textContent = '0.00';
-        document.getElementById('interest-hex').textContent = '0.00 HEX';
-        document.getElementById('interest-usd').textContent = '$0.00';
-        return;
-    }
-    const data = liveDataCache;
-    const totalValue = userTotalTShares * data.tsharePrice_Pulsechain;
-    document.getElementById('total-value').textContent = formatWithCommas(totalValue.toFixed(2));
-
-    const dailyInterestHEX = userTotalTShares * data.payoutPerTshare_Pulsechain;
-    const dailyInterestUSD = dailyInterestHEX * data.price_Pulsechain;
-    document.getElementById('interest-hex').textContent = formatWithCommas(dailyInterestHEX.toFixed(2)) + ' HEX';
-    document.getElementById('interest-usd').textContent = '$' + formatWithCommas(dailyInterestUSD.toFixed(2));
-
-    const liquidHEXValue = userLiquidHEX * data.price_Pulsechain;
-    document.getElementById('liquid-hex-value').textContent = formatWithCommas(liquidHEXValue.toFixed(2));
+    if (!liveDataCache) return;
+    const d = liveDataCache;
+    document.getElementById('total-value').textContent = `$${formatWithCommas((userTotalTShares * d.tsharePrice_Pulsechain).toFixed(2))}`;
+    document.getElementById('liquid-hex-value').textContent = `$${formatWithCommas((userLiquidHEX * d.price_Pulsechain).toFixed(2))}`;
+    const iHex = userTotalTShares * d.payoutPerTshare_Pulsechain;
+    document.getElementById('interest-hex').textContent = `${formatWithCommas(iHex.toFixed(2))} HEX`;
+    document.getElementById('interest-usd').textContent = `$${formatWithCommas((iHex * d.price_Pulsechain).toFixed(2))}`;
 }
 
-// =============================================
-// LIVE DATA
-// =============================================
 function updateLiveDataUI(data) {
     liveDataCache = data;
-
-    document.getElementById('price').textContent = data.price_Pulsechain.toFixed(5);
-    document.getElementById('tshare-price').textContent = data.tsharePrice_Pulsechain.toFixed(2);
-    document.getElementById('tshare-rate').textContent = formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain));
-    document.getElementById('payout').textContent = data.payoutPerTshare_Pulsechain.toFixed(3);
-    document.getElementById('penalties').textContent = formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain));
-    document.getElementById('beat').textContent = formatWithCommas(data.beat);
-
-    const timestamp = new Date().toLocaleTimeString();
-    document.getElementById('last-updated').textContent = `Last updated: ${timestamp}`;
+    document.getElementById('price').textContent = `$${data.price_Pulsechain.toFixed(5)}`;
+    document.getElementById('tshare-price').textContent = `$${data.tsharePrice_Pulsechain.toFixed(2)}`;
+    document.getElementById('tshare-rate').textContent = `${formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain))} HEX`;
+    document.getElementById('payout').textContent = `${data.payoutPerTshare_Pulsechain.toFixed(3)} HEX`;
+    document.getElementById('penalties').textContent = `${formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain))} HEX`;
+    document.getElementById('beat').textContent = data.beat;
+    document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
-
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-    updateCountdown();
-
-    // Update profile tab values as well
-    updateProfileStats();
+    updateCountdown(); updateProfileStats();
 }
 
 function updateCountdown() {
-    const remainingMs = Math.max(0, nextRefreshTime - Date.now());
-    const totalSec = Math.floor(remainingMs / 1000);
-    const mins = Math.floor(totalSec / 60);
-    const secs = totalSec % 60;
-    document.getElementById('countdown').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    const ms = Math.max(0, nextRefreshTime - Date.now());
+    const s = Math.floor(ms / 1000);
+    document.getElementById('countdown').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
 }
 
 function connectLiveWebSocket() {
     if (wsConnection) wsConnection.close();
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    wsConnection = new WebSocket(`${protocol}//${window.location.host}/ws/live-data`);
-
-    wsConnection.onopen = () => {
-        console.log('✅ WebSocket connected');
-        wsActive = true;
-    };
-    wsConnection.onmessage = (event) => {
-        try {
-            updateLiveDataUI(JSON.parse(event.data));
-        } catch (e) {
-            console.error('WebSocket parse error', e);
-        }
-    };
-    wsConnection.onclose = () => {
-        wsActive = false;
-        setTimeout(connectLiveWebSocket, 5000);
-    };
-    wsConnection.onerror = (err) => {
-        console.error('WebSocket error', err);
-        // onclose will fire after error, no need to force reconnect here
-    };
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsConnection = new WebSocket(`${proto}//${location.host}/ws/live-data`);
+    wsConnection.onopen = () => console.log('✅ WS Connected');
+    wsConnection.onmessage = e => { try { updateLiveDataUI(JSON.parse(e.data)); } catch(err) { console.error(err); }};
+    wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
 }
 
-function setupLiveDataInterval(frequencyInMinutes) {
-    currentFrequency = frequencyInMinutes;
-    nextRefreshTime = Date.now() + frequencyInMinutes * 60 * 1000;
-
+function setupLiveDataInterval(freq) {
+    currentFrequency = freq; nextRefreshTime = Date.now() + freq * 60 * 1000;
     if (countdownIntervalId) clearInterval(countdownIntervalId);
-    countdownIntervalId = setInterval(updateCountdown, 1000);
-    updateCountdown();
-
-    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-        connectLiveWebSocket();
-    }
+    countdownIntervalId = setInterval(updateCountdown, 1000); updateCountdown();
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) connectLiveWebSocket();
 }
 
 // =============================================
-// DATA RETRIEVAL & UI UPDATE
+// INITIAL LOAD
 // =============================================
 async function initialLoad() {
     try {
-        // Always fetch live data if cache is empty; otherwise skip HTTP call.
-        const promises = [fetch('/api/miners'), fetch('/api/config'), fetch('/api/hexjson')];
-        if (!liveDataCache) {
-            promises.push(fetch('/api/live-data'));
-        }
-        const results = await Promise.all(promises);
-        let i = 0;
-        const miners = await results[i++].json();
-        const config = await results[i++].json();
-        const hexjsonData = await results[i++].json();
-        let liveData = null;
-        if (!liveDataCache) {
-            liveData = await results[i++].json();
-            updateLiveDataUI(liveData);
-        }
+        const [minersRes, cfgRes, hexRes] = await Promise.all([fetch('/api/miners'), fetch('/api/config'), fetch('/api/hexjson')]);
+        const miners = await minersRes.json(); const cfg = await cfgRes.json(); window.HEXJSON_CACHE = await hexRes.json();
+        if (!liveDataCache) fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
 
-        // Profile calculations
-        let totalTShares = 0;
-        let activeMiners = [];
-        let minerIndices = [];
+        let totalTS = 0, activeMiners = [], indices = [];
+        miners.forEach((m, i) => { if (m.status !== 'completed') { totalTS += m.tShares; activeMiners.push(m); indices.push(i); }});
+        userTotalTShares = totalTS; userLiquidHEX = cfg.liquidHEX || 0;
+        document.getElementById('total-tshares').textContent = totalTS.toFixed(2); updateProfileStats();
 
-        miners.forEach((miner, originalIndex) => {
-            if (miner.status !== 'completed') {
-                totalTShares += miner.tShares;
-                activeMiners.push(miner);
-                minerIndices.push(originalIndex);
-            }
+        const activeDiv = document.getElementById('active-miners'); activeDiv.innerHTML = '';
+        document.getElementById('profile-message').textContent = activeMiners.length ? '' : 'Empty profile. Please add HEX miners in Settings.';
+        activeMiners.forEach((m, i) => {
+            const [d, mo, y] = m.endDate.split('-'); const endUTC = Date.UTC(y, mo-1, d); const matured = endUTC <= Date.now();
+            const daysLeft = matured ? 0 : Math.ceil((endUTC - Date.now())/(1000*60*60*24));
+            const div = document.createElement('div'); div.className = 'list-item';
+            div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)} ${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
+            activeDiv.appendChild(div);
         });
 
-        userTotalTShares = totalTShares;
-        document.getElementById('total-tshares').textContent = totalTShares.toFixed(2);
+        document.getElementById('frequency').value = cfg.liveDataFrequency;
+        document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
+        document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
+        historicalStartDay = cfg.historicalStartDay || 1260;
 
-        userLiquidHEX = config.liquidHEX || 0;
-        updateProfileStats();  // this will use liveDataCache (may be from WS or just fetched)
-
-        // Active miners
-        const activeMinersDiv = document.getElementById('active-miners');
-        activeMinersDiv.innerHTML = '';
-        if (activeMiners.length === 0) {
-            document.getElementById('profile-message').textContent = 'Empty profile. Please add HEX miners in Settings.';
-        } else {
-            document.getElementById('profile-message').textContent = '';
-            activeMiners.forEach((miner, index) => {
-                // Use UTC maturity check to align with server date parsing
-                const [d, m, y] = miner.endDate.split('-');
-                const endDateUTC = Date.UTC(y, m - 1, d);
-                const nowUTC = Date.now();
-                const isMatured = endDateUTC <= nowUTC;
-                const daysLeft = isMatured ? 0 : Math.ceil((endDateUTC - nowUTC) / (1000 * 60 * 60 * 24));
-
-                const minerDiv = document.createElement('div');
-                minerDiv.className = 'miner-item';
-                minerDiv.innerHTML = `
-                    <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)} ${isMatured ? '(Matured)' : `(${daysLeft} days left)`}</span>
-                    ${isMatured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${minerIndices[index]})">End</button>` : ''}
-                `;
-                activeMinersDiv.appendChild(minerDiv);
-            });
-        }
-
-        // Settings fields
-        document.getElementById('frequency').value = config.liveDataFrequency;
-        document.getElementById('liquid-hex').value = config.liquidHEX || '';
-        document.getElementById('hist-start-day').value = config.historicalStartDay || 1260;
-        historicalStartDay = config.historicalStartDay || 1260;
-
-        // Existing miners list in Settings
-        const existingMinersDiv = document.getElementById('existing-miners');
-        existingMinersDiv.innerHTML = '';
-        miners.forEach((miner, index) => {
-            const minerDiv = document.createElement('div');
-            minerDiv.className = 'miner-item';
-            minerDiv.innerHTML = `
-                <span>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</span>
-                <button class="btn btn-sm btn-danger" onclick="deleteMiner(${index})">Delete</button>
-            `;
-            existingMinersDiv.appendChild(minerDiv);
+        const existingDiv = document.getElementById('existing-miners'); existingDiv.innerHTML = '';
+        miners.forEach((m, i) => {
+            const div = document.createElement('div'); div.className = 'list-item';
+            div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)}</span><button class="btn btn-sm btn-danger" onclick="deleteMiner(${i})">Delete</button>`;
+            existingDiv.appendChild(div);
         });
-
-        setupLiveDataInterval(config.liveDataFrequency);
-        // Render charts only if Chart.js is loaded (i.e. user visited Charts tab)
-        if (window.Chart) {
-            renderChartsWithData(hexjsonData, true); // update, not recreate
-            renderPortfolioHistoryChartWithData(hexjsonData, true);
+        setupLiveDataInterval(cfg.liveDataFrequency);
+        if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
+            renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
         }
-
-    } catch (error) {
-        console.error('Error during initial load:', error);
-        showNotification('Failed to load initial data. Please refresh the page.', 'danger');
-    }
+        if (document.querySelector('.tab-btn.active').dataset.tab === 'charts') renderAllCharts();
+    } catch (err) { console.error('Initial load error:', err); showNotification('Failed to load data.', 'danger'); }
 }
 
 // =============================================
-// CHARTS (with update optimisation)
+// CHARTS
 // =============================================
+function renderChartsWithData(data) {
+    if (!window.Chart || !Array.isArray(data) || data.length === 0) return;
+    
+    const sorted = [...data].sort((a,b) => a.currentDay - b.currentDay);
+    const priceData = sorted.filter(e => e.currentDay >= 1260);
+    const latest = sorted[sorted.length - 1] || {};
 
-// Lazy-load Chart.js when the Charts tab is activated
-function loadChartJS() {
-    return new Promise((resolve, reject) => {
-        if (window.Chart) {
-            resolve();
-            return;
-        }
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js';
-        script.onload = resolve;
-        script.onerror = () => reject(new Error('Failed to load Chart.js'));
-        document.head.appendChild(script);
-    });
-}
+    const priceEl = document.getElementById('price-value');
+    if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(4)}` : '$0.0000';
+    const tshareEl = document.getElementById('tshare-rate-value');
+    if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX)} HEX` : '0 HEX';
+    const payoutEl = document.getElementById('payout-per-tshare-value');
+    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(3))} HEX` : '0.000 HEX';
+    const dailyEl = document.getElementById('daily-payout-value');
+    if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX)} HEX` : '0 HEX';
 
-function renderChartsWithData(data, updateOnly = false) {
-    if (!window.Chart) return;
-
-    const sortedData = [...data].sort((a, b) => a.currentDay - b.currentDay);
-    const priceFilteredData = sortedData.filter(entry => entry.currentDay >= 1260);
-    const latestData = sortedData[sortedData.length - 1] || {};
-
-    document.getElementById('price-value').textContent = latestData.pricePulseX ? `$${latestData.pricePulseX.toFixed(4)}` : '$0.0000';
-    document.getElementById('tshare-rate-value').textContent = latestData.tshareRateHEX ? `${formatWithCommas(latestData.tshareRateHEX)} HEX` : '0 HEX';
-    document.getElementById('payout-per-tshare-value').textContent = latestData.payoutPerTshareHEX ? `${formatWithCommas(latestData.payoutPerTshareHEX.toFixed(3))} HEX` : '0.000 HEX';
-    document.getElementById('daily-payout-value').textContent = latestData.dailyPayoutHEX ? `${formatWithCommas(latestData.dailyPayoutHEX)} HEX` : '0 HEX';
-
-    const isDarkTheme = true;
-    const chartConfigs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', borderColor: isDarkTheme ? '#00b7eb' : '#007bff', data: priceFilteredData },
-        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', borderColor: isDarkTheme ? '#00cc99' : '#28a745', data: sortedData },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', borderColor: isDarkTheme ? '#9966ff' : '#9900cc', data: sortedData },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', borderColor: isDarkTheme ? '#ff6f61' : '#dc3545', data: sortedData }
+    const configs = [
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
     ];
 
-    chartConfigs.forEach(config => {
-        const labels = config.data.map(e => e.currentDay);
-        const values = config.data.map(e => e[config.field]);
+    configs.forEach(c => {
+        if (!Array.isArray(c.data)) return;
 
-        if (chartInstances[config.id]) {
-            const chart = chartInstances[config.id];
-            chart.data.labels = labels;
-            chart.data.datasets[0].data = values;
-            chart.update('none');
-        } else {
-            const ctx = document.getElementById(config.id).getContext('2d');
-            chartInstances[config.id] = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: config.label,
-                        data: values,
-                        borderColor: config.borderColor,
-                        fill: false,
-                        pointRadius: 0,
-                        pointHoverRadius: 5,
-                        tension: 0.25
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        intersect: false,
-                        mode: 'index'
-                    },
-                    scales: {
-                        x: { title: { display: true, text: 'Current Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } },
-                        y: { title: { display: true, text: config.label, color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000' } }
-                    },
-                    plugins: {
-                        legend: { labels: { color: isDarkTheme ? '#ffffff' : '#000000' } },
-                        tooltip: {
-                            callbacks: {
-                                title: (tooltipItems) => `Day ${tooltipItems[0].label}`,
-                                label: (tooltipItem) => `${config.label}: ${tooltipItem.raw.toFixed(2)}`
-                            }
-                        }
-                    }
-                }
-            });
+        const labels = c.data.map(e => e.currentDay);
+        const values = c.data.map(e => e[c.field]);
+        
+        if (chartInstances[c.id]) { 
+            chartInstances[c.id].data.labels = labels; 
+            chartInstances[c.id].data.datasets[0].data = values; 
+            chartInstances[c.id].update('none'); 
+        } else { 
+            chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
+                type: 'line', 
+                data: { labels, datasets: [{ label: c.label, data: values, borderColor: c.border, fill: false, pointRadius: 0, pointHoverRadius: 5, tension: 0.25 }] }, 
+                options: { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, scales: { x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }, y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } } } 
+            }); 
         }
     });
 }
 
-function renderPortfolioHistoryChartWithData(rawData, updateOnly = false) {
-    if (!window.Chart) return;
+function renderPortfolioHistoryChartWithData(rawData) {
+    if (!window.Chart || !Array.isArray(rawData) || rawData.length === 0) return;
+    const sorted = [...rawData].sort((a,b) => a.currentDay - b.currentDay).filter(e => e.currentDay >= historicalStartDay);
+    if (sorted.length === 0) return;
+    
+    const portfolio = sorted.map(e => ({ day: e.currentDay, value: (userTotalTShares * (e.tshareRateHEX * e.pricePulseX)) + (userLiquidHEX * e.pricePulseX) }));
+    const start = portfolio[0].value, curr = portfolio[portfolio.length-1].value, ath = Math.max(...portfolio.map(d=>d.value));
+    const growth = curr - start, pct = start > 0 ? (growth/start)*100 : 0;
 
-    const sortedData = [...rawData].sort((a, b) => a.currentDay - b.currentDay);
-    const filteredData = sortedData.filter(entry => entry.currentDay >= historicalStartDay);
-    if (filteredData.length === 0) return;
-
-    const portfolioData = filteredData.map(entry => {
-        const hexPrice = entry.pricePulseX || 0;
-        const tsharePrice = entry.tshareRateHEX * hexPrice;
-        const portfolioValue = (userTotalTShares * tsharePrice) + (userLiquidHEX * hexPrice);
-        return { day: entry.currentDay, value: portfolioValue };
-    });
-
-    const startVal = portfolioData[0].value;
-    const currVal = portfolioData[portfolioData.length - 1].value;
-    const athVal = Math.max(...portfolioData.map(d => d.value));
-    const growth = currVal - startVal;
-    const growthPct = startVal > 0 ? (growth / startVal) * 100 : 0;
-
-    document.getElementById('hist-start-day-label').textContent = historicalStartDay;
-    document.getElementById('hist-start-value').textContent = '$' + formatWithCommas(startVal.toFixed(2));
-    document.getElementById('hist-current-value').textContent = '$' + formatWithCommas(currVal.toFixed(2));
-    document.getElementById('hist-ath').textContent = '$' + formatWithCommas(athVal.toFixed(2));
-
-    const growthEl = document.getElementById('hist-growth');
-    growthEl.textContent = (growth >= 0 ? '+' : '') + '$' + formatWithCommas(growth.toFixed(2));
-    growthEl.className = growth >= 0 ? 'h5 fw-bold text-success' : 'h5 fw-bold text-danger';
-
-    const pctEl = document.getElementById('hist-growth-pct');
-    pctEl.textContent = (growth >= 0 ? '+' : '') + growthPct.toFixed(2) + '%';
-    pctEl.className = growth >= 0 ? 'small fw-bold text-success' : 'small fw-bold text-danger';
-
-    const isDarkTheme = true;
-    const labels = portfolioData.map(d => d.day);
-    const values = portfolioData.map(d => d.value);
-
-    if (chartInstances.historicalValueChart) {
-        const chart = chartInstances.historicalValueChart;
-        chart.data.labels = labels;
-        chart.data.datasets[0].data = values;
-        chart.update('none');
-    } else {
-        const ctx = document.getElementById('historicalValueChart').getContext('2d');
-        chartInstances.historicalValueChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Value',
-                    data: values,
-                    borderColor: isDarkTheme ? '#00b7eb' : '#007bff',
-                    backgroundColor: isDarkTheme ? 'rgba(0,183,235,0.2)' : 'rgba(0,123,255,0.15)',
-                    borderWidth: 3,
-                    tension: 0.25,
-                    fill: true,
-                    pointRadius: 0,
-                    pointHoverRadius: 5
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { intersect: false, mode: 'index' },
-                scales: {
-                    x: { title: { display: true, text: 'Day', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', maxTicksLimit: 15 } },
-                    y: { title: { display: true, text: 'Portfolio Value (USD)', color: isDarkTheme ? '#ffffff' : '#000000' }, ticks: { color: isDarkTheme ? '#ffffff' : '#000000', callback: v => '$' + formatWithCommas(Math.round(v)) } }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        displayColors: false,
-                        backgroundColor: isDarkTheme ? '#343a40' : '#ffffff',
-                        titleColor: isDarkTheme ? '#ffffff' : '#000000',
-                        bodyColor: isDarkTheme ? '#ffffff' : '#000000',
-                        borderColor: isDarkTheme ? '#6c757d' : '#dee2e6',
-                        borderWidth: 1,
-                        callbacks: {
-                            title: items => 'Day ' + items[0].label,
-                            label: ctx => 'Value: $' + formatWithCommas(ctx.raw.toFixed(2))
-                        }
-                    }
-                }
-            }
-        });
+    const startLbl = document.getElementById('hist-start-day-label'); if(startLbl) startLbl.textContent = historicalStartDay;
+    const startVal = document.getElementById('hist-start-value'); if(startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
+    const currVal = document.getElementById('hist-current-value'); if(currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
+    const athVal = document.getElementById('hist-ath'); if(athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
+    const gEl = document.getElementById('hist-growth'); 
+    if(gEl) { gEl.textContent = `${growth>=0?'+':''}$${formatWithCommas(growth.toFixed(2))}`; gEl.style.color = growth>=0 ? 'var(--success)' : 'var(--danger)'; }
+    const pEl = document.getElementById('hist-growth-pct'); 
+    if(pEl) { pEl.textContent = `${growth>=0?'+':''}${pct.toFixed(2)}%`; pEl.style.color = growth>=0 ? 'var(--success)' : 'var(--danger)'; }
+    
+    const labels = portfolio.map(d=>d.day), values = portfolio.map(d=>d.value);
+    if (chartInstances.historicalValueChart) { 
+        chartInstances.historicalValueChart.data.labels = labels; 
+        chartInstances.historicalValueChart.data.datasets[0].data = values; 
+        chartInstances.historicalValueChart.update('none'); 
+    } else { 
+        chartInstances.historicalValueChart = new Chart(document.getElementById('historicalValueChart').getContext('2d'), { 
+            type: 'line', 
+            data: { labels, datasets: [{ label: 'Value', data: values, borderColor: '#00b7eb', backgroundColor: 'rgba(0,183,235,0.15)', borderWidth: 3, tension: 0.25, fill: true, pointRadius: 0, pointHoverRadius: 5 }] }, 
+            options: { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, scales: { x: { title: { display: true, text: 'Day', color: '#9ca3af' }, ticks: { color: '#9ca3af', maxTicksLimit: 15 }, grid: { color: '#374151' } }, y: { title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' }, ticks: { color: '#9ca3af', callback: v => '$' + formatWithCommas(Math.round(v)) }, grid: { color: '#374151' } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } } } 
+        }); 
     }
 }
 
 // =============================================
-// MINER ACTIONS
+// ACTIONS & CONFIG
 // =============================================
 async function endMiner(index) {
-    const confirmed = await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?');
-    if (confirmed) {
-        fetch('/api/end-miner', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index })
-        })
-        .then(response => {
-            if (response.ok) {
-                showNotification('Miner ended successfully', 'success');
-                initialLoad();
-            } else {
-                showNotification('Error ending miner', 'danger');
-            }
-        });
+    if (await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?')) {
+        try {
+            const res = await fetch('/api/end-miner', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index}) });
+            showNotification(res.ok ? 'Miner ended successfully' : 'Error ending miner', res.ok?'success':'danger');
+            if(res.ok) initialLoad();
+        } catch(e) { showNotification('Network error', 'danger'); }
     }
 }
 
-function showCompletedMiners() {
-    fetch('/api/miners')
-        .then(response => response.json())
-        .then(miners => {
-            const completedMiners = miners.filter(miner => miner.status === 'completed');
-            const modal = document.createElement('div');
-            modal.className = 'modal fade';
-            modal.innerHTML = `
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">Completed Miners</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            ${completedMiners.length === 0 ? '<p>No completed miners.</p>' : completedMiners.map(miner => `<p>${miner.startDate} to ${miner.endDate}, T-Shares: ${miner.tShares.toFixed(2)}</p>`).join('')}
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-            const bsModal = new bootstrap.Modal(modal);
-            bsModal.show();
-            modal.addEventListener('hidden.bs.modal', () => modal.remove());
-        });
-}
-
-function addMiner() {
-    const startDate = document.getElementById('start-date').value;
-    const endDate = document.getElementById('end-date').value;
-    const tShares = parseFloat(document.getElementById('tshares').value);
-
-    if (!startDate || !endDate || isNaN(tShares) || tShares <= 0) {
-        showNotification('Please fill all fields with valid data', 'danger');
-        return;
-    }
-    const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
-    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
-        showNotification('Dates must be in DD-MM-YYYY format', 'danger');
-        return;
-    }
-
-    // Prevent accidental double clicks
-    const btn = document.querySelector('button[onclick="addMiner()"]');
-    if (btn) btn.disabled = true;
-
-    fetch('/api/add-miner', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDate, endDate, tShares })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification('Miner added successfully', 'success');
-            document.getElementById('start-date').value = '';
-            document.getElementById('end-date').value = '';
-            document.getElementById('tshares').value = '';
-            initialLoad();
-        } else {
-            showNotification('Error adding miner', 'danger');
-        }
-    })
-    .catch(() => showNotification('Network error', 'danger'))
-    .finally(() => {
-        if (btn) btn.disabled = false;
-    });
-}
+document.getElementById('add-miner-btn').addEventListener('click', () => {
+    const sd = document.getElementById('start-date').value, ed = document.getElementById('end-date').value, ts = parseFloat(document.getElementById('tshares').value);
+    if (!sd || !ed || isNaN(ts) || ts <= 0) return showNotification('Fill all fields with valid data', 'danger');
+    if (!/^\d{2}-\d{2}-\d{4}$/.test(sd) || !/^\d{2}-\d{2}-\d{4}$/.test(ed)) return showNotification('Dates must be DD-MM-YYYY', 'danger');
+    const btn = document.getElementById('add-miner-btn'); btn.disabled = true;
+    fetch('/api/add-miner', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({startDate:sd, endDate:ed, tShares:ts}) })
+        .then(r => { if(r.ok) { showNotification('Miner added','success'); document.getElementById('start-date').value=''; document.getElementById('end-date').value=''; document.getElementById('tshares').value=''; initialLoad(); } else showNotification('Error adding miner','danger'); })
+        .catch(() => showNotification('Network error','danger')).finally(() => btn.disabled = false);
+});
 
 async function deleteMiner(index) {
-    const confirmed = await showConfirmModal('Delete Miner', 'Do you want to delete this HEX miner?');
-    if (confirmed) {
-        fetch('/api/delete-miner', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index })
-        })
-        .then(response => {
-            if (response.ok) {
-                showNotification('Miner deleted successfully', 'success');
-                initialLoad();
-            } else {
-                showNotification('Error deleting miner', 'danger');
-            }
-        });
+    if (await showConfirmModal('Delete Miner', 'Delete this HEX miner?')) {
+        try { const res = await fetch('/api/delete-miner', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index}) }); showNotification(res.ok?'Miner deleted':'Error deleting', res.ok?'success':'danger'); if(res.ok) initialLoad(); } catch(e) { showNotification('Network error','danger'); }
     }
 }
 
-// =============================================
-// DEBOUNCED CONFIG SAVE (used by all three save buttons)
-// =============================================
 function debouncedSaveConfig() {
-    if (saveInProgress) return;
-    saveInProgress = true;
-
-    const frequency = parseInt(document.getElementById('frequency').value) || 15;
-    const liquidHEX = parseFloat(document.getElementById('liquid-hex').value) || 0;
-    const histStart = parseInt(document.getElementById('hist-start-day').value) || 1260;
-
-    fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ liveDataFrequency: frequency, liquidHEX: liquidHEX, historicalStartDay: histStart })
-    })
-    .then(response => {
-        if (response.ok) {
-            showNotification('Settings saved', 'success');
-            initialLoad();
-        } else {
-            showNotification('Error saving settings', 'danger');
-        }
-    })
-    .catch(() => showNotification('Network error', 'danger'))
-    .finally(() => { saveInProgress = false; });
+    if (saveInProgress) return; saveInProgress = true;
+    const freq = parseInt(document.getElementById('frequency').value) || 15;
+    const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
+    const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
+    fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({liveDataFrequency:freq, liquidHEX:liquid, historicalStartDay:hist}) })
+        .then(r => { showNotification(r.ok?'Settings saved':'Error saving', r.ok?'success':'danger'); if(r.ok) initialLoad(); }).catch(()=>showNotification('Network error','danger')).finally(()=> saveInProgress = false);
 }
-
-function saveFrequency() {
-    const freq = parseInt(document.getElementById('frequency').value);
-    if (isNaN(freq) || freq <= 0) {
-        showNotification('Frequency must be a positive integer', 'danger');
-        return;
-    }
-    debouncedSaveConfig();
-}
-
-function saveLiquidHEX() {
-    const liquid = parseFloat(document.getElementById('liquid-hex').value);
-    if (isNaN(liquid) || liquid < 0) {
-        showNotification('Liquid HEX must be non-negative', 'danger');
-        return;
-    }
-    debouncedSaveConfig();
-}
-
-function saveHistoricalStartDay() {
-    const start = parseInt(document.getElementById('hist-start-day').value);
-    if (isNaN(start) || start < 1) {
-        showNotification('Starting day must be a positive integer', 'danger');
-        return;
-    }
-    debouncedSaveConfig();
-}
+function saveFrequency() { if (parseInt(document.getElementById('frequency').value) <= 0) return showNotification('Frequency must be > 0','danger'); debouncedSaveConfig(); }
+function saveLiquidHEX() { if (parseFloat(document.getElementById('liquid-hex').value) < 0) return showNotification('Liquid HEX must be >= 0','danger'); debouncedSaveConfig(); }
+function saveHistoricalStartDay() { if (parseInt(document.getElementById('hist-start-day').value) < 1) return showNotification('Start day must be > 0','danger'); debouncedSaveConfig(); }
 
 // =============================================
-// INITIALIZATION & TAB LAZY LOADING
+// INIT
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
-    document.title = 'HEX Stats';
-
-    const datepickerOptions = {
-        format: 'dd-mm-yyyy',
-        autohide: true,
-        buttonClass: 'btn',
-        prevButton: '<i class="bi bi-chevron-left"></i>',
-        nextButton: '<i class="bi bi-chevron-right"></i>'
-    };
-
-    const startDateInput = document.getElementById('start-date');
-    const endDateInput   = document.getElementById('end-date');
-    if (startDateInput) new Datepicker(startDateInput, datepickerOptions);
-    if (endDateInput)   new Datepicker(endDateInput,   datepickerOptions);
-
-    // Lazy-load Chart.js when the Charts tab is first shown
-    const chartTab = document.getElementById('chart-tab');
-    if (chartTab) {
-        chartTab.addEventListener('shown.bs.tab', () => {
-            loadChartJS().then(() => {
-                fetch('/api/hexjson').then(r => r.json()).then(data => {
-                    renderChartsWithData(data);
-                    renderPortfolioHistoryChartWithData(data);
-                });
-            }).catch(err => console.error(err));
-        });
-    }
-
-    // Initial load and periodic refresh every 10 minutes
-    initialLoad();
-    setInterval(initialLoad, 10 * 60 * 1000);
+    initSimpleDatepicker(document.getElementById('start-date'));
+    initSimpleDatepicker(document.getElementById('end-date'));
+    initialLoad(); setInterval(initialLoad, 10 * 60 * 1000);
 });
