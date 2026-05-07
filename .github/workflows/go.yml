@@ -45,24 +45,24 @@ jobs:
       run: |
         CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
         go build -a -trimpath -ldflags="-s -w -extldflags '-static'" \
-        -o hexfetch-linux-arm64 .
+        -o hexfetch-arm .
 
     - name: Build AMD64 (Generic/Server)
       run: |
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
         go build -a -trimpath -ldflags="-s -w -extldflags '-static'" \
-        -o hexfetch-linux-amd64 .
+        -o hexfetch .
 
     - name: Compress Binaries with UPX
       run: |
-        upx --best --lzma hexfetch-linux-arm64 hexfetch-linux-amd64
-        ls -lh hexfetch-linux-*
+        upx --best --lzma hexfetch-arm hexfetch
+        ls -lh hexfetch*
 
     - name: Upload to GitHub Release
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          hexfetch-linux-arm64
-          hexfetch-linux-amd64
+          hexfetch-arm
+          hexfetch
         draft: true
