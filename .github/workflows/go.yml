@@ -9,30 +9,60 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
+    - name: Cache Go Modules
+      uses: actions/cache@v4
       with:
-        go-version: '1.26'
-        
-    - name: Build
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+    
+    - name: Tidy Modules
+      run: go mod tidy && go mod verify
+
+    - name: Download and Install UPX
       run: |
-        go mod init hexfetch || true
-        go mod tidy
-        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -trimpath -ldflags="-s -w" -o hexfetch-arm
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -trimpath -ldflags="-s -w" -o hexfetch
-        upx --best --lzma hexfetch*
+        wget -q https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz
+        tar -xf upx-4.2.4-amd64_linux.tar.xz
+        chmod +x upx-4.2.4-amd64_linux/upx
+        cp upx-4.2.4-amd64_linux/upx /usr/local/bin/upx
+        rm -rf upx-*
+
+    - name: Build ARM64 (Raspberry Pi Zero 2W)
+      run: |
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+        go build -a -trimpath -ldflags="-s -w -extldflags '-static'" \
+        -o hexfetch-linux-arm64 .
+
+    - name: Build AMD64 (Generic/Server)
+      run: |
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+        go build -a -trimpath -ldflags="-s -w -extldflags '-static'" \
+        -o hexfetch-linux-amd64 .
+
+    - name: Compress Binaries with UPX
+      run: |
+        upx --best --lzma hexfetch-linux-arm64 hexfetch-linux-amd64
+        ls -lh hexfetch-linux-*
 
     - name: Upload to GitHub Release
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          hexfetch-arm
-          hexfetch
-          draft: true
+          hexfetch-linux-arm64
+          hexfetch-linux-amd64
+        draft: true
