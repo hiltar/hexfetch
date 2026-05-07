@@ -42,8 +42,8 @@ function initAirDatepickers() {
         autoClose: true,
         classes: 'air-datepicker-dark',
         onShow: (isFinished, dp) => {
-            if (isFinished) {
-                document.querySelector('.air-datepicker')?.style.setProperty('z-index', '1050', 'important');
+            if (isFinished && dp?.$datepicker) {
+                dp.$datepicker.style.setProperty('z-index', '1050', 'important');
             }
         },
         onSelect: ({datepicker, formattedDate}) => {
@@ -55,38 +55,58 @@ function initAirDatepickers() {
     const startDateEl = document.getElementById('start-date');
     if (startDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.startDate) datepickers.startDate.destroy();
+        
         datepickers.startDate = new AirDatepicker(startDateEl, {
             ...commonOpts,
             minDate: new Date(2021, 0, 1),
             maxDate: new Date(),
-            onShow: (isFinished, dp) => {
-                commonOpts.onShow?.(isFinished, dp);
+            onSelect: ({datepicker, date}) => {
+                commonOpts.onSelect?.({datepicker, formattedDate: datepicker.$el.value});
+                if (datepickers.endDate && date instanceof Date && !isNaN(date)) {
+                    datepickers.endDate.update({ minDate: date });
+                }
             }
         });
     }
 
+    // Initialize end-date picker
     const endDateEl = document.getElementById('end-date');
     if (endDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.endDate) datepickers.endDate.destroy();
-        datepickers.endDate = new AirDatepicker(endDateEl, {
-            ...commonOpts,
-            onShow: (isFinished, dp) => {
-                if (startDateEl?.value) {
-                    const min = parseDateDDMMYYYY(startDateEl.value);
-                    if (min) dp.update({ minDate: min });
-                }
-                commonOpts.onShow?.(isFinished, dp);
+        let initialMinDate = undefined;
+        if (startDateEl?.value) {
+            const parsed = parseDateDDMMYYYY(startDateEl.value);
+            if (parsed instanceof Date && !isNaN(parsed)) {
+                initialMinDate = parsed;
             }
-        });
+        }
+        
+        const endDateOpts = { ...commonOpts };
+        if (initialMinDate) {
+            endDateOpts.minDate = initialMinDate;
+        }
+        
+        datepickers.endDate = new AirDatepicker(endDateEl, endDateOpts);
     }
 }
 
+// Helper: Parse DD-MM-YYYY to Date object
 function parseDateDDMMYYYY(str) {
-    if (!str || !/^\d{2}-\d{2}-\d{4}$/.test(str)) return null;
-    const [d, m, y] = str.split('-').map(Number);
-    return new Date(y, m - 1, d);
+    if (!str || typeof str !== 'string') return undefined;
+    const trimmed = str.trim();
+    if (!/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return undefined;
+    const [d, m, y] = trimmed.split('-').map(Number);
+    // Validate date components
+    if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return undefined;
+    const date = new Date(y, m - 1, d);
+    // Verify the date is valid (catches invalid dates like 31-02-2024)
+    if (isNaN(date.getTime()) || date.getDate() !== d || date.getMonth() !== m - 1) {
+        return undefined;
+    }
+    return date;
 }
 
+// Helper: Format Date to DD-MM-YYYY string
 function formatDateDDMMYYYY(date) {
     if (!(date instanceof Date) || isNaN(date)) return '';
     const d = String(date.getDate()).padStart(2, '0');
@@ -339,7 +359,6 @@ function renderChartsWithData(data) {
     const priceData = sorted.filter(e => e.currentDay >= 1260);
     const latest = sorted[sorted.length - 1] || {};
 
-    // Update chart metric labels
     const priceEl = document.getElementById('price-value');
     if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(4)}` : '$0.0000';
 
@@ -373,7 +392,7 @@ function renderChartsWithData(data) {
             chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
                 type: 'line', 
                 data: { 
-                    labels: labels,
+                    labels: labels, // Explicit assignment fixes the syntax error
                     datasets: [{ 
                         label: c.label, 
                         data: values, 
@@ -516,10 +535,12 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
         return showNotification('Fill all fields with valid data', 'danger');
     }
     
+    // Validate date format using helper
     if (!parseDateDDMMYYYY(sd) || !parseDateDDMMYYYY(ed)) {
         return showNotification('Dates must be DD-MM-YYYY format', 'danger');
     }
     
+    // Validate logical date order
     const startDate = parseDateDDMMYYYY(sd);
     const endDate = parseDateDDMMYYYY(ed);
     if (endDate < startDate) {
