@@ -139,30 +139,144 @@ canvas { width: 100% !important; height: 100% !important; }
 .toast.danger { background: var(--danger); }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-/* Datepicker */
-.vanilla-datepicker {
-    position: fixed; z-index: 1060; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: var(--shadow); padding: 10px; user-select: none;
-    width: 280px; min-width: 280px; display: none;
-    transform: translateZ(0); /* Fixes iOS/Safari scroll sync bugs */
+/* Air Datepicker */
+.air-datepicker {
+    --adp-bg: var(--surface);
+    --adp-cell-bg: var(--surface-hover);
+    --adp-cell-hover: var(--primary);
+    --adp-cell-selected: var(--primary);
+    --adp-text: var(--text);
+    --adp-text-muted: var(--text-muted);
+    --adp-border: var(--border);
+    --adp-radius: var(--radius);
+    
+    background: var(--adp-bg) !important;
+    border: 1px solid var(--adp-border) !important;
+    border-radius: var(--adp-radius) !important;
+    box-shadow: var(--shadow) !important;
+    font-family: var(--font);
 }
-.dp-header { 
-    display: flex; justify-content: space-between; align-items: center; 
-    gap: 6px; margin-bottom: 8px; padding-right: 26px; /* Prevents close-btn overlap */
+
+.air-datepicker--body {
+    background: var(--adp-bg) !important;
 }
-.dp-select { background: var(--surface-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; flex: 1; font-size: 0.85rem; cursor: pointer; }
-.dp-select:focus { outline: 1px solid var(--primary); }
-.dp-nav { background: none; border: 1px solid var(--border); color: var(--text); width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; font-size: 1rem; flex-shrink: 0; }
-.dp-nav:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
-.dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
-.dp-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-.dp-day { padding: 6px 0; text-align: center; border-radius: 4px; cursor: pointer; font-size: 0.85rem; transition: 0.15s; }
-.dp-day:hover:not(.empty) { background: var(--surface-hover); }
-.dp-day.selected { background: var(--primary); color: #fff; font-weight: 600; }
-.dp-day.today { border: 1px solid var(--primary); font-weight: 600; }
-.dp-day.empty { cursor: default; color: var(--text-muted); opacity: 0.4; }
-.dp-close { position: absolute; top: 6px; right: 6px; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 2px 4px; line-height: 1; border-radius: 4px; z-index: 2; }
-.dp-close:hover { color: var(--danger); background: var(--surface-hover); }
+
+.air-datepicker--nav {
+    background: var(--surface-hover) !important;
+    border-bottom: 1px solid var(--adp-border) !important;
+    padding: 8px 12px !important;
+}
+
+.air-datepicker--nav-title {
+    color: var(--adp-text) !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+}
+
+.air-datepicker--nav-action {
+    color: var(--adp-text) !important;
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 4px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.air-datepicker--nav-action:hover {
+    background: var(--primary) !important;
+    color: #fff !important;
+}
+
+.air-datepicker--nav-action.-disabled- {
+    opacity: 0.4 !important;
+    cursor: not-allowed !important;
+}
+
+.air-datepicker--day-name {
+    color: var(--adp-text-muted) !important;
+    font-weight: 600 !important;
+    font-size: 0.75rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}
+
+.air-datepicker--cell {
+    color: var(--adp-text) !important;
+    border-radius: 4px !important;
+    font-size: 0.85rem !important;
+    height: 32px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.air-datepicker--cell.-other-month- {
+    color: var(--adp-text-muted) !important;
+    opacity: 0.5 !important;
+}
+
+.air-datepicker--cell.-current- {
+    border: 1px solid var(--primary) !important;
+    font-weight: 600 !important;
+}
+
+.air-datepicker--cell.-selected- {
+    background: var(--primary) !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+}
+
+.air-datepicker--cell.-selected-.-current- {
+    border-color: #fff !important;
+}
+
+.air-datepicker--cell.-in-range-,
+.air-datepicker--cell.-range-from-,
+.air-datepicker--cell.-range-to- {
+    background: rgba(0, 183, 235, 0.15) !important;
+}
+
+.air-datepicker--cell.-focus- {
+    background: var(--surface-hover) !important;
+}
+
+.air-datepicker--cell.-disabled- {
+    color: var(--adp-text-muted) !important;
+    opacity: 0.3 !important;
+    cursor: not-allowed !important;
+}
+
+.air-datepicker--buttons {
+    border-top: 1px solid var(--adp-border) !important;
+    background: var(--surface-hover) !important;
+    padding: 8px 12px !important;
+}
+
+.air-datepicker--button {
+    color: var(--adp-text) !important;
+    font-size: 0.85rem !important;
+    padding: 4px 8px !important;
+    border-radius: 4px !important;
+}
+
+.air-datepicker--button:hover {
+    color: var(--primary) !important;
+    background: rgba(0, 183, 235, 0.1) !important;
+}
+
+.air-datepicker--time {
+    border-top: 1px solid var(--adp-border) !important;
+    background: var(--surface-hover) !important;
+}
+
+.air-datepicker-global-container {
+    z-index: 1050 !important;
+}
+
+#start-date, #end-date {
+    cursor: pointer;
+}
 
 /* Responsive */
 @media (max-width: 640px) {
@@ -173,5 +287,4 @@ canvas { width: 100% !important; height: 100% !important; }
     .live-data-clear { max-width: 100%; padding: 0 0.5rem; }
     .chart-container { height: 300px; }
     .modal { width: 95%; max-width: 95vw; }
-    .vanilla-datepicker { width: calc(100vw - 2rem) !important; max-width: 320px; left: 1rem !important; right: 1rem !important; }
 }
