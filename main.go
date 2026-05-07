@@ -27,42 +27,46 @@ var staticFiles embed.FS
 // =============================================
 
 const (
-	dataDir                  = "/opt/hexfetch"
-	dateLayout               = "02-01-2006"
+	dataDir = "/opt/hexfetch"
+	dateLayout = "02-01-2006"
 	defaultLiveDataFrequency = 15
 )
 
 // Global cached data
 var (
 	latestLiveData LiveData
-	liveDataMutex  sync.RWMutex
-	hexJSONData    HEXJSON
-	hexJSONMutex   sync.RWMutex
+	liveDataMutex sync.RWMutex
+	hexJSONData HEXJSON
+	hexJSONMutex sync.RWMutex
 
 	httpClient = &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:       10,
-			IdleConnTimeout:    30 * time.Second,
+			MaxIdleConns: 10,
+			IdleConnTimeout: 30 * time.Second,
 			DisableCompression: true,
 		},
 	}
 
 	// WebSocket broadcaster
-	wsClients   = make(map[*websocket.Conn]bool)
+	wsClients = make(map[*websocket.Conn]bool)
 	wsClientsMu sync.Mutex
-	wsUpgrader  = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsUpgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 	// Live data fetcher state
-	fetcherCtx    context.Context
+	fetcherCtx context.Context
 	fetcherCancel context.CancelFunc
-	fetcherDone   chan struct{} // closed when goroutine exits
-	fetcherMu     sync.Mutex
+	fetcherDone chan struct{} // closed when goroutine exits
+	fetcherMu sync.Mutex
 	fetcherActive bool
 
 	// Config notification
 	configSubsMu sync.Mutex
-	configSubs   []chan struct{}
+	configSubs []chan struct{}
+	
+	// Optimized Miner Cache
+	cachedMiners []Miner
+	minersCacheMu sync.RWMutex
 )
 
 // =============================================
@@ -70,35 +74,35 @@ var (
 // =============================================
 
 type HEXJSONEntry struct {
-	CurrentDay         int     `json:"currentDay"`
-	TshareRateHEX      float64 `json:"tshareRateHEX"`
-	DailyPayoutHEX     float64 `json:"dailyPayoutHEX"`
+	CurrentDay int `json:"currentDay"`
+	TshareRateHEX float64 `json:"tshareRateHEX"`
+	DailyPayoutHEX float64 `json:"dailyPayoutHEX"`
 	PayoutPerTshareHEX float64 `json:"payoutPerTshareHEX"`
-	PricePulseX        float64 `json:"pricePulseX"`
+	PricePulseX float64 `json:"pricePulseX"`
 }
 
 type HEXJSON []HEXJSONEntry
 
 type LiveData struct {
-	PricePulsechain           float64 `json:"price_Pulsechain"`
-	TsharePricePulsechain     float64 `json:"tsharePrice_Pulsechain"`
-	TshareRateHEXPulsechain   float64 `json:"tshareRateHEX_Pulsechain"`
-	PenaltiesHEXPulsechain    float64 `json:"penaltiesHEX_Pulsechain"`
+	PricePulsechain float64 `json:"price_Pulsechain"`
+	TsharePricePulsechain float64 `json:"tsharePrice_Pulsechain"`
+	TshareRateHEXPulsechain float64 `json:"tshareRateHEX_Pulsechain"`
+	PenaltiesHEXPulsechain float64 `json:"penaltiesHEX_Pulsechain"`
 	PayoutPerTsharePulsechain float64 `json:"payoutPerTshare_Pulsechain"`
-	Beat                      int64   `json:"beat"`
+	Beat int64 `json:"beat"`
 }
 
 type Miner struct {
-	StartDate string  `json:"startDate"`
-	EndDate   string  `json:"endDate"`
-	TShares   float64 `json:"tShares"`
-	Status    string  `json:"status,omitempty"`
+	StartDate string `json:"startDate"`
+	EndDate string `json:"endDate"`
+	TShares float64 `json:"tShares"`
+	Status string `json:"status,omitempty"`
 }
 
 type Config struct {
-	LiveDataFrequency  int     `json:"liveDataFrequency"`
-	LiquidHEX          float64 `json:"liquidHEX"`
-	HistoricalStartDay int     `json:"historicalStartDay"`
+	LiveDataFrequency int `json:"liveDataFrequency"`
+	LiquidHEX float64 `json:"liquidHEX"`
+	HistoricalStartDay int `json:"historicalStartDay"`
 }
 
 // =============================================
@@ -106,13 +110,13 @@ type Config struct {
 // =============================================
 
 type ConfigManager struct {
-	mu     sync.RWMutex
+	mu sync.RWMutex
 	config Config
 }
 
 var configManager = &ConfigManager{
 	config: Config{
-		LiveDataFrequency:  defaultLiveDataFrequency,
+		LiveDataFrequency: defaultLiveDataFrequency,
 		HistoricalStartDay: 1260,
 	},
 }
@@ -319,35 +323,72 @@ func startDailyHEXJSONUpdate() {
 	}()
 }
 
-func loadMiners() ([]Miner, error) {
+
+// initializeMiners loads miners once at startup into RAM
+func initializeMiners() {
 	path := filepath.Join(dataDir, "miners.json")
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []Miner{}, nil
+			minersCacheMu.Lock()
+			cachedMiners = []Miner{}
+			minersCacheMu.Unlock()
+			return
 		}
-		return nil, err
+		log.Printf("Error opening miners file: %v", err)
+		return
 	}
 	defer file.Close()
+
 	var miners []Miner
-	return miners, json.NewDecoder(file).Decode(&miners)
+	if err := json.NewDecoder(file).Decode(&miners); err != nil {
+		log.Printf("Error decoding miners file: %v", err)
+		return
+	}
+	
+	minersCacheMu.Lock()
+	cachedMiners = miners
+	minersCacheMu.Unlock()
+	debugLog("Loaded miners into RAM cache.")
 }
 
-func saveMiners(miners []Miner) error {
-	current, _ := loadMiners()
+func persistMiners(miners []Miner) error {
+	current, _ := loadMinersFromDisk() // Helper strictly for disk check
 	if reflect.DeepEqual(current, miners) {
 		return nil
 	}
+	
 	path := filepath.Join(dataDir, "miners.json")
-	file, err := os.Create(path)
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0755)
+	
+	tempPath := path + ".tmp"
+	file, err := os.Create(tempPath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	
 	enc := json.NewEncoder(file)
-	enc.SetIndent("", "  ")
-	return enc.Encode(miners)
+	enc.SetIndent("", " ")
+	if err := enc.Encode(miners); err != nil {
+		file.Close()
+		os.Remove(tempPath)
+		return err
+	}
+	
+	if err := file.Close(); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+	
+	// Atomic replace
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	
+	return nil
 }
+
 
 func loadConfig() (Config, error) {
 	path := filepath.Join(dataDir, "config.json")
@@ -382,19 +423,39 @@ func saveConfig(cfg Config) error {
 	if cfg.LiquidHEX < 0 {
 		cfg.LiquidHEX = 0
 	}
+	
 	current, _ := loadConfig()
 	if reflect.DeepEqual(current, cfg) {
 		return nil
 	}
+	
 	path := filepath.Join(dataDir, "config.json")
-	file, err := os.Create(path)
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0755)
+
+	tempPath := path + ".tmp"
+	file, err := os.Create(tempPath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+	
 	enc := json.NewEncoder(file)
-	enc.SetIndent("", "  ")
+	enc.SetIndent("", " ")
 	return enc.Encode(cfg)
+}
+
+func loadMinersFromDisk() ([]Miner, error) {
+	// For internal checks if we need to write to disk
+	path := filepath.Join(dataDir, "miners.json")
+	file, err := os.Open(path)
+	if err != nil {
+		return []Miner{}, nil
+	}
+	defer file.Close()
+	var miners []Miner
+	json.NewDecoder(file).Decode(&miners)
+	return miners, nil
 }
 
 // =============================================
@@ -419,7 +480,6 @@ func broadcastLiveData(data LiveData) {
 	}
 }
 
-// startLiveDataFetcher runs a goroutine that fetches live data at the configured interval.
 func startLiveDataFetcher() {
 	fetcherMu.Lock()
 	defer fetcherMu.Unlock()
@@ -562,8 +622,11 @@ func handleHEXJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMiners(w http.ResponseWriter, r *http.Request) {
-	miners, _ := loadMiners()
-	writeJSON(w, miners)
+	minersCacheMu.RLock()
+	result := make([]Miner, len(cachedMiners))
+	copy(result, cachedMiners)
+	minersCacheMu.RUnlock()
+	writeJSON(w, result)
 }
 
 func handleAddMiner(w http.ResponseWriter, r *http.Request) {
@@ -596,12 +659,18 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	miners, _ := loadMiners()
-	miners = append(miners, miner)
-	if err := saveMiners(miners); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Update Memory First
+	minersCacheMu.Lock()
+	cachedMiners = append(cachedMiners, miner)
+	minersCacheMu.Unlock()
+
+	minersCacheMu.RLock()
+	toPersist := make([]Miner, len(cachedMiners))
+	copy(toPersist, cachedMiners)
+	minersCacheMu.RUnlock()
+	
+	_ = persistMiners(toPersist)
+
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -615,16 +684,19 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	miners, err := loadMiners()
-	if err != nil || req.Index < 0 || req.Index >= len(miners) {
+	
+	minersCacheMu.Lock()
+	if req.Index < 0 || req.Index >= len(cachedMiners) {
+		minersCacheMu.Unlock()
 		http.Error(w, "Invalid miner index", http.StatusBadRequest)
 		return
 	}
-	miners[req.Index].Status = "completed"
-	if err := saveMiners(miners); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	cachedMiners[req.Index].Status = "completed"
+	toPersist := make([]Miner, len(cachedMiners))
+	copy(toPersist, cachedMiners)
+	minersCacheMu.Unlock()
+
+	_ = persistMiners(toPersist)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -638,22 +710,29 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	miners, err := loadMiners()
-	if err != nil || req.Index < 0 || req.Index >= len(miners) {
+
+	minersCacheMu.Lock()
+	if req.Index < 0 || req.Index >= len(cachedMiners) {
+		minersCacheMu.Unlock()
 		http.Error(w, "Invalid miner index", http.StatusBadRequest)
 		return
 	}
-	miners = append(miners[:req.Index], miners[req.Index+1:]...)
-	if err := saveMiners(miners); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Delete from slice
+	cachedMiners = append(cachedMiners[:req.Index], cachedMiners[req.Index+1:]...)
+	toPersist := make([]Miner, len(cachedMiners))
+	copy(toPersist, cachedMiners)
+	minersCacheMu.Unlock()
+
+	_ = persistMiners(toPersist)
 	w.WriteHeader(http.StatusOK)
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		cfg, _ := loadConfig()
+		// Use the manager to serve consistent RAM-based config
+		configManager.mu.RLock()
+		cfg := configManager.config
+		configManager.mu.RUnlock()
 		writeJSON(w, cfg)
 		return
 	}
@@ -688,6 +767,8 @@ func main() {
 		log.Fatal("Failed to create data directory:", err)
 	}
 
+	initializeMiners()
+	
 	if err := updateLocalHEXJSON(); err != nil {
 		debugLog("Initial HEXJSON load failed:", err)
 	}
