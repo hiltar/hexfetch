@@ -159,6 +159,21 @@ func (cm *ConfigManager) SetHistoricalStartDay(day int) {
 	cm.broadcastChange()
 }
 
+func (cm *ConfigManager) GetLiquidHEX() float64 {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.config.LiquidHEX
+}
+
+func (cm *ConfigManager) SetLiquidHEX(val float64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if val >= 0 {
+		cm.config.LiquidHEX = val
+	}
+	cm.broadcastChange()
+}
+
 // Subscribe returns a channel that receives a notification when config changes.
 func (cm *ConfigManager) Subscribe() chan struct{} {
 	ch := make(chan struct{}, 1)
@@ -755,6 +770,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
 	configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+        configManager.SetLiquidHEX(cfg.LiquidHEX)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -777,6 +793,7 @@ func main() {
 	cfg, _ := loadConfig()
 	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
 	configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+        configManager.SetLiquidHEX(cfg.LiquidHEX)
 
 	subFS, _ := fs.Sub(staticFiles, "static")
 	http.Handle("/", http.FileServer(http.FS(subFS)))
