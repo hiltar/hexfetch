@@ -15,111 +15,84 @@ let currentFrequency = 15;
 let wsConnection = null;
 let saveInProgress = false;
 window.HEXJSON_CACHE = [];
+let datepickers = {
+    startDate: null,
+    endDate: null
+};
 
 // =============================================
-// CUSTOM DATEPICKER
+// AIR-DATEPICKER
 // =============================================
-function initSimpleDatepicker(input) {
-    if (!input) return;
-    let pickerEl = null;
-    let currentDate = new Date();
-    let isOpen = false;
+function initAirDatepickers() {
+    const localeEn = {
+        days: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
+        daysShort: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
+        daysMin: ['Su','Mo','Tu','We','Th','Fr','Sa'],
+        months: ['January','February','March','April','May','June','July','August','September','October','November','December'],
+        monthsShort: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+        today: 'Today',
+        clear: 'Clear',
+        dateFormat: 'dd-MM-yyyy',
+        firstDay: 1
+    };
 
-    if (input.value) {
-        const [d, m, y] = input.value.split('-').map(Number);
-        if (!isNaN(d) && !isNaN(m) && !isNaN(y)) currentDate = new Date(y, m - 1, d);
-    }
-
-    function positionPicker() {
-        if (!pickerEl || !isOpen) return;
-        const rect = input.getBoundingClientRect();
-        const pickerHeight = pickerEl.offsetHeight || 300;
-        const spaceBelow = window.innerHeight - rect.bottom;
-        pickerEl.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 290))}px`;
-        pickerEl.style.top = (spaceBelow < pickerHeight + 10 && rect.top > pickerHeight + 10) 
-            ? `${rect.top - pickerHeight - 6}px` 
-            : `${rect.bottom + 6}px`;
-    }
-
-    function renderCalendar() {
-        if (pickerEl) pickerEl.remove();
-        pickerEl = document.createElement('div');
-        pickerEl.className = 'vanilla-datepicker';
-        
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth();
-        const firstDay = new Date(year, month, 1).getDay();
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-        const currentYear = new Date().getFullYear();
-        const startYear = currentYear - 2;
-        const endYear = currentYear + 16;
-        const yearOptions = Array.from({ length: endYear - startYear + 1 }, (_, i) => {
-            const y = startYear + i;
-            return `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`;
-        }).join('');
-
-        let html = `
-            <button class="dp-close" type="button" aria-label="Close">×</button>
-            <div class="dp-header">
-                <select class="dp-month">${monthNames.map((m, i) => `<option value="${i}" ${i===month?'selected':''}>${m}</option>`).join('')}</select>
-                <select class="dp-year">${yearOptions}</select>
-                <div class="dp-nav dp-prev" type="button">‹</div>
-                <div class="dp-nav dp-next" type="button">›</div>
-            </div>
-            <div class="dp-grid"><div>Su</div><div>Mo</div><div>Tu</div><div>We</div><div>Th</div><div>Fr</div><div>Sa</div></div>
-            <div class="dp-days">`;
-        
-        let day = 1;
-        for (let i = 0; i < 42; i++) {
-            if (i < firstDay || day > daysInMonth) {
-                html += `<div class="dp-day empty"></div>`;
-            } else {
-                const isToday = day === new Date().getDate() && month === new Date().getMonth() && year === new Date().getFullYear();
-                const isSelected = input.value === `${String(day).padStart(2,'0')}-${String(month+1).padStart(2,'0')}-${year}`;
-                html += `<div class="dp-day ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-day="${day}">${day}</div>`;
-                day++;
+    const commonOpts = {
+        locale: localeEn,
+        dateFormat: 'dd-MM-yyyy',
+        autoClose: true,
+        classes: 'air-datepicker-dark',
+        onShow: (isFinished, dp) => {
+            if (isFinished) {
+                document.querySelector('.air-datepicker')?.style.setProperty('z-index', '1050', 'important');
             }
+        },
+        onSelect: ({datepicker, formattedDate}) => {
+            datepicker.$el.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        html += `</div>`;
-        pickerEl.innerHTML = html;
-        document.body.appendChild(pickerEl);
-        requestAnimationFrame(() => { positionPicker(); pickerEl.style.display = 'block'; });
-        isOpen = true;
+    };
+
+    // Initialize start-date picker
+    const startDateEl = document.getElementById('start-date');
+    if (startDateEl && typeof AirDatepicker !== 'undefined') {
+        if (datepickers.startDate) datepickers.startDate.destroy();
+        datepickers.startDate = new AirDatepicker(startDateEl, {
+            ...commonOpts,
+            minDate: new Date(2021, 0, 1),
+            maxDate: new Date(),
+            onShow: (isFinished, dp) => {
+                commonOpts.onShow?.(isFinished, dp);
+            }
+        });
     }
 
-    function closePicker() {
-        if (pickerEl) { pickerEl.remove(); pickerEl = null; }
-        isOpen = false;
+    const endDateEl = document.getElementById('end-date');
+    if (endDateEl && typeof AirDatepicker !== 'undefined') {
+        if (datepickers.endDate) datepickers.endDate.destroy();
+        datepickers.endDate = new AirDatepicker(endDateEl, {
+            ...commonOpts,
+            onShow: (isFinished, dp) => {
+                if (startDateEl?.value) {
+                    const min = parseDateDDMMYYYY(startDateEl.value);
+                    if (min) dp.update({ minDate: min });
+                }
+                commonOpts.onShow?.(isFinished, dp);
+            }
+        });
     }
+}
 
-    input.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); isOpen ? closePicker() : renderCalendar(); });
-    input.addEventListener('focus', (e) => e.preventDefault());
+function parseDateDDMMYYYY(str) {
+    if (!str || !/^\d{2}-\d{2}-\d{4}$/.test(str)) return null;
+    const [d, m, y] = str.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
 
-    document.addEventListener('mousedown', (e) => {
-        if (isOpen && pickerEl && !pickerEl.contains(e.target) && e.target !== input) closePicker();
-    });
-
-    document.addEventListener('click', (e) => {
-        if (!isOpen || !pickerEl || !pickerEl.contains(e.target)) return;
-        e.stopPropagation();
-        const target = e.target;
-        if (target.classList.contains('dp-close')) { closePicker(); return; }
-        if (target.classList.contains('dp-prev')) { currentDate.setMonth(currentDate.getMonth()-1); renderCalendar(); return; }
-        if (target.classList.contains('dp-next')) { currentDate.setMonth(currentDate.getMonth()+1); renderCalendar(); return; }
-        if (target.classList.contains('dp-month')) { currentDate.setMonth(parseInt(target.value)); renderCalendar(); return; }
-        if (target.classList.contains('dp-year')) { currentDate.setFullYear(parseInt(target.value)); renderCalendar(); return; }
-        if (target.classList.contains('dp-day') && !target.classList.contains('empty')) {
-            const d = parseInt(target.dataset.day);
-            input.value = `${String(d).padStart(2,'0')}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${currentDate.getFullYear()}`;
-            closePicker();
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-    });
-
-    window.addEventListener('scroll', positionPicker, { passive: true });
-    window.addEventListener('resize', positionPicker, { passive: true });
+function formatDateDDMMYYYY(date) {
+    if (!(date instanceof Date) || isNaN(date)) return '';
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const y = date.getFullYear();
+    return `${d}-${m}-${y}`;
 }
 
 // =============================================
@@ -132,7 +105,8 @@ function showNotification(message, type = 'success') {
     toast.textContent = message;
     container.appendChild(toast);
     setTimeout(() => {
-        toast.style.opacity = '0'; toast.style.transform = 'translateX(100%)';
+        toast.style.opacity = '0'; 
+        toast.style.transform = 'translateX(100%)';
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
@@ -141,14 +115,7 @@ function showConfirmModal(title, message) {
     return new Promise(resolve => {
         const dialog = document.createElement('dialog');
         dialog.className = 'modal';
-        dialog.innerHTML = `
-            <header class="modal-header"><h3>${title}</h3><button class="btn-close" aria-label="Close">×</button></header>
-            <p class="modal-body">${message}</p>
-            <footer class="modal-footer">
-                <button class="btn btn-secondary confirm-cancel">Cancel</button>
-                <button class="btn btn-danger confirm-action">Confirm</button>
-            </footer>
-        `;
+        dialog.innerHTML = `<header class="modal-header"><h3>${title}</h3><button class="btn-close" aria-label="Close">×</button></header><p class="modal-body">${message}</p><footer class="modal-footer"><button class="btn btn-secondary confirm-cancel">Cancel</button><button class="btn btn-danger confirm-action">Confirm</button></footer>`;
         document.body.appendChild(dialog);
         dialog.showModal();
 
@@ -171,21 +138,23 @@ function showCompletedMiners() {
         if (!list) return;
         list.innerHTML = '';
         const completed = miners.filter(m => m.status === 'completed');
-        if (!completed.length) { 
-            list.innerHTML = '<li style="color:var(--text-muted)">No completed miners.</li>'; 
-        } else { 
-            completed.forEach(m => { 
-                const li = document.createElement('li'); 
-                li.textContent = `${m.startDate} to ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)}`; 
-                list.appendChild(li); 
-            }); 
+        if (!completed.length) {
+            list.innerHTML = '<li style="color:var(--text-muted)">No completed miners.</li>';
+        } else {
+            completed.forEach(m => {
+                const li = document.createElement('li');
+                li.textContent = `${m.startDate} to ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)}`;
+                list.appendChild(li);
+            });
         }
         const modal = document.getElementById('completed-miners-modal');
         if (modal) modal.showModal();
     }).catch(() => showNotification('Failed to load miners', 'danger'));
 }
 
-function formatWithCommas(num) { return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function formatWithCommas(num) { 
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); 
+}
 
 // =============================================
 // TAB & CHART MANAGEMENT
@@ -197,19 +166,14 @@ function renderAllCharts() {
     requestAnimationFrame(() => Object.values(chartInstances).forEach(c => c?.resize()));
 }
 
-
-
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        // Switch tabs
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        
         btn.classList.add('active');
         const targetTab = document.getElementById(btn.dataset.tab);
         targetTab.classList.add('active');
 
-        // Render charts for the activated tab
         if (btn.dataset.tab === 'charts') {
             renderAllCharts();
         } else if (btn.dataset.tab === 'profile') {
@@ -220,9 +184,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
 });
 
-
 document.getElementById('show-completed-btn').addEventListener('click', showCompletedMiners);
-document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => { btn.addEventListener('click', () => { const d = btn.closest('dialog'); if(d) d.close(); }); });
+document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => { 
+    btn.addEventListener('click', () => { 
+        const d = btn.closest('dialog'); 
+        if(d) d.close(); 
+    }); 
+});
 
 // =============================================
 // PROFILE & LIVE DATA
@@ -248,7 +216,8 @@ function updateLiveDataUI(data) {
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-    updateCountdown(); updateProfileStats();
+    updateCountdown(); 
+    updateProfileStats();
 }
 
 function updateCountdown() {
@@ -262,14 +231,22 @@ function connectLiveWebSocket() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     wsConnection = new WebSocket(`${proto}//${location.host}/ws/live-data`);
     wsConnection.onopen = () => console.log('✅ WS Connected');
-    wsConnection.onmessage = e => { try { updateLiveDataUI(JSON.parse(e.data)); } catch(err) { console.error(err); }};
+    wsConnection.onmessage = e => { 
+        try { 
+            updateLiveDataUI(JSON.parse(e.data)); 
+        } catch(err) { 
+            console.error(err); 
+        }
+    };
     wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
 }
 
 function setupLiveDataInterval(freq) {
-    currentFrequency = freq; nextRefreshTime = Date.now() + freq * 60 * 1000;
+    currentFrequency = freq; 
+    nextRefreshTime = Date.now() + freq * 60 * 1000;
     if (countdownIntervalId) clearInterval(countdownIntervalId);
-    countdownIntervalId = setInterval(updateCountdown, 1000); updateCountdown();
+    countdownIntervalId = setInterval(updateCountdown, 1000); 
+    updateCountdown();
     if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) connectLiveWebSocket();
 }
 
@@ -278,21 +255,43 @@ function setupLiveDataInterval(freq) {
 // =============================================
 async function initialLoad() {
     try {
-        const [minersRes, cfgRes, hexRes] = await Promise.all([fetch('/api/miners'), fetch('/api/config'), fetch('/api/hexjson')]);
-        const miners = await minersRes.json(); const cfg = await cfgRes.json(); window.HEXJSON_CACHE = await hexRes.json();
-        if (!liveDataCache) fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
+        const [minersRes, cfgRes, hexRes] = await Promise.all([
+            fetch('/api/miners'), 
+            fetch('/api/config'), 
+            fetch('/api/hexjson')
+        ]);
+        const miners = await minersRes.json(); 
+        const cfg = await cfgRes.json(); 
+        window.HEXJSON_CACHE = await hexRes.json();
+        
+        if (!liveDataCache) {
+            fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
+        }
 
         let totalTS = 0, activeMiners = [], indices = [];
-        miners.forEach((m, i) => { if (m.status !== 'completed') { totalTS += m.tShares; activeMiners.push(m); indices.push(i); }});
-        userTotalTShares = totalTS; userLiquidHEX = cfg.liquidHEX || 0;
-        document.getElementById('total-tshares').textContent = totalTS.toFixed(2); updateProfileStats();
+        miners.forEach((m, i) => { 
+            if (m.status !== 'completed') { 
+                totalTS += m.tShares; 
+                activeMiners.push(m); 
+                indices.push(i); 
+            }
+        });
+        userTotalTShares = totalTS; 
+        userLiquidHEX = cfg.liquidHEX || 0;
+        document.getElementById('total-tshares').textContent = totalTS.toFixed(2); 
+        updateProfileStats();
 
-        const activeDiv = document.getElementById('active-miners'); activeDiv.innerHTML = '';
+        const activeDiv = document.getElementById('active-miners'); 
+        activeDiv.innerHTML = '';
         document.getElementById('profile-message').textContent = activeMiners.length ? '' : 'Empty profile. Please add HEX miners in Settings.';
+        
         activeMiners.forEach((m, i) => {
-            const [d, mo, y] = m.endDate.split('-'); const endUTC = Date.UTC(y, mo-1, d); const matured = endUTC <= Date.now();
+            const [d, mo, y] = m.endDate.split('-'); 
+            const endUTC = Date.UTC(y, mo-1, d); 
+            const matured = endUTC <= Date.now();
             const daysLeft = matured ? 0 : Math.ceil((endUTC - Date.now())/(1000*60*60*24));
-            const div = document.createElement('div'); div.className = 'list-item';
+            const div = document.createElement('div'); 
+            div.className = 'list-item';
             div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)} ${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
             activeDiv.appendChild(div);
         });
@@ -302,18 +301,32 @@ async function initialLoad() {
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
         historicalStartDay = cfg.historicalStartDay || 1260;
 
-        const existingDiv = document.getElementById('existing-miners'); existingDiv.innerHTML = '';
+        const existingDiv = document.getElementById('existing-miners'); 
+        existingDiv.innerHTML = '';
         miners.forEach((m, i) => {
-            const div = document.createElement('div'); div.className = 'list-item';
+            const div = document.createElement('div'); 
+            div.className = 'list-item';
             div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)}</span><button class="btn btn-sm btn-danger" onclick="deleteMiner(${i})">Delete</button>`;
             existingDiv.appendChild(div);
         });
+        
         setupLiveDataInterval(cfg.liveDataFrequency);
+        
         if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
             renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
         }
-        if (document.querySelector('.tab-btn.active').dataset.tab === 'charts') renderAllCharts();
-    } catch (err) { console.error('Initial load error:', err); showNotification('Failed to load data.', 'danger'); }
+        if (document.querySelector('.tab-btn.active').dataset.tab === 'charts') {
+            renderAllCharts();
+        }
+        
+        if (typeof AirDatepicker !== 'undefined') {
+            initAirDatepickers();
+        }
+        
+    } catch (err) { 
+        console.error('Initial load error:', err); 
+        showNotification('Failed to load data.', 'danger'); 
+    }
 }
 
 // =============================================
@@ -321,17 +334,21 @@ async function initialLoad() {
 // =============================================
 function renderChartsWithData(data) {
     if (!window.Chart || !Array.isArray(data) || data.length === 0) return;
-    
-    const sorted = [...data].sort((a,b) => a.currentDay - b.currentDay);
+
+    const sorted = [...data].sort((a, b) => a.currentDay - b.currentDay);
     const priceData = sorted.filter(e => e.currentDay >= 1260);
     const latest = sorted[sorted.length - 1] || {};
 
+    // Update chart metric labels
     const priceEl = document.getElementById('price-value');
     if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(4)}` : '$0.0000';
+
     const tshareEl = document.getElementById('tshare-rate-value');
     if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX)} HEX` : '0 HEX';
+
     const payoutEl = document.getElementById('payout-per-tshare-value');
     if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(3))} HEX` : '0.000 HEX';
+
     const dailyEl = document.getElementById('daily-payout-value');
     if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX)} HEX` : '0 HEX';
 
@@ -355,32 +372,76 @@ function renderChartsWithData(data) {
         } else { 
             chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
                 type: 'line', 
-                data: { labels, datasets: [{ label: c.label, data: values, borderColor: c.border, fill: false, pointRadius: 0, pointHoverRadius: 5, tension: 0.25 }] }, 
-                options: { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, scales: { x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }, y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } } } 
+                data: { 
+                    labels: labels,
+                    datasets: [{ 
+                        label: c.label, 
+                        data: values, 
+                        borderColor: c.border, 
+                        fill: false, 
+                        pointRadius: 0, 
+                        pointHoverRadius: 5, 
+                        tension: 0.25 
+                    }] 
+                }, 
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    interaction: { intersect: false, mode: 'index' }, 
+                    scales: { 
+                        x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }, 
+                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } 
+                    }, 
+                    plugins: { 
+                        legend: { display: false }, 
+                        tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } 
+                    } 
+                } 
             }); 
         }
     });
 }
+
 
 function renderPortfolioHistoryChartWithData(rawData) {
     if (!window.Chart || !Array.isArray(rawData) || rawData.length === 0) return;
     const sorted = [...rawData].sort((a,b) => a.currentDay - b.currentDay).filter(e => e.currentDay >= historicalStartDay);
     if (sorted.length === 0) return;
     
-    const portfolio = sorted.map(e => ({ day: e.currentDay, value: (userTotalTShares * (e.tshareRateHEX * e.pricePulseX)) + (userLiquidHEX * e.pricePulseX) }));
-    const start = portfolio[0].value, curr = portfolio[portfolio.length-1].value, ath = Math.max(...portfolio.map(d=>d.value));
-    const growth = curr - start, pct = start > 0 ? (growth/start)*100 : 0;
-
-    const startLbl = document.getElementById('hist-start-day-label'); if(startLbl) startLbl.textContent = historicalStartDay;
-    const startVal = document.getElementById('hist-start-value'); if(startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
-    const currVal = document.getElementById('hist-current-value'); if(currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
-    const athVal = document.getElementById('hist-ath'); if(athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
-    const gEl = document.getElementById('hist-growth'); 
-    if(gEl) { gEl.textContent = `${growth>=0?'+':''}$${formatWithCommas(growth.toFixed(2))}`; gEl.style.color = growth>=0 ? 'var(--success)' : 'var(--danger)'; }
-    const pEl = document.getElementById('hist-growth-pct'); 
-    if(pEl) { pEl.textContent = `${growth>=0?'+':''}${pct.toFixed(2)}%`; pEl.style.color = growth>=0 ? 'var(--success)' : 'var(--danger)'; }
+    const portfolio = sorted.map(e => ({ 
+        day: e.currentDay, 
+        value: (userTotalTShares * (e.tshareRateHEX * e.pricePulseX)) + (userLiquidHEX * e.pricePulseX) 
+    }));
     
-    const labels = portfolio.map(d=>d.day), values = portfolio.map(d=>d.value);
+    const start = portfolio[0].value, 
+          curr = portfolio[portfolio.length-1].value, 
+          ath = Math.max(...portfolio.map(d => d.value));
+    const growth = curr - start, 
+          pct = start > 0 ? (growth/start)*100 : 0;
+
+    const startLbl = document.getElementById('hist-start-day-label'); 
+    if(startLbl) startLbl.textContent = historicalStartDay;
+    const startVal = document.getElementById('hist-start-value'); 
+    if(startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
+    const currVal = document.getElementById('hist-current-value'); 
+    if(currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
+    const athVal = document.getElementById('hist-ath'); 
+    if(athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
+    
+    const gEl = document.getElementById('hist-growth'); 
+    if(gEl) { 
+        gEl.textContent = `${growth >=0?'+':''}$${formatWithCommas(growth.toFixed(2))}`; 
+        gEl.style.color = growth >=0 ? 'var(--success)' : 'var(--danger)'; 
+    }
+    const pEl = document.getElementById('hist-growth-pct'); 
+    if(pEl) { 
+        pEl.textContent = `${growth >=0?'+':''}${pct.toFixed(2)}%`; 
+        pEl.style.color = growth >=0 ? 'var(--success)' : 'var(--danger)'; 
+    }
+
+    const labels = portfolio.map(d => d.day), 
+          values = portfolio.map(d => d.value);
+    
     if (chartInstances.historicalValueChart) { 
         chartInstances.historicalValueChart.data.labels = labels; 
         chartInstances.historicalValueChart.data.datasets[0].data = values; 
@@ -388,8 +449,41 @@ function renderPortfolioHistoryChartWithData(rawData) {
     } else { 
         chartInstances.historicalValueChart = new Chart(document.getElementById('historicalValueChart').getContext('2d'), { 
             type: 'line', 
-            data: { labels, datasets: [{ label: 'Value', data: values, borderColor: '#00b7eb', backgroundColor: 'rgba(0,183,235,0.15)', borderWidth: 3, tension: 0.25, fill: true, pointRadius: 0, pointHoverRadius: 5 }] }, 
-            options: { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, scales: { x: { title: { display: true, text: 'Day', color: '#9ca3af' }, ticks: { color: '#9ca3af', maxTicksLimit: 15 }, grid: { color: '#374151' } }, y: { title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' }, ticks: { color: '#9ca3af', callback: v => '$' + formatWithCommas(Math.round(v)) }, grid: { color: '#374151' } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } } } 
+            data: { 
+                labels, 
+                datasets: [{ 
+                    label: 'Value', 
+                     values, 
+                    borderColor: '#00b7eb', 
+                    backgroundColor: 'rgba(0,183,235,0.15)', 
+                    borderWidth: 3, 
+                    tension: 0.25, 
+                    fill: true, 
+                    pointRadius: 0, 
+                    pointHoverRadius: 5 
+                }] 
+            }, 
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                interaction: { intersect: false, mode: 'index' }, 
+                scales: { 
+                    x: { 
+                        title: { display: true, text: 'Day', color: '#9ca3af' }, 
+                        ticks: { color: '#9ca3af', maxTicksLimit: 15 }, 
+                        grid: { color: '#374151' } 
+                    }, 
+                    y: { 
+                        title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' }, 
+                        ticks: { color: '#9ca3af', callback: v => '$' + formatWithCommas(Math.round(v)) }, 
+                        grid: { color: '#374151' } 
+                    } 
+                }, 
+                plugins: { 
+                    legend: { display: false }, 
+                    tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } 
+                } 
+            } 
         }); 
     }
 }
@@ -400,46 +494,135 @@ function renderPortfolioHistoryChartWithData(rawData) {
 async function endMiner(index) {
     if (await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?')) {
         try {
-            const res = await fetch('/api/end-miner', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index}) });
+            const res = await fetch('/api/end-miner', { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body: JSON.stringify({index}) 
+            });
             showNotification(res.ok ? 'Miner ended successfully' : 'Error ending miner', res.ok?'success':'danger');
             if(res.ok) initialLoad();
-        } catch(e) { showNotification('Network error', 'danger'); }
+        } catch(e) { 
+            showNotification('Network error', 'danger'); 
+        }
     }
 }
 
 document.getElementById('add-miner-btn').addEventListener('click', () => {
-    const sd = document.getElementById('start-date').value, ed = document.getElementById('end-date').value, ts = parseFloat(document.getElementById('tshares').value);
-    if (!sd || !ed || isNaN(ts) || ts <= 0) return showNotification('Fill all fields with valid data', 'danger');
-    if (!/^\d{2}-\d{2}-\d{4}$/.test(sd) || !/^\d{2}-\d{2}-\d{4}$/.test(ed)) return showNotification('Dates must be DD-MM-YYYY', 'danger');
-    const btn = document.getElementById('add-miner-btn'); btn.disabled = true;
-    fetch('/api/add-miner', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({startDate:sd, endDate:ed, tShares:ts}) })
-        .then(r => { if(r.ok) { showNotification('Miner added','success'); document.getElementById('start-date').value=''; document.getElementById('end-date').value=''; document.getElementById('tshares').value=''; initialLoad(); } else showNotification('Error adding miner','danger'); })
-        .catch(() => showNotification('Network error','danger')).finally(() => btn.disabled = false);
+    const sd = document.getElementById('start-date').value, 
+          ed = document.getElementById('end-date').value, 
+          ts = parseFloat(document.getElementById('tshares').value);
+    
+    if (!sd || !ed || isNaN(ts) || ts <= 0) {
+        return showNotification('Fill all fields with valid data', 'danger');
+    }
+    
+    if (!parseDateDDMMYYYY(sd) || !parseDateDDMMYYYY(ed)) {
+        return showNotification('Dates must be DD-MM-YYYY format', 'danger');
+    }
+    
+    const startDate = parseDateDDMMYYYY(sd);
+    const endDate = parseDateDDMMYYYY(ed);
+    if (endDate < startDate) {
+        return showNotification('End date must be after start date', 'danger');
+    }
+    
+    const btn = document.getElementById('add-miner-btn'); 
+    btn.disabled = true;
+    
+    fetch('/api/add-miner', { 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body: JSON.stringify({startDate:sd, endDate:ed, tShares:ts}) 
+    })
+    .then(r => { 
+        if(r.ok) { 
+            showNotification('Miner added','success'); 
+            document.getElementById('start-date').value=''; 
+            document.getElementById('end-date').value=''; 
+            document.getElementById('tshares').value=''; 
+            initialLoad(); 
+        } else {
+            showNotification('Error adding miner','danger');
+        }
+    })
+    .catch(() => showNotification('Network error','danger'))
+    .finally(() => btn.disabled = false);
 });
 
 async function deleteMiner(index) {
     if (await showConfirmModal('Delete Miner', 'Delete this HEX miner?')) {
-        try { const res = await fetch('/api/delete-miner', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index}) }); showNotification(res.ok?'Miner deleted':'Error deleting', res.ok?'success':'danger'); if(res.ok) initialLoad(); } catch(e) { showNotification('Network error','danger'); }
+        try { 
+            const res = await fetch('/api/delete-miner', { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body: JSON.stringify({index}) 
+            }); 
+            showNotification(res.ok?'Miner deleted':'Error deleting', res.ok?'success':'danger'); 
+            if(res.ok) initialLoad(); 
+        } catch(e) { 
+            showNotification('Network error','danger'); 
+        }
     }
 }
 
 function debouncedSaveConfig() {
-    if (saveInProgress) return; saveInProgress = true;
+    if (saveInProgress) return; 
+    saveInProgress = true;
+    
     const freq = parseInt(document.getElementById('frequency').value) || 15;
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
-    fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({liveDataFrequency:freq, liquidHEX:liquid, historicalStartDay:hist}) })
-        .then(r => { showNotification(r.ok?'Settings saved':'Error saving', r.ok?'success':'danger'); if(r.ok) initialLoad(); }).catch(()=>showNotification('Network error','danger')).finally(()=> saveInProgress = false);
+    
+    fetch('/api/config', { 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body: JSON.stringify({liveDataFrequency:freq, liquidHEX:liquid, historicalStartDay:hist}) 
+    })
+    .then(r => { 
+        showNotification(r.ok?'Settings saved':'Error saving', r.ok?'success':'danger'); 
+        if(r.ok) initialLoad(); 
+    })
+    .catch(()=>showNotification('Network error','danger'))
+    .finally(()=> saveInProgress = false);
 }
-function saveFrequency() { if (parseInt(document.getElementById('frequency').value) <= 0) return showNotification('Frequency must be > 0','danger'); debouncedSaveConfig(); }
-function saveLiquidHEX() { if (parseFloat(document.getElementById('liquid-hex').value) < 0) return showNotification('Liquid HEX must be >= 0','danger'); debouncedSaveConfig(); }
-function saveHistoricalStartDay() { if (parseInt(document.getElementById('hist-start-day').value) < 1) return showNotification('Start day must be > 0','danger'); debouncedSaveConfig(); }
+
+function saveFrequency() { 
+    if (parseInt(document.getElementById('frequency').value) <= 0) {
+        return showNotification('Frequency must be > 0','danger');
+    }
+    debouncedSaveConfig(); 
+}
+
+function saveLiquidHEX() { 
+    if (parseFloat(document.getElementById('liquid-hex').value) < 0) {
+        return showNotification('Liquid HEX must be >= 0','danger');
+    }
+    debouncedSaveConfig(); 
+}
+
+function saveHistoricalStartDay() { 
+    if (parseInt(document.getElementById('hist-start-day').value) < 1) {
+        return showNotification('Start day must be > 0','danger');
+    }
+    debouncedSaveConfig(); 
+}
 
 // =============================================
 // INIT
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
-    initSimpleDatepicker(document.getElementById('start-date'));
-    initSimpleDatepicker(document.getElementById('end-date'));
-    initialLoad(); setInterval(initialLoad, 10 * 60 * 1000);
+    if (typeof AirDatepicker !== 'undefined') {
+        initAirDatepickers();
+    } else {
+        const checkLoaded = setInterval(() => {
+            if (typeof AirDatepicker !== 'undefined') {
+                clearInterval(checkLoaded);
+                initAirDatepickers();
+            }
+        }, 100);
+        setTimeout(() => clearInterval(checkLoaded), 5000);
+    }
+    
+    initialLoad(); 
+    setInterval(initialLoad, 10 * 60 * 1000);
 });
