@@ -31,7 +31,7 @@ jobs:
         go-version: 'stable'
     
     - name: Tidy Modules
-      run: go mod tidy && go mod verify
+      run: go mod init hexfetch && go mod tidy && go mod verify
 
     - name: Download and Install UPX
       run: |
