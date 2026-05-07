@@ -181,9 +181,18 @@ function formatWithCommas(num) {
 // =============================================
 function renderAllCharts() {
     if (!window.Chart || !Array.isArray(window.HEXJSON_CACHE) || window.HEXJSON_CACHE.length === 0) return;
+    
     renderChartsWithData(window.HEXJSON_CACHE);
     renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
-    requestAnimationFrame(() => Object.values(chartInstances).forEach(c => c?.resize()));
+    
+    // Ensure all charts are properly sized
+    requestAnimationFrame(() => {
+        Object.values(chartInstances).forEach(c => {
+            if (c && typeof c.resize === 'function') {
+                c.resize();
+            }
+        });
+    });
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -333,7 +342,9 @@ async function initialLoad() {
         setupLiveDataInterval(cfg.liveDataFrequency);
         
         if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
-            renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
+            requestAnimationFrame(() => {
+                renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
+        });
         }
         if (document.querySelector('.tab-btn.active').dataset.tab === 'charts') {
             renderAllCharts();
@@ -424,7 +435,11 @@ function renderChartsWithData(data) {
 
 function renderPortfolioHistoryChartWithData(rawData) {
     if (!window.Chart || !Array.isArray(rawData) || rawData.length === 0) return;
-    const sorted = [...rawData].sort((a,b) => a.currentDay - b.currentDay).filter(e => e.currentDay >= historicalStartDay);
+    
+    const sorted = [...rawData]
+        .sort((a, b) => a.currentDay - b.currentDay)
+        .filter(e => e.currentDay >= historicalStartDay);
+    
     if (sorted.length === 0) return;
     
     const portfolio = sorted.map(e => ({ 
@@ -432,79 +447,101 @@ function renderPortfolioHistoryChartWithData(rawData) {
         value: (userTotalTShares * (e.tshareRateHEX * e.pricePulseX)) + (userLiquidHEX * e.pricePulseX) 
     }));
     
-    const start = portfolio[0].value, 
-          curr = portfolio[portfolio.length-1].value, 
-          ath = Math.max(...portfolio.map(d => d.value));
-    const growth = curr - start, 
-          pct = start > 0 ? (growth/start)*100 : 0;
-
-    const startLbl = document.getElementById('hist-start-day-label'); 
-    if(startLbl) startLbl.textContent = historicalStartDay;
-    const startVal = document.getElementById('hist-start-value'); 
-    if(startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
-    const currVal = document.getElementById('hist-current-value'); 
-    if(currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
-    const athVal = document.getElementById('hist-ath'); 
-    if(athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
+    const start = portfolio[0].value;
+    const curr = portfolio[portfolio.length - 1].value;
+    const ath = Math.max(...portfolio.map(d => d.value));
     
-    const gEl = document.getElementById('hist-growth'); 
-    if(gEl) { 
-        gEl.textContent = `${growth >=0?'+':''}$${formatWithCommas(growth.toFixed(2))}`; 
-        gEl.style.color = growth >=0 ? 'var(--success)' : 'var(--danger)'; 
+    const growth = curr - start;
+    const pct = start > 0 ? (growth / start) * 100 : 0;
+
+    // Update statistics
+    const startLbl = document.getElementById('hist-start-day-label');
+    if (startLbl) startLbl.textContent = historicalStartDay;
+    
+    const startVal = document.getElementById('hist-start-value');
+    if (startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
+    
+    const currVal = document.getElementById('hist-current-value');
+    if (currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
+    
+    const athVal = document.getElementById('hist-ath');
+    if (athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
+    
+    const gEl = document.getElementById('hist-growth');
+    if (gEl) {
+        gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}`;
+        gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)';
     }
-    const pEl = document.getElementById('hist-growth-pct'); 
-    if(pEl) { 
-        pEl.textContent = `${growth >=0?'+':''}${pct.toFixed(2)}%`; 
-        pEl.style.color = growth >=0 ? 'var(--success)' : 'var(--danger)'; 
+    
+    const pEl = document.getElementById('hist-growth-pct');
+    if (pEl) {
+        pEl.textContent = `${growth >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        pEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)';
     }
 
-    const labels = portfolio.map(d => d.day), 
-          values = portfolio.map(d => d.value);
-    
-    if (chartInstances.historicalValueChart) { 
-        chartInstances.historicalValueChart.data.labels = labels; 
-        chartInstances.historicalValueChart.data.datasets[0].data = values; 
-        chartInstances.historicalValueChart.update('none'); 
-    } else { 
-        chartInstances.historicalValueChart = new Chart(document.getElementById('historicalValueChart').getContext('2d'), { 
-            type: 'line', 
-            data: { 
-                labels, 
-                datasets: [{ 
-                    label: 'Value', 
-                     values, 
-                    borderColor: '#00b7eb', 
-                    backgroundColor: 'rgba(0,183,235,0.15)', 
-                    borderWidth: 3, 
-                    tension: 0.25, 
-                    fill: true, 
-                    pointRadius: 0, 
-                    pointHoverRadius: 5 
-                }] 
-            }, 
-            options: { 
-                responsive: true, 
-                maintainAspectRatio: false, 
-                interaction: { intersect: false, mode: 'index' }, 
-                scales: { 
-                    x: { 
-                        title: { display: true, text: 'Day', color: '#9ca3af' }, 
-                        ticks: { color: '#9ca3af', maxTicksLimit: 15 }, 
-                        grid: { color: '#374151' } 
-                    }, 
-                    y: { 
-                        title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' }, 
-                        ticks: { color: '#9ca3af', callback: v => '$' + formatWithCommas(Math.round(v)) }, 
-                        grid: { color: '#374151' } 
-                    } 
-                }, 
-                plugins: { 
-                    legend: { display: false }, 
-                    tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } 
-                } 
-            } 
-        }); 
+    const labels = portfolio.map(d => d.day);
+    const values = portfolio.map(d => d.value);
+
+    const canvas = document.getElementById('historicalValueChart');
+    if (!canvas) return;
+
+    if (chartInstances.historicalValueChart) {
+        chartInstances.historicalValueChart.data.labels = labels;
+        chartInstances.historicalValueChart.data.datasets[0].data = values;
+        chartInstances.historicalValueChart.update('none');
+    } else {
+        chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: values,
+                    borderColor: '#00b7eb',
+                    backgroundColor: 'rgba(0,183,235,0.15)',
+                    borderWidth: 3,
+                    tension: 0.25,
+                    fill: true,
+                    pointRadius: 0,
+                    pointHoverRadius: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Day', color: '#9ca3af' },
+                        ticks: { color: '#9ca3af', maxTicksLimit: 15 },
+                        grid: { color: '#374151' }
+                    },
+                    y: {
+                        title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' },
+                        ticks: { 
+                            color: '#9ca3af', 
+                            callback: v => '$' + formatWithCommas(Math.round(v)) 
+                        },
+                        grid: { color: '#374151' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { 
+                        backgroundColor: '#1a1d23', 
+                        titleColor: '#fff', 
+                        bodyColor: '#fff' 
+                    }
+                }
+            }
+        });
     }
+
+    requestAnimationFrame(() => {
+        if (chartInstances.historicalValueChart) {
+            chartInstances.historicalValueChart.resize();
+        }
+    });
 }
 
 // =============================================
@@ -535,12 +572,10 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
         return showNotification('Fill all fields with valid data', 'danger');
     }
     
-    // Validate date format using helper
     if (!parseDateDDMMYYYY(sd) || !parseDateDDMMYYYY(ed)) {
         return showNotification('Dates must be DD-MM-YYYY format', 'danger');
     }
     
-    // Validate logical date order
     const startDate = parseDateDDMMYYYY(sd);
     const endDate = parseDateDDMMYYYY(ed);
     if (endDate < startDate) {
