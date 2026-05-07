@@ -5,6 +5,7 @@ let chartInstances = {
     dailyPayoutChart: null,
     historicalValueChart: null
 };
+
 let userTotalTShares = 0;
 let userLiquidHEX = 0;
 let historicalStartDay = 1260;
@@ -14,6 +15,7 @@ let nextRefreshTime = Date.now();
 let currentFrequency = 15;
 let wsConnection = null;
 let saveInProgress = false;
+let liveRefreshTimer = null;
 window.HEXJSON_CACHE = [];
 let datepickers = {
     startDate: null,
@@ -25,11 +27,11 @@ let datepickers = {
 // =============================================
 function initAirDatepickers() {
     const localeEn = {
-        days: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
-        daysShort: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
-        daysMin: ['Su','Mo','Tu','We','Th','Fr','Sa'],
-        months: ['January','February','March','April','May','June','July','August','September','October','November','December'],
-        monthsShort: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+        days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+        daysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        daysMin: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'],
+        months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+        monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
         today: 'Today',
         clear: 'Clear',
         dateFormat: 'dd-MM-yyyy',
@@ -46,7 +48,7 @@ function initAirDatepickers() {
                 dp.$datepicker.style.setProperty('z-index', '1050', 'important');
             }
         },
-        onSelect: ({datepicker, formattedDate}) => {
+        onSelect: ({ datepicker, formattedDate }) => {
             datepicker.$el.dispatchEvent(new Event('change', { bubbles: true }));
         }
     };
@@ -55,13 +57,12 @@ function initAirDatepickers() {
     const startDateEl = document.getElementById('start-date');
     if (startDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.startDate) datepickers.startDate.destroy();
-        
         datepickers.startDate = new AirDatepicker(startDateEl, {
             ...commonOpts,
             minDate: new Date(2021, 0, 1),
             maxDate: new Date(),
-            onSelect: ({datepicker, date}) => {
-                commonOpts.onSelect?.({datepicker, formattedDate: datepicker.$el.value});
+            onSelect: ({ datepicker, date }) => {
+                commonOpts.onSelect?.({ datepicker, formattedDate: datepicker.$el.value });
                 if (datepickers.endDate && date instanceof Date && !isNaN(date)) {
                     datepickers.endDate.update({ minDate: date });
                 }
@@ -80,12 +81,10 @@ function initAirDatepickers() {
                 initialMinDate = parsed;
             }
         }
-        
         const endDateOpts = { ...commonOpts };
         if (initialMinDate) {
             endDateOpts.minDate = initialMinDate;
         }
-        
         datepickers.endDate = new AirDatepicker(endDateEl, endDateOpts);
     }
 }
@@ -94,7 +93,7 @@ function initAirDatepickers() {
 function parseDateDDMMYYYY(str) {
     if (!str || typeof str !== 'string') return undefined;
     const trimmed = str.trim();
-    if (!/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return undefined;
+    if (!/^d{2}-d{2}-d{4}$/.test(trimmed)) return undefined;
     const [d, m, y] = trimmed.split('-').map(Number);
     // Validate date components
     if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return undefined;
@@ -125,7 +124,7 @@ function showNotification(message, type = 'success') {
     toast.textContent = message;
     container.appendChild(toast);
     setTimeout(() => {
-        toast.style.opacity = '0'; 
+        toast.style.opacity = '0';
         toast.style.transform = 'translateX(100%)';
         setTimeout(() => toast.remove(), 300);
     }, 3000);
@@ -138,13 +137,11 @@ function showConfirmModal(title, message) {
         dialog.innerHTML = `<header class="modal-header"><h3>${title}</h3><button class="btn-close" aria-label="Close">×</button></header><p class="modal-body">${message}</p><footer class="modal-footer"><button class="btn btn-secondary confirm-cancel">Cancel</button><button class="btn btn-danger confirm-action">Confirm</button></footer>`;
         document.body.appendChild(dialog);
         dialog.showModal();
-
         const cleanup = result => {
             dialog.close();
             dialog.remove();
             resolve(result);
         };
-
         dialog.querySelector('.btn-close').onclick = () => cleanup(false);
         dialog.querySelector('.confirm-cancel').onclick = () => cleanup(false);
         dialog.querySelector('.confirm-action').onclick = () => cleanup(true);
@@ -172,8 +169,8 @@ function showCompletedMiners() {
     }).catch(() => showNotification('Failed to load miners', 'danger'));
 }
 
-function formatWithCommas(num) { 
-    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); 
+function formatWithCommas(num) {
+    return num.toString().replace(/B(?=(d{3})+(?!d))/g, ",");
 }
 
 // =============================================
@@ -181,10 +178,8 @@ function formatWithCommas(num) {
 // =============================================
 function renderAllCharts() {
     if (!window.Chart || !Array.isArray(window.HEXJSON_CACHE) || window.HEXJSON_CACHE.length === 0) return;
-    
     renderChartsWithData(window.HEXJSON_CACHE);
     renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
-    
     // Ensure all charts are properly sized
     requestAnimationFrame(() => {
         Object.values(chartInstances).forEach(c => {
@@ -202,7 +197,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.add('active');
         const targetTab = document.getElementById(btn.dataset.tab);
         targetTab.classList.add('active');
-
         if (btn.dataset.tab === 'charts') {
             renderAllCharts();
         } else if (btn.dataset.tab === 'profile') {
@@ -214,11 +208,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 document.getElementById('show-completed-btn').addEventListener('click', showCompletedMiners);
-document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => { 
-    btn.addEventListener('click', () => { 
-        const d = btn.closest('dialog'); 
-        if(d) d.close(); 
-    }); 
+document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const d = btn.closest('dialog');
+        if (d) d.close();
+    });
 });
 
 // =============================================
@@ -244,15 +238,19 @@ function updateLiveDataUI(data) {
     document.getElementById('beat').textContent = data.beat;
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
+    
+    // Update timer display
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-    updateCountdown(); 
+    updateCountdown();
+    
+    // Update profile immediately
     updateProfileStats();
 }
 
 function updateCountdown() {
     const ms = Math.max(0, nextRefreshTime - Date.now());
     const s = Math.floor(ms / 1000);
-    document.getElementById('countdown').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+    document.getElementById('countdown').textContent = `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
 function connectLiveWebSocket() {
@@ -260,23 +258,49 @@ function connectLiveWebSocket() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     wsConnection = new WebSocket(`${proto}//${location.host}/ws/live-data`);
     wsConnection.onopen = () => console.log('✅ WS Connected');
-    wsConnection.onmessage = e => { 
-        try { 
-            updateLiveDataUI(JSON.parse(e.data)); 
-        } catch(err) { 
-            console.error(err); 
+    wsConnection.onmessage = e => {
+        try {
+            updateLiveDataUI(JSON.parse(e.data));
+        } catch (err) {
+            console.error(err);
         }
     };
     wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
 }
 
+// =============================================
+// OPTIMER
+// =============================================
 function setupLiveDataInterval(freq) {
-    currentFrequency = freq; 
-    nextRefreshTime = Date.now() + freq * 60 * 1000;
+    // Default to 15 if freq is missing/invalid
+    if (!freq || freq < 1) freq = 15;
+    currentFrequency = freq;
+
+    // 1. Setup Countdown (Visual)
     if (countdownIntervalId) clearInterval(countdownIntervalId);
-    countdownIntervalId = setInterval(updateCountdown, 1000); 
+    countdownIntervalId = setInterval(updateCountdown, 1000);
+    nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
-    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) connectLiveWebSocket();
+
+    // 2. Setup Auto-Refresher (Network)
+    if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+    
+    liveRefreshTimer = setInterval(async () => {
+        // Optimization: Only fetch if WS is disconnected. 
+        // Otherwise rely on Live WebSocket for updates.
+        if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+            console.warn("⚠️ WebSocket inactive. Running manual fetch...");
+            try {
+                await fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
+                // Also sync config/miners state silently to keep local vars accurate
+                const cfg = await fetch('/api/config').then(r => r.json());
+                userLiquidHEX = cfg.liquidHEX || 0;
+                historicalStartDay = cfg.historicalStartDay || 1260;
+            } catch (e) {
+                console.error("Auto-refresh failed:", e);
+            }
+        }
+    }, currentFrequency * 60 * 1000);
 }
 
 // =============================================
@@ -285,43 +309,47 @@ function setupLiveDataInterval(freq) {
 async function initialLoad() {
     try {
         const [minersRes, cfgRes, hexRes] = await Promise.all([
-            fetch('/api/miners'), 
-            fetch('/api/config'), 
+            fetch('/api/miners'),
+            fetch('/api/config'),
             fetch('/api/hexjson')
         ]);
-        const miners = await minersRes.json(); 
-        const cfg = await cfgRes.json(); 
+
+        const miners = await minersRes.json();
+        const cfg = await cfgRes.json();
         window.HEXJSON_CACHE = await hexRes.json();
-        
+
         if (!liveDataCache) {
             fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
         }
 
         let totalTS = 0, activeMiners = [], indices = [];
-        miners.forEach((m, i) => { 
-            if (m.status !== 'completed') { 
-                totalTS += m.tShares; 
-                activeMiners.push(m); 
-                indices.push(i); 
+        miners.forEach((m, i) => {
+            if (m.status !== 'completed') {
+                totalTS += m.tShares;
+                activeMiners.push(m);
+                indices.push(i);
             }
         });
-        userTotalTShares = totalTS; 
-        userLiquidHEX = cfg.liquidHEX || 0;
-        document.getElementById('total-tshares').textContent = totalTS.toFixed(2); 
+
+        userTotalTShares = totalTS;
+        userLiquidHEX = cfg.liquidHEX || 0; // Ensure liquidHEX is loaded into memory
+        
+        document.getElementById('total-tshares').textContent = totalTS.toFixed(2);
         updateProfileStats();
 
-        const activeDiv = document.getElementById('active-miners'); 
+        const activeDiv = document.getElementById('active-miners');
         activeDiv.innerHTML = '';
         document.getElementById('profile-message').textContent = activeMiners.length ? '' : 'Empty profile. Please add HEX miners in Settings.';
         
         activeMiners.forEach((m, i) => {
-            const [d, mo, y] = m.endDate.split('-'); 
-            const endUTC = Date.UTC(y, mo-1, d); 
+            const [d, mo, y] = m.endDate.split('-');
+            const endUTC = Date.UTC(y, mo - 1, d);
             const matured = endUTC <= Date.now();
-            const daysLeft = matured ? 0 : Math.ceil((endUTC - Date.now())/(1000*60*60*24));
-            const div = document.createElement('div'); 
+            const daysLeft = matured ? 0 : Math.ceil((endUTC - Date.now()) / (1000 * 60 * 60 * 24));
+            
+            const div = document.createElement('div');
             div.className = 'list-item';
-            div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)} ${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
+            div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)}${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
             activeDiv.appendChild(div);
         });
 
@@ -330,33 +358,34 @@ async function initialLoad() {
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
         historicalStartDay = cfg.historicalStartDay || 1260;
 
-        const existingDiv = document.getElementById('existing-miners'); 
+        const existingDiv = document.getElementById('existing-miners');
         existingDiv.innerHTML = '';
         miners.forEach((m, i) => {
-            const div = document.createElement('div'); 
+            const div = document.createElement('div');
             div.className = 'list-item';
             div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)}</span><button class="btn btn-sm btn-danger" onclick="deleteMiner(${i})">Delete</button>`;
             existingDiv.appendChild(div);
         });
-        
+
+        // Apply the frequency setting to the timer logic
         setupLiveDataInterval(cfg.liveDataFrequency);
-        
+
         if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
             requestAnimationFrame(() => {
                 renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
-        });
+            });
         }
-        if (document.querySelector('.tab-btn.active').dataset.tab === 'charts') {
+
+        if (document.querySelector('.tab-btn.active')?.dataset.tab === 'charts') {
             renderAllCharts();
         }
-        
+
         if (typeof AirDatepicker !== 'undefined') {
             initAirDatepickers();
         }
-        
-    } catch (err) { 
-        console.error('Initial load error:', err); 
-        showNotification('Failed to load data.', 'danger'); 
+    } catch (err) {
+        console.error('Initial load error:', err);
+        showNotification('Failed to load data.', 'danger');
     }
 }
 
@@ -365,7 +394,6 @@ async function initialLoad() {
 // =============================================
 function renderChartsWithData(data) {
     if (!window.Chart || !Array.isArray(data) || data.length === 0) return;
-
     const sorted = [...data].sort((a, b) => a.currentDay - b.currentDay);
     const priceData = sorted.filter(e => e.currentDay >= 1260);
     const latest = sorted[sorted.length - 1] || {};
@@ -391,88 +419,84 @@ function renderChartsWithData(data) {
 
     configs.forEach(c => {
         if (!Array.isArray(c.data)) return;
-
         const labels = c.data.map(e => e.currentDay);
         const values = c.data.map(e => e[c.field]);
-        
-        if (chartInstances[c.id]) { 
-            chartInstances[c.id].data.labels = labels; 
-            chartInstances[c.id].data.datasets[0].data = values; 
-            chartInstances[c.id].update('none'); 
-        } else { 
-            chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
-                type: 'line', 
-                data: { 
-                    labels: labels, // Explicit assignment fixes the syntax error
-                    datasets: [{ 
-                        label: c.label, 
-                        data: values, 
-                        borderColor: c.border, 
-                        fill: false, 
-                        pointRadius: 0, 
-                        pointHoverRadius: 5, 
-                        tension: 0.25 
-                    }] 
-                }, 
-                options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
-                    interaction: { intersect: false, mode: 'index' }, 
-                    scales: { 
-                        x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }, 
-                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } 
-                    }, 
-                    plugins: { 
-                        legend: { display: false }, 
-                        tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } 
-                    } 
-                } 
-            }); 
+
+        if (chartInstances[c.id]) {
+            chartInstances[c.id].data.labels = labels;
+            chartInstances[c.id].data.datasets[0].data = values;
+            chartInstances[c.id].update('none');
+        } else {
+            chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: c.label,
+                        data: values,
+                        borderColor: c.border,
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 5,
+                        tension: 0.25
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' }
+                    }
+                }
+            });
         }
     });
 }
 
-
 function renderPortfolioHistoryChartWithData(rawData) {
     if (!window.Chart || !Array.isArray(rawData) || rawData.length === 0) return;
-    
     const sorted = [...rawData]
         .sort((a, b) => a.currentDay - b.currentDay)
         .filter(e => e.currentDay >= historicalStartDay);
-    
+
     if (sorted.length === 0) return;
-    
-    const portfolio = sorted.map(e => ({ 
-        day: e.currentDay, 
-        value: (userTotalTShares * (e.tshareRateHEX * e.pricePulseX)) + (userLiquidHEX * e.pricePulseX) 
+
+    const portfolio = sorted.map(e => ({
+        day: e.currentDay,
+        value: (userTotalTShares * (e.tshareRateHEX * e.pricePulseX)) + (userLiquidHEX * e.pricePulseX)
     }));
-    
+
     const start = portfolio[0].value;
     const curr = portfolio[portfolio.length - 1].value;
     const ath = Math.max(...portfolio.map(d => d.value));
-    
     const growth = curr - start;
     const pct = start > 0 ? (growth / start) * 100 : 0;
 
     // Update statistics
     const startLbl = document.getElementById('hist-start-day-label');
     if (startLbl) startLbl.textContent = historicalStartDay;
-    
+
     const startVal = document.getElementById('hist-start-value');
     if (startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
-    
+
     const currVal = document.getElementById('hist-current-value');
     if (currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
-    
+
     const athVal = document.getElementById('hist-ath');
     if (athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
-    
+
     const gEl = document.getElementById('hist-growth');
     if (gEl) {
         gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}`;
         gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)';
     }
-    
+
     const pEl = document.getElementById('hist-growth-pct');
     if (pEl) {
         pEl.textContent = `${growth >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
@@ -481,7 +505,6 @@ function renderPortfolioHistoryChartWithData(rawData) {
 
     const labels = portfolio.map(d => d.day);
     const values = portfolio.map(d => d.value);
-
     const canvas = document.getElementById('historicalValueChart');
     if (!canvas) return;
 
@@ -518,19 +541,19 @@ function renderPortfolioHistoryChartWithData(rawData) {
                     },
                     y: {
                         title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' },
-                        ticks: { 
-                            color: '#9ca3af', 
-                            callback: v => '$' + formatWithCommas(Math.round(v)) 
+                        ticks: {
+                            color: '#9ca3af',
+                            callback: v => '$' + formatWithCommas(Math.round(v))
                         },
                         grid: { color: '#374151' }
                     }
                 },
                 plugins: {
                     legend: { display: false },
-                    tooltip: { 
-                        backgroundColor: '#1a1d23', 
-                        titleColor: '#fff', 
-                        bodyColor: '#fff' 
+                    tooltip: {
+                        backgroundColor: '#1a1d23',
+                        titleColor: '#fff',
+                        bodyColor: '#fff'
                     }
                 }
             }
@@ -550,117 +573,118 @@ function renderPortfolioHistoryChartWithData(rawData) {
 async function endMiner(index) {
     if (await showConfirmModal('End Miner', 'Have you ended the mining contract and minted HEX?')) {
         try {
-            const res = await fetch('/api/end-miner', { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body: JSON.stringify({index}) 
+            const res = await fetch('/api/end-miner', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
             });
-            showNotification(res.ok ? 'Miner ended successfully' : 'Error ending miner', res.ok?'success':'danger');
-            if(res.ok) initialLoad();
-        } catch(e) { 
-            showNotification('Network error', 'danger'); 
+            showNotification(res.ok ? 'Miner ended successfully' : 'Error ending miner', res.ok ? 'success' : 'danger');
+            if (res.ok) initialLoad();
+        } catch (e) {
+            showNotification('Network error', 'danger');
         }
     }
 }
 
 document.getElementById('add-miner-btn').addEventListener('click', () => {
-    const sd = document.getElementById('start-date').value, 
-          ed = document.getElementById('end-date').value, 
-          ts = parseFloat(document.getElementById('tshares').value);
-    
+    const sd = document.getElementById('start-date').value,
+        ed = document.getElementById('end-date').value,
+        ts = parseFloat(document.getElementById('tshares').value);
+
     if (!sd || !ed || isNaN(ts) || ts <= 0) {
         return showNotification('Fill all fields with valid data', 'danger');
     }
-    
+
     if (!parseDateDDMMYYYY(sd) || !parseDateDDMMYYYY(ed)) {
         return showNotification('Dates must be DD-MM-YYYY format', 'danger');
     }
-    
+
     const startDate = parseDateDDMMYYYY(sd);
     const endDate = parseDateDDMMYYYY(ed);
+
     if (endDate < startDate) {
         return showNotification('End date must be after start date', 'danger');
     }
-    
-    const btn = document.getElementById('add-miner-btn'); 
+
+    const btn = document.getElementById('add-miner-btn');
     btn.disabled = true;
-    
-    fetch('/api/add-miner', { 
-        method:'POST', 
-        headers:{'Content-Type':'application/json'}, 
-        body: JSON.stringify({startDate:sd, endDate:ed, tShares:ts}) 
+
+    fetch('/api/add-miner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate: sd, endDate: ed, tShares: ts })
     })
-    .then(r => { 
-        if(r.ok) { 
-            showNotification('Miner added','success'); 
-            document.getElementById('start-date').value=''; 
-            document.getElementById('end-date').value=''; 
-            document.getElementById('tshares').value=''; 
-            initialLoad(); 
+    .then(r => {
+        if (r.ok) {
+            showNotification('Miner added', 'success');
+            document.getElementById('start-date').value = '';
+            document.getElementById('end-date').value = '';
+            document.getElementById('tshares').value = '';
+            initialLoad();
         } else {
-            showNotification('Error adding miner','danger');
+            showNotification('Error adding miner', 'danger');
         }
     })
-    .catch(() => showNotification('Network error','danger'))
+    .catch(() => showNotification('Network error', 'danger'))
     .finally(() => btn.disabled = false);
 });
 
 async function deleteMiner(index) {
     if (await showConfirmModal('Delete Miner', 'Delete this HEX miner?')) {
-        try { 
-            const res = await fetch('/api/delete-miner', { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body: JSON.stringify({index}) 
-            }); 
-            showNotification(res.ok?'Miner deleted':'Error deleting', res.ok?'success':'danger'); 
-            if(res.ok) initialLoad(); 
-        } catch(e) { 
-            showNotification('Network error','danger'); 
+        try {
+            const res = await fetch('/api/delete-miner', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
+            });
+            showNotification(res.ok ? 'Miner deleted' : 'Error deleting', res.ok ? 'success' : 'danger');
+            if (res.ok) initialLoad();
+        } catch (e) {
+            showNotification('Network error', 'danger');
         }
     }
 }
 
 function debouncedSaveConfig() {
-    if (saveInProgress) return; 
+    if (saveInProgress) return;
     saveInProgress = true;
-    
+
     const freq = parseInt(document.getElementById('frequency').value) || 15;
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
-    
-    fetch('/api/config', { 
-        method:'POST', 
-        headers:{'Content-Type':'application/json'}, 
-        body: JSON.stringify({liveDataFrequency:freq, liquidHEX:liquid, historicalStartDay:hist}) 
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ liveDataFrequency: freq, liquidHEX: liquid, historicalStartDay: hist })
     })
-    .then(r => { 
-        showNotification(r.ok?'Settings saved':'Error saving', r.ok?'success':'danger'); 
-        if(r.ok) initialLoad(); 
+    .then(r => {
+        showNotification(r.ok ? 'Settings saved' : 'Error saving', r.ok ? 'success' : 'danger');
+        if (r.ok) initialLoad(); // Reload everything to get fresh state including timer restart
     })
-    .catch(()=>showNotification('Network error','danger'))
-    .finally(()=> saveInProgress = false);
+    .catch(() => showNotification('Network error', 'danger'))
+    .finally(() => saveInProgress = false);
 }
 
-function saveFrequency() { 
+function saveFrequency() {
     if (parseInt(document.getElementById('frequency').value) <= 0) {
-        return showNotification('Frequency must be > 0','danger');
+        return showNotification('Frequency must be > 0', 'danger');
     }
-    debouncedSaveConfig(); 
+    debouncedSaveConfig();
 }
 
-function saveLiquidHEX() { 
+function saveLiquidHEX() {
     if (parseFloat(document.getElementById('liquid-hex').value) < 0) {
-        return showNotification('Liquid HEX must be >= 0','danger');
+        return showNotification('Liquid HEX must be >= 0', 'danger');
     }
-    debouncedSaveConfig(); 
+    debouncedSaveConfig();
 }
 
-function saveHistoricalStartDay() { 
+function saveHistoricalStartDay() {
     if (parseInt(document.getElementById('hist-start-day').value) < 1) {
-        return showNotification('Start day must be > 0','danger');
+        return showNotification('Start day must be > 0', 'danger');
     }
-    debouncedSaveConfig(); 
+    debouncedSaveConfig();
 }
 
 // =============================================
@@ -678,7 +702,5 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 100);
         setTimeout(() => clearInterval(checkLoaded), 5000);
     }
-    
-    initialLoad(); 
-    setInterval(initialLoad, 10 * 60 * 1000);
-});
+
+    initialLoad();
