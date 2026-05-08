@@ -336,7 +336,7 @@ async function initialLoad() {
             const daysLeft = matured ? 0 : Math.ceil((endUTC - Date.now())/(1000*60*60*24));
             const div = document.createElement('div'); 
             div.className = 'list-item';
-            div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)} ${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
+            div.innerHTML = `<span>${m.startDate} - ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)} ${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
             activeDiv.appendChild(div);
         });
 
