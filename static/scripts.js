@@ -52,11 +52,9 @@ function initAirDatepickers() {
         }
     };
 
-    // Initialize start-date picker
     const startDateEl = document.getElementById('start-date');
     if (startDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.startDate) datepickers.startDate.destroy();
-        
         datepickers.startDate = new AirDatepicker(startDateEl, {
             ...commonOpts,
             minDate: new Date(2021, 0, 1),
@@ -70,7 +68,6 @@ function initAirDatepickers() {
         });
     }
 
-    // Initialize end-date picker
     const endDateEl = document.getElementById('end-date');
     if (endDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.endDate) datepickers.endDate.destroy();
@@ -91,23 +88,19 @@ function initAirDatepickers() {
     }
 }
 
-// Helper: Parse DD-MM-YYYY to Date object
 function parseDateDDMMYYYY(str) {
     if (!str || typeof str !== 'string') return undefined;
     const trimmed = str.trim();
     if (!/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return undefined;
     const [d, m, y] = trimmed.split('-').map(Number);
-    // Validate date components
     if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return undefined;
     const date = new Date(y, m - 1, d);
-    // Verify the date is valid (catches invalid dates like 31-02-2024)
     if (isNaN(date.getTime()) || date.getDate() !== d || date.getMonth() !== m - 1) {
         return undefined;
     }
     return date;
 }
 
-// Helper: Format Date to DD-MM-YYYY string
 function formatDateDDMMYYYY(date) {
     if (!(date instanceof Date) || isNaN(date)) return '';
     const d = String(date.getDate()).padStart(2, '0');
@@ -121,6 +114,7 @@ function formatDateDDMMYYYY(date) {
 // =============================================
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
+    if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
@@ -164,7 +158,7 @@ function showCompletedMiners() {
         } else {
             completed.forEach(m => {
                 const li = document.createElement('li');
-                li.textContent = `${m.startDate} to ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)}`;
+                li.textContent = `${m.startDate} - ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)}`;
                 list.appendChild(li);
             });
         }
@@ -181,12 +175,11 @@ function formatWithCommas(num) {
 // TAB & CHART MANAGEMENT
 // =============================================
 function renderAllCharts() {
-    if (!window.Chart || !Array.isArray(window.HEXJSON_CACHE) || window.HEXJSON_CACHE.length === 0) return;
+    if (!window.Chart || !window.HEXJSON_CACHE || window.HEXJSON_CACHE.length === 0) return;
     
     renderChartsWithData(window.HEXJSON_CACHE);
     renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
     
-    // Ensure all charts are properly sized
     requestAnimationFrame(() => {
         Object.values(chartInstances).forEach(c => {
             if (c && typeof c.resize === 'function') {
@@ -271,7 +264,6 @@ function connectLiveWebSocket() {
     wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
 }
 
-
 function setupLiveDataInterval(freq) {
     currentFrequency = freq || 15; 
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
@@ -306,7 +298,12 @@ async function initialLoad() {
         ]);
         const miners = await minersRes.json(); 
         const cfg = await cfgRes.json(); 
-        window.HEXJSON_CACHE = await hexRes.json();
+        const hexRaw = await hexRes.json();
+        window.HEXJSON_CACHE = Array.isArray(hexRaw) ? hexRaw : [];
+        
+        if (window.HEXJSON_CACHE.length === 0 && hexRes.ok) {
+            console.warn("⚠️ HEXJSON returned no data yet.");
+        }
         
         if (!liveDataCache) {
             fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
@@ -350,18 +347,18 @@ async function initialLoad() {
         miners.forEach((m, i) => {
             const div = document.createElement('div'); 
             div.className = 'list-item';
-            div.innerHTML = `<span>${m.startDate} to ${m.endDate}, T-Shares: ${m.tShares.toFixed(2)}</span><button class="btn btn-sm btn-danger" onclick="deleteMiner(${i})">Delete</button>`;
+            div.innerHTML = `<span>${m.startDate} - ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)}</span><button class="btn btn-sm btn-danger" onclick="deleteMiner(${i})">Delete</button>`;
             existingDiv.appendChild(div);
         });
         
         setupLiveDataInterval(cfg.liveDataFrequency);
         
-        if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
+        if (window.HEXJSON_CACHE.length > 0) {
             requestAnimationFrame(() => {
                 renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
-        });
+            });
         }
-        if (document.querySelector('.tab-btn.active').dataset.tab === 'charts') {
+        if (document.querySelector('.tab-btn.active')) {
             renderAllCharts();
         }
         
@@ -399,9 +396,9 @@ function renderChartsWithData(data) {
 
     const configs = [
         { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
-        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99',  sorted },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff',  sorted },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61',  sorted }
     ];
 
     configs.forEach(c => {
@@ -417,11 +414,11 @@ function renderChartsWithData(data) {
         } else { 
             chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
                 type: 'line', 
-                data: { 
+                 { 
                     labels: labels, 
                     datasets: [{ 
                         label: c.label, 
-                        data: values, 
+                         values, 
                         borderColor: c.border, 
                         fill: false, 
                         pointRadius: 0, 
@@ -469,7 +466,6 @@ function renderPortfolioHistoryChartWithData(rawData) {
     const growth = curr - start;
     const pct = start > 0 ? (growth / start) * 100 : 0;
 
-    // Update statistics
     const startLbl = document.getElementById('hist-start-day-label');
     if (startLbl) startLbl.textContent = historicalStartDay;
     
@@ -507,11 +503,11 @@ function renderPortfolioHistoryChartWithData(rawData) {
     } else {
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
             type: 'line',
-            data: {
+             {
                 labels: labels,
                 datasets: [{
                     label: 'Portfolio Value',
-                    data: values,
+                     values,
                     borderColor: '#00b7eb',
                     backgroundColor: 'rgba(0,183,235,0.15)',
                     borderWidth: 3,
