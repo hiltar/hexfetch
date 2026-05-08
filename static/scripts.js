@@ -302,7 +302,7 @@ async function initialLoad() {
         window.HEXJSON_CACHE = Array.isArray(hexRaw) ? hexRaw : [];
         
         if (window.HEXJSON_CACHE.length === 0 && hexRes.ok) {
-            console.warn("⚠️ HEXJSON returned no data yet.");
+            console.warn("⚠️ No hexjson data yet.");
         }
         
         if (!liveDataCache) {
@@ -396,9 +396,9 @@ function renderChartsWithData(data) {
 
     const configs = [
         { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
-        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99',  sorted },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff',  sorted },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61',  sorted }
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
     ];
 
     configs.forEach(c => {
@@ -414,11 +414,11 @@ function renderChartsWithData(data) {
         } else { 
             chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
                 type: 'line', 
-                 { 
+                data: {
                     labels: labels, 
                     datasets: [{ 
                         label: c.label, 
-                         values, 
+                        data: values,
                         borderColor: c.border, 
                         fill: false, 
                         pointRadius: 0, 
@@ -503,11 +503,11 @@ function renderPortfolioHistoryChartWithData(rawData) {
     } else {
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
             type: 'line',
-             {
+            data: {
                 labels: labels,
                 datasets: [{
                     label: 'Portfolio Value',
-                     values,
+                    data: values,
                     borderColor: '#00b7eb',
                     backgroundColor: 'rgba(0,183,235,0.15)',
                     borderWidth: 3,
