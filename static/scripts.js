@@ -93,12 +93,10 @@ function initAirDatepickers() {
 function parseDateDDMMYYYY(str) {
     if (!str || typeof str !== 'string') return undefined;
     const trimmed = str.trim();
-    if (!/^d{2}-d{2}-d{4}$/.test(trimmed)) return undefined;
+    if (!/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return undefined;
     const [d, m, y] = trimmed.split('-').map(Number);
-    // Validate date components
     if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return undefined;
     const date = new Date(y, m - 1, d);
-    // Verify the date is valid (catches invalid dates like 31-02-2024)
     if (isNaN(date.getTime()) || date.getDate() !== d || date.getMonth() !== m - 1) {
         return undefined;
     }
@@ -119,6 +117,7 @@ function formatDateDDMMYYYY(date) {
 // =============================================
 function showNotification(message, type = 'success') {
     const container = document.getElementById('notification-container');
+    if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
@@ -136,7 +135,6 @@ function showConfirmModal(title, message) {
         dialog.className = 'modal';
         dialog.innerHTML = `<header class="modal-header"><h3>${title}</h3><button class="btn-close" aria-label="Close">×</button></header><p class="modal-body">${message}</p><footer class="modal-footer"><button class="btn btn-secondary confirm-cancel">Cancel</button><button class="btn btn-danger confirm-action">Confirm</button></footer>`;
         document.body.appendChild(dialog);
-        dialog.showModal();
         const cleanup = result => {
             dialog.close();
             dialog.remove();
@@ -170,7 +168,7 @@ function showCompletedMiners() {
 }
 
 function formatWithCommas(num) {
-    return num.toString().replace(/B(?=(d{3})+(?!d))/g, ",");
+    return num.toString().replace(/B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 // =============================================
@@ -180,7 +178,7 @@ function renderAllCharts() {
     if (!window.Chart || !Array.isArray(window.HEXJSON_CACHE) || window.HEXJSON_CACHE.length === 0) return;
     renderChartsWithData(window.HEXJSON_CACHE);
     renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
-    // Ensure all charts are properly sized
+    
     requestAnimationFrame(() => {
         Object.values(chartInstances).forEach(c => {
             if (c && typeof c.resize === 'function') {
@@ -221,11 +219,20 @@ document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => {
 function updateProfileStats() {
     if (!liveDataCache) return;
     const d = liveDataCache;
-    document.getElementById('total-value').textContent = `$${formatWithCommas((userTotalTShares * d.tsharePrice_Pulsechain).toFixed(2))}`;
-    document.getElementById('liquid-hex-value').textContent = `$${formatWithCommas((userLiquidHEX * d.price_Pulsechain).toFixed(2))}`;
+    const totalVal = userTotalTShares * d.tsharePrice_Pulsechain;
+    const liquidVal = userLiquidHEX * d.price_Pulsechain;
     const iHex = userTotalTShares * d.payoutPerTshare_Pulsechain;
-    document.getElementById('interest-hex').textContent = `${formatWithCommas(iHex.toFixed(2))} HEX`;
-    document.getElementById('interest-usd').textContent = `$${formatWithCommas((iHex * d.price_Pulsechain).toFixed(2))}`;
+    const iUSD = iHex * d.price_Pulsechain;
+
+    const elTotal = document.getElementById('total-value');
+    const elLiquid = document.getElementById('liquid-hex-value');
+    const elInterestHex = document.getElementById('interest-hex');
+    const elInterestUsd = document.getElementById('interest-usd');
+
+    if(elTotal) elTotal.textContent = `$${formatWithCommas(totalVal.toFixed(2))}`;
+    if(elLiquid) elLiquid.textContent = `$${formatWithCommas(liquidVal.toFixed(2))}`;
+    if(elInterestHex) elInterestHex.textContent = `${formatWithCommas(iHex.toFixed(2))} HEX`;
+    if(elInterestUsd) elInterestUsd.textContent = `$${formatWithCommas(iUSD.toFixed(2))}`;
 }
 
 function updateLiveDataUI(data) {
@@ -238,6 +245,7 @@ function updateLiveDataUI(data) {
     document.getElementById('beat').textContent = data.beat;
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
+    
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
     updateProfileStats();
@@ -265,11 +273,12 @@ function connectLiveWebSocket() {
 }
 
 // =============================================
-// TIMER SETUP
+// TIMER
 // =============================================
 function setupLiveDataInterval(freq) {
     if (!freq || freq < 1) freq = 15;
     currentFrequency = freq;
+
     if (countdownIntervalId) clearInterval(countdownIntervalId);
     countdownIntervalId = setInterval(updateCountdown, 1000);
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
@@ -278,8 +287,6 @@ function setupLiveDataInterval(freq) {
     if (liveRefreshTimer) clearInterval(liveRefreshTimer);
     
     liveRefreshTimer = setInterval(async () => {
-        // Optimization: Only fetch if WS is disconnected. 
-        // Otherwise rely on Live WebSocket for updates.
         if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
             console.warn("⚠️ WebSocket inactive. Running manual fetch...");
             try {
@@ -290,8 +297,6 @@ function setupLiveDataInterval(freq) {
             } catch (e) {
                 console.error("Auto-refresh failed:", e);
             }
-        } else {
-            // console.log("🔄 WS Active. Skipping redundant fetch.");
         }
     }, currentFrequency * 60 * 1000);
 }
@@ -325,7 +330,7 @@ async function initialLoad() {
         });
 
         userTotalTShares = totalTS;
-        userLiquidHEX = cfg.liquidHEX || 0; // Ensure liquidHEX is loaded into memory
+        userLiquidHEX = cfg.liquidHEX || 0;
         
         document.getElementById('total-tshares').textContent = totalTS.toFixed(2);
         updateProfileStats();
@@ -360,7 +365,6 @@ async function initialLoad() {
             existingDiv.appendChild(div);
         });
 
-        // Apply the frequency setting to the timer logic
         setupLiveDataInterval(cfg.liveDataFrequency);
 
         if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) {
@@ -404,10 +408,10 @@ function renderChartsWithData(data) {
     if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX)} HEX` : '0 HEX';
 
     const configs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb',  priceData },
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
         { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff',  sorted },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61',  sorted }
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
     ];
 
     configs.forEach(c => {
@@ -426,7 +430,7 @@ function renderChartsWithData(data) {
                     labels: labels,
                     datasets: [{
                         label: c.label,
-                         values,
+                        data: values,
                         borderColor: c.border,
                         fill: false,
                         pointRadius: 0,
@@ -471,7 +475,6 @@ function renderPortfolioHistoryChartWithData(rawData) {
     const growth = curr - start;
     const pct = start > 0 ? (growth / start) * 100 : 0;
 
-    // Update statistics
     const startLbl = document.getElementById('hist-start-day-label');
     if (startLbl) startLbl.textContent = historicalStartDay;
 
@@ -508,11 +511,11 @@ function renderPortfolioHistoryChartWithData(rawData) {
     } else {
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
             type: 'line',
-             {
+            data: {
                 labels: labels,
                 datasets: [{
                     label: 'Portfolio Value',
-                     values,
+                    data: values,
                     borderColor: '#00b7eb',
                     backgroundColor: 'rgba(0,183,235,0.15)',
                     borderWidth: 3,
