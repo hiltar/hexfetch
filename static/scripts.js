@@ -238,12 +238,8 @@ function updateLiveDataUI(data) {
     document.getElementById('beat').textContent = data.beat;
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
-    
-    // Update timer display
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
-    
-    // Update profile immediately
     updateProfileStats();
 }
 
@@ -269,20 +265,16 @@ function connectLiveWebSocket() {
 }
 
 // =============================================
-// OPTIMER
+// TIMER SETUP
 // =============================================
 function setupLiveDataInterval(freq) {
-    // Default to 15 if freq is missing/invalid
     if (!freq || freq < 1) freq = 15;
     currentFrequency = freq;
-
-    // 1. Setup Countdown (Visual)
     if (countdownIntervalId) clearInterval(countdownIntervalId);
     countdownIntervalId = setInterval(updateCountdown, 1000);
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
 
-    // 2. Setup Auto-Refresher (Network)
     if (liveRefreshTimer) clearInterval(liveRefreshTimer);
     
     liveRefreshTimer = setInterval(async () => {
@@ -292,13 +284,14 @@ function setupLiveDataInterval(freq) {
             console.warn("⚠️ WebSocket inactive. Running manual fetch...");
             try {
                 await fetch('/api/live-data').then(r => r.json()).then(updateLiveDataUI);
-                // Also sync config/miners state silently to keep local vars accurate
                 const cfg = await fetch('/api/config').then(r => r.json());
                 userLiquidHEX = cfg.liquidHEX || 0;
                 historicalStartDay = cfg.historicalStartDay || 1260;
             } catch (e) {
                 console.error("Auto-refresh failed:", e);
             }
+        } else {
+            // console.log("🔄 WS Active. Skipping redundant fetch.");
         }
     }, currentFrequency * 60 * 1000);
 }
@@ -411,10 +404,10 @@ function renderChartsWithData(data) {
     if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX)} HEX` : '0 HEX';
 
     const configs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb',  priceData },
         { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff',  sorted },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61',  sorted }
     ];
 
     configs.forEach(c => {
@@ -433,7 +426,7 @@ function renderChartsWithData(data) {
                     labels: labels,
                     datasets: [{
                         label: c.label,
-                        data: values,
+                         values,
                         borderColor: c.border,
                         fill: false,
                         pointRadius: 0,
@@ -515,11 +508,11 @@ function renderPortfolioHistoryChartWithData(rawData) {
     } else {
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
             type: 'line',
-            data: {
+             {
                 labels: labels,
                 datasets: [{
                     label: 'Portfolio Value',
-                    data: values,
+                     values,
                     borderColor: '#00b7eb',
                     backgroundColor: 'rgba(0,183,235,0.15)',
                     borderWidth: 3,
@@ -660,7 +653,7 @@ function debouncedSaveConfig() {
     })
     .then(r => {
         showNotification(r.ok ? 'Settings saved' : 'Error saving', r.ok ? 'success' : 'danger');
-        if (r.ok) initialLoad(); // Reload everything to get fresh state including timer restart
+        if (r.ok) initialLoad();
     })
     .catch(() => showNotification('Network error', 'danger'))
     .finally(() => saveInProgress = false);
@@ -704,3 +697,4 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     initialLoad();
+});
