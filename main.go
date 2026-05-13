@@ -29,7 +29,6 @@ var staticFiles embed.FS
 const (
 	dataDir = "/opt/hexfetch"
 	dateLayout = "02-01-2006"
-	// 15 seconds for "Live" feel on Pi Zero
 	defaultLiveDataFrequency = 15 
 )
 
@@ -547,7 +546,7 @@ func startLiveDataFetcher() {
 					broadcastLiveData(data)
 				}
 				freq = configManager.GetLiveDataFrequency()
-				timer.Reset(time.Duration(freq) * time.Second)
+				timer.Reset(time.Duration(freq) * time.Minute)
 			case <-configCh:
 				newFreq := configManager.GetLiveDataFrequency()
 				if newFreq != freq {
@@ -558,7 +557,7 @@ func startLiveDataFetcher() {
 						default:
 						}
 					}
-					timer.Reset(time.Duration(freq) * time.Second)
+					timer.Reset(time.Duration(freq) * time.Minute)
 				}
 			}
 		}
