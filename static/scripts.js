@@ -14,6 +14,7 @@ let nextRefreshTime = Date.now();
 let currentFrequency = 15;
 let saveInProgress = false;
 let pollingTimer = null;
+let scheduledNextFetch = null;
 
 window.HEXJSON_CACHE = [];
 let datepickers = {
@@ -237,6 +238,8 @@ async function fetchLiveDataAndRender() {
         }
     } catch (e) {
         console.error("Polling failed", e);
+    } finally {
+        scheduledNextFetch = setTimeout(fetchLiveDataAndRender, currentFrequency * 60 * 1000);
     }
 }
 
@@ -264,14 +267,12 @@ function updateCountdown() {
 
 function setupLiveDataInterval(freq) {
     currentFrequency = freq || 15; 
-    
-    if (pollingTimer) clearInterval(pollingTimer);
-    
-    // Fetch immediately
+    nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
+    updateCountdown();
+    if (countdownIntervalId) clearInterval(countdownIntervalId);
+    countdownIntervalId = setInterval(updateCountdown, 1000);
+    if (scheduledNextFetch) clearTimeout(scheduledNextFetch);
     fetchLiveDataAndRender();
-    
-    // Start interval
-    pollingTimer = setInterval(fetchLiveDataAndRender, currentFrequency * 60 * 1000);
 }
 
 // =============================================
@@ -402,11 +403,11 @@ function renderChartsWithData(data) {
         } else { 
             chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
                 type: 'line', 
-                data: {
+                 {
                     labels: labels, 
                     datasets: [{ 
                         label: c.label, 
-                        data: values,
+                         values,
                         borderColor: c.border, 
                         fill: false, 
                         pointRadius: 0, 
