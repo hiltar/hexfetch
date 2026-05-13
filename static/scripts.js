@@ -12,9 +12,9 @@ let liveDataCache = null;
 let countdownIntervalId = null;
 let nextRefreshTime = Date.now();
 let currentFrequency = 15;
-let wsConnection = null;
 let saveInProgress = false;
-let liveRefreshTimer = null;
+let pollingTimer = null;
+
 window.HEXJSON_CACHE = [];
 let datepickers = {
     startDate: null,
@@ -228,6 +228,18 @@ function updateProfileStats() {
     document.getElementById('interest-usd').textContent = `$${formatWithCommas((iHex * d.price_Pulsechain).toFixed(2))}`;
 }
 
+async function fetchLiveDataAndRender() {
+    try {
+        const res = await fetch('/api/live-data');
+        if (res.ok) {
+            const data = await res.json();
+            updateLiveDataUI(data);
+        }
+    } catch (e) {
+        console.error("Polling failed", e);
+    }
+}
+
 function updateLiveDataUI(data) {
     liveDataCache = data;
     document.getElementById('price').textContent = `$${data.price_Pulsechain.toFixed(5)}`;
@@ -238,6 +250,7 @@ function updateLiveDataUI(data) {
     document.getElementById('beat').textContent = data.beat;
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
+    
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown(); 
     updateProfileStats();
@@ -249,41 +262,16 @@ function updateCountdown() {
     document.getElementById('countdown').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
 }
 
-function connectLiveWebSocket() {
-    if (wsConnection) wsConnection.close();
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    wsConnection = new WebSocket(`${proto}//${location.host}/ws/live-data`);
-    wsConnection.onopen = () => console.log('✅ WS Connected');
-    wsConnection.onmessage = e => { 
-        try { 
-            updateLiveDataUI(JSON.parse(e.data)); 
-        } catch(err) { 
-            console.error(err); 
-        }
-    };
-    wsConnection.onclose = () => setTimeout(connectLiveWebSocket, 5000);
-}
-
 function setupLiveDataInterval(freq) {
     currentFrequency = freq || 15; 
-    nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     
-    if (countdownIntervalId) clearInterval(countdownIntervalId);
-    countdownIntervalId = setInterval(updateCountdown, 1000); 
-    updateCountdown();
-
-    if (liveRefreshTimer) clearInterval(liveRefreshTimer);
-    liveRefreshTimer = setInterval(async () => {
-        if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-            console.warn("⚠️ WS inactive, running manual fetch...");
-            try {
-                const res = await fetch('/api/live-data');
-                if(res.ok) updateLiveDataUI(await res.json());
-            } catch(e) { console.error("Auto-refresh failed", e); }
-        }
-    }, currentFrequency * 60 * 1000);
-
-    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) connectLiveWebSocket();
+    if (pollingTimer) clearInterval(pollingTimer);
+    
+    // Fetch immediately
+    fetchLiveDataAndRender();
+    
+    // Start interval
+    pollingTimer = setInterval(fetchLiveDataAndRender, currentFrequency * 60 * 1000);
 }
 
 // =============================================
