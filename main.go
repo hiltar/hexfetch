@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"embed"
 	"fmt"
@@ -14,9 +13,7 @@ import (
 	"sort"
 	"sync"
 	"time"
-
 	"github.com/cenkalti/backoff/v4"
-	"github.com/gorilla/websocket"
 )
 
 //go:embed static
@@ -48,22 +45,6 @@ var (
 		},
 	}
 
-	// WebSocket broadcaster
-	wsClients = make(map[*websocket.Conn]bool)
-	wsClientsMu sync.Mutex
-	wsUpgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-		// Prevent compression overhead on Pi Zero
-		EnableCompression: false, 
-	}
-
-	// Live data fetcher state
-	fetcherCtx context.Context
-	fetcherCancel context.CancelFunc
-	fetcherDone chan struct{} // closed when goroutine exits
-	fetcherMu sync.Mutex
-	fetcherActive bool
-
 	// Config notification
 	configSubsMu sync.Mutex
 	configSubs []chan struct{}
@@ -94,7 +75,7 @@ type LiveData struct {
 	PenaltiesHEXPulsechain float64 `json:"penaltiesHEX_Pulsechain"`
 	PayoutPerTsharePulsechain float64 `json:"payoutPerTshare_Pulsechain"`
 	Beat int64 `json:"beat"`
-	Timestamp int64 `json:"timestamp"` // Added for client liveness verification
+	Timestamp int64 `json:"timestamp"`
 }
 
 type Miner struct {
@@ -278,7 +259,6 @@ func fetchLiveData() (LiveData, error) {
 		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 			return err
 		}
-		// Add server timestamp to prove liveness to client
 		data.Timestamp = time.Now().Unix()
 		return nil
 	}, b)
@@ -476,160 +456,6 @@ func loadMinersFromDisk() ([]Miner, error) {
 }
 
 // =============================================
-// WEB SOCKET MANAGEMENT
-// =============================================
-
-func broadcastLiveData(data LiveData) {
-	wsClientsMu.Lock()
-	conns := make([]*websocket.Conn, 0, len(wsClients))
-	for conn := range wsClients {
-		conns = append(conns, conn)
-	}
-	wsClientsMu.Unlock()
-
-	for _, conn := range conns {
-		// Set write deadline to prevent blocking on slow clients
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteJSON(data); err != nil {
-			conn.Close()
-			wsClientsMu.Lock()
-			delete(wsClients, conn)
-			wsClientsMu.Unlock()
-		}
-	}
-}
-
-func startLiveDataFetcher() {
-	fetcherMu.Lock()
-	defer fetcherMu.Unlock()
-
-	if fetcherActive {
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	fetcherCtx = ctx
-	fetcherCancel = cancel
-	fetcherActive = true
-	fetcherDone = make(chan struct{})
-
-	configCh := configManager.Subscribe()
-
-	go func() {
-		defer func() {
-			fetcherMu.Lock()
-			fetcherActive = false
-			if fetcherDone != nil {
-				close(fetcherDone)
-				fetcherDone = nil
-			}
-			fetcherMu.Unlock()
-			configManager.Unsubscribe(configCh)
-		}()
-
-		freq := configManager.GetLiveDataFrequency()
-		timer := time.NewTimer(0) 
-		defer timer.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				data, err := fetchLiveData()
-				if err != nil {
-					debugLog("fetchLiveData error:", err)
-				} else {
-					liveDataMutex.Lock()
-					latestLiveData = data
-					liveDataMutex.Unlock()
-					broadcastLiveData(data)
-				}
-				freq = configManager.GetLiveDataFrequency()
-				timer.Reset(time.Duration(freq) * time.Minute)
-			case <-configCh:
-				newFreq := configManager.GetLiveDataFrequency()
-				if newFreq != freq {
-					freq = newFreq
-					if !timer.Stop() {
-						select {
-						case <-timer.C:
-						default:
-						}
-					}
-					timer.Reset(time.Duration(freq) * time.Minute)
-				}
-			}
-		}
-	}()
-}
-
-func stopLiveDataFetcher() {
-	fetcherMu.Lock()
-	defer fetcherMu.Unlock()
-	if fetcherActive {
-		fetcherCancel()
-		<-fetcherDone // wait for goroutine to finish
-		fetcherActive = false
-	}
-}
-
-func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("WebSocket upgrade error:", err)
-		return
-	}
-
-	// Set read deadline to detect dead connections
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-
-	wsClientsMu.Lock()
-	wasEmpty := len(wsClients) == 0
-	wsClients[conn] = true
-	wsClientsMu.Unlock()
-
-	if wasEmpty {
-		startLiveDataFetcher()
-	}
-
-	// send current live data immediately
-	liveDataMutex.RLock()
-	currentData := latestLiveData
-	liveDataMutex.RUnlock()
-	
-	// Only send if data exists (non-zero beat), otherwise wait for first broadcast
-	if currentData.Beat != 0 {
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteJSON(currentData); err != nil {
-			conn.Close()
-			wsClientsMu.Lock()
-			delete(wsClients, conn)
-			wsClientsMu.Unlock()
-			return
-		}
-	}
-
-	for {
-		// Reset read deadline on every message to keep connection alive
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			wsClientsMu.Lock()
-			delete(wsClients, conn)
-			nowEmpty := len(wsClients) == 0
-			wsClientsMu.Unlock()
-
-			if nowEmpty {
-				stopLiveDataFetcher()
-			}
-			conn.Close()
-			return
-		}
-	}
-}
-
-// =============================================
 // API HANDLERS
 // =============================================
 
@@ -803,6 +629,7 @@ func main() {
 		debugLog("Initial HEXJSON load failed:", err)
 	}
 	startDailyHEXJSONUpdate()
+
 	if data, err := fetchLiveData(); err == nil {
 		liveDataMutex.Lock()
 		latestLiveData = data
@@ -826,7 +653,6 @@ func main() {
 	http.HandleFunc("/api/end-miner", handleEndMiner)
 	http.HandleFunc("/api/delete-miner", handleDeleteMiner)
 	http.HandleFunc("/api/config", handleConfig)
-	http.HandleFunc("/ws/live-data", handleLiveWebSocket)
 
 	log.Println("⬢ HEX Stats server starting on :5555 ⬢")
 	log.Fatal(http.ListenAndServe(":5555", nil))
