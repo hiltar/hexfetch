@@ -29,7 +29,8 @@ var staticFiles embed.FS
 const (
 	dataDir = "/opt/hexfetch"
 	dateLayout = "02-01-2006"
-	defaultLiveDataFrequency = 15
+	// 15 seconds for "Live" feel on Pi Zero
+	defaultLiveDataFrequency = 15 
 )
 
 // Global cached data
@@ -51,7 +52,11 @@ var (
 	// WebSocket broadcaster
 	wsClients = make(map[*websocket.Conn]bool)
 	wsClientsMu sync.Mutex
-	wsUpgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsUpgrader = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+		// Prevent compression overhead on Pi Zero
+		EnableCompression: false, 
+	}
 
 	// Live data fetcher state
 	fetcherCtx context.Context
@@ -90,6 +95,7 @@ type LiveData struct {
 	PenaltiesHEXPulsechain float64 `json:"penaltiesHEX_Pulsechain"`
 	PayoutPerTsharePulsechain float64 `json:"payoutPerTshare_Pulsechain"`
 	Beat int64 `json:"beat"`
+	Timestamp int64 `json:"timestamp"` // Added for client liveness verification
 }
 
 type Miner struct {
@@ -270,7 +276,12 @@ func fetchLiveData() (LiveData, error) {
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("status %d", resp.StatusCode)
 		}
-		return json.NewDecoder(resp.Body).Decode(&data)
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			return err
+		}
+		// Add server timestamp to prove liveness to client
+		data.Timestamp = time.Now().Unix()
+		return nil
 	}, b)
 	return data, err
 }
@@ -367,18 +378,20 @@ func initializeMiners() {
 	debugLog("Loaded miners into RAM cache.")
 }
 
+
 func persistMiners(miners []Miner) error {
-	current, _ := loadMinersFromDisk() // Helper strictly for disk check
+	current, _ := loadMinersFromDisk()
 	if reflect.DeepEqual(current, miners) {
 		return nil
 	}
 	
 	path := filepath.Join(dataDir, "miners.json")
 	dir := filepath.Dir(path)
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
 	
-	tempPath := path + ".tmp"
-	file, err := os.Create(tempPath)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -387,21 +400,10 @@ func persistMiners(miners []Miner) error {
 	enc.SetIndent("", " ")
 	if err := enc.Encode(miners); err != nil {
 		file.Close()
-		os.Remove(tempPath)
 		return err
 	}
 	
-	if err := file.Close(); err != nil {
-		os.Remove(tempPath)
-		return err
-	}
-	
-	// Atomic replace
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-	
-	return nil
+	return file.Close()
 }
 
 
@@ -446,10 +448,11 @@ func saveConfig(cfg Config) error {
 	
 	path := filepath.Join(dataDir, "config.json")
 	dir := filepath.Dir(path)
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
 
-	tempPath := path + ".tmp"
-	file, err := os.Create(tempPath)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -486,6 +489,8 @@ func broadcastLiveData(data LiveData) {
 	wsClientsMu.Unlock()
 
 	for _, conn := range conns {
+		// Set write deadline to prevent blocking on slow clients
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if err := conn.WriteJSON(data); err != nil {
 			conn.Close()
 			wsClientsMu.Lock()
@@ -524,7 +529,7 @@ func startLiveDataFetcher() {
 		}()
 
 		freq := configManager.GetLiveDataFrequency()
-		timer := time.NewTimer(0)
+		timer := time.NewTimer(0) 
 		defer timer.Stop()
 
 		for {
@@ -542,7 +547,7 @@ func startLiveDataFetcher() {
 					broadcastLiveData(data)
 				}
 				freq = configManager.GetLiveDataFrequency()
-				timer.Reset(time.Duration(freq) * time.Minute)
+				timer.Reset(time.Duration(freq) * time.Second)
 			case <-configCh:
 				newFreq := configManager.GetLiveDataFrequency()
 				if newFreq != freq {
@@ -553,7 +558,7 @@ func startLiveDataFetcher() {
 						default:
 						}
 					}
-					timer.Reset(time.Duration(freq) * time.Minute)
+					timer.Reset(time.Duration(freq) * time.Second)
 				}
 			}
 		}
@@ -577,6 +582,9 @@ func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set read deadline to detect dead connections
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
 	wsClientsMu.Lock()
 	wasEmpty := len(wsClients) == 0
 	wsClients[conn] = true
@@ -590,15 +598,22 @@ func handleLiveWebSocket(w http.ResponseWriter, r *http.Request) {
 	liveDataMutex.RLock()
 	currentData := latestLiveData
 	liveDataMutex.RUnlock()
-	if err := conn.WriteJSON(currentData); err != nil {
-		conn.Close()
-		wsClientsMu.Lock()
-		delete(wsClients, conn)
-		wsClientsMu.Unlock()
-		return
+	
+	// Only send if data exists (non-zero beat), otherwise wait for first broadcast
+	if currentData.Beat != 0 {
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.WriteJSON(currentData); err != nil {
+			conn.Close()
+			wsClientsMu.Lock()
+			delete(wsClients, conn)
+			wsClientsMu.Unlock()
+			return
+		}
 	}
 
 	for {
+		// Reset read deadline on every message to keep connection alive
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		_, _, err := conn.ReadMessage()
 		if err != nil {
 			wsClientsMu.Lock()
@@ -789,6 +804,13 @@ func main() {
 		debugLog("Initial HEXJSON load failed:", err)
 	}
 	startDailyHEXJSONUpdate()
+	if data, err := fetchLiveData(); err == nil {
+		liveDataMutex.Lock()
+		latestLiveData = data
+		liveDataMutex.Unlock()
+	} else {
+		debugLog("Initial live data fetch failed:", err)
+	}
 
 	cfg, _ := loadConfig()
 	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
