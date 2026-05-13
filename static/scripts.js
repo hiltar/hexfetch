@@ -403,11 +403,11 @@ function renderChartsWithData(data) {
         } else { 
             chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
                 type: 'line', 
-                 {
+                data: {
                     labels: labels, 
                     datasets: [{ 
                         label: c.label, 
-                         values,
+                        data: values,
                         borderColor: c.border, 
                         fill: false, 
                         pointRadius: 0, 
