@@ -256,7 +256,6 @@ func fetchLiveData() (LiveData, error) {
         defer resp.Body.Close()
 
         if resp.StatusCode != http.StatusOK {
-            debugLog("LiveData bad status:", resp.StatusCode, string(body))
             return fmt.Errorf("status %d", resp.StatusCode)
         }
 
