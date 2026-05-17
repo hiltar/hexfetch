@@ -243,26 +243,34 @@ func fetchHEXJSON() (HEXJSON, error) {
 }
 
 func fetchLiveData() (LiveData, error) {
-	var data LiveData
-	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = 5 * time.Minute
+    var data LiveData
+    b := backoff.NewExponentialBackOff()
+    b.MaxElapsedTime = 5 * time.Minute
 
-	err := backoff.Retry(func() error {
-		resp, err := httpClient.Get("https://hexdailystats.com/livedata")
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("status %d", resp.StatusCode)
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-			return err
-		}
-		data.Timestamp = time.Now().Unix()
-		return nil
-	}, b)
-	return data, err
+    err := backoff.Retry(func() error {
+        resp, err := httpClient.Get("https://hexdailystats.com/livedata")
+        if err != nil {
+            debugLog("LiveData GET error:", err)
+            return err
+        }
+        defer resp.Body.Close()
+
+        if resp.StatusCode != http.StatusOK {
+            debugLog("LiveData bad status:", resp.StatusCode, string(body))
+            return fmt.Errorf("status %d", resp.StatusCode)
+        }
+
+        if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+            debugLog("LiveData JSON decode error:", err)
+            return err
+        }
+
+        data.Timestamp = time.Now().Unix()
+        debugLog("LiveData fetched successfully, beat:", data.Beat)
+        return nil
+    }, b)
+
+    return data, err
 }
 
 // =============================================
