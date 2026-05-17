@@ -75,7 +75,6 @@ type LiveData struct {
 	PenaltiesHEXPulsechain float64 `json:"penaltiesHEX_Pulsechain"`
 	PayoutPerTsharePulsechain float64 `json:"payoutPerTshare_Pulsechain"`
 	Beat int64 `json:"beat"`
-	Timestamp int64 `json:"timestamp"`
 }
 
 type Miner struct {
@@ -264,7 +263,6 @@ func fetchLiveData() (LiveData, error) {
             return err
         }
 
-        data.Timestamp = time.Now().Unix()
         debugLog("LiveData fetched successfully, beat:", data.Beat)
         return nil
     }, b)
