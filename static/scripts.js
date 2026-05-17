@@ -232,12 +232,26 @@ function updateProfileStats() {
 async function fetchLiveDataAndRender() {
     try {
         const res = await fetch('/api/live-data');
-        if (res.ok) {
-            const data = await res.json();
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (!data || !data.price_Pulsechain) {
+            console.warn("Live data missing key fields", data);
+        } else {
             updateLiveDataUI(data);
         }
     } catch (e) {
-        console.error("Polling failed", e);
+        console.error("Live data fetch failed", e);
+        try {
+            const publicRes = await fetch('https://hexdailystats.com/livedata');
+            if (publicRes.ok) {
+                const publicData = await publicRes.json();
+                updateLiveDataUI(publicData);
+            }
+        } catch(fbErr) {
+            console.error("Public fallback also failed", fbErr);
+        }
     } finally {
         scheduledNextFetch = setTimeout(fetchLiveDataAndRender, currentFrequency * 60 * 1000);
     }
