@@ -272,6 +272,59 @@ func fetchLiveData() (LiveData, error) {
     return data, err
 }
 
+// startLiveDataBackgroundUpdater starts a background goroutine that fetches live data
+// at the frequency defined in ConfigManager. It automatically restarts when frequency changes.
+func startLiveDataBackgroundUpdater() {
+    var ticker *time.Ticker
+    var stopChan = make(chan struct{})
+
+    // Subscribe to config changes
+    configSub := configManager.Subscribe()
+
+    go func() {
+        defer configManager.Unsubscribe(configSub)
+
+        // Initial fetch
+        if data, err := fetchLiveData(); err == nil {
+            liveDataMutex.Lock()
+            latestLiveData = data
+            liveDataMutex.Unlock()
+            debugLog("Initial live data fetched successfully")
+        } else {
+            debugLog("Initial live data fetch failed:", err)
+        }
+
+        for {
+            frequency := configManager.GetLiveDataFrequency()
+            if ticker != nil {
+                ticker.Stop()
+            }
+            ticker = time.NewTicker(time.Duration(frequency) * time.Minute)
+
+            select {
+            case <-ticker.C:
+                // Time to fetch
+                if data, err := fetchLiveData(); err == nil {
+                    liveDataMutex.Lock()
+                    latestLiveData = data
+                    liveDataMutex.Unlock()
+                } else {
+                    debugLog("Background live data fetch failed:", err)
+                }
+
+            case <-configSub:
+                // Config changed → restart ticker with new frequency
+                debugLog("Live data frequency changed, restarting updater...")
+                continue // will recreate ticker with new frequency
+
+            case <-stopChan:
+                ticker.Stop()
+                return
+            }
+        }
+    }()
+}
+
 // =============================================
 // LOCAL STORAGE
 // =============================================
@@ -450,7 +503,6 @@ func saveConfig(cfg Config) error {
 }
 
 func loadMinersFromDisk() ([]Miner, error) {
-	// For internal checks if we need to write to disk
 	path := filepath.Join(dataDir, "miners.json")
 	file, err := os.Open(path)
 	if err != nil {
@@ -590,35 +642,35 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		// Use the manager to serve consistent RAM-based config
-		configManager.mu.RLock()
-		cfg := configManager.config
-		configManager.mu.RUnlock()
-		writeJSON(w, cfg)
-		return
-	}
+    if r.Method == http.MethodGet {
+        configManager.mu.RLock()
+        cfg := configManager.config
+        configManager.mu.RUnlock()
+        writeJSON(w, cfg)
+        return
+    }
 
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
 
-	var cfg Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
+    var cfg Config
+    if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        return
+    }
 
-	if err := saveConfig(cfg); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    if err := saveConfig(cfg); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
-	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
-	configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
-        configManager.SetLiquidHEX(cfg.LiquidHEX)
-	w.WriteHeader(http.StatusOK)
+    configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
+    configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+    configManager.SetLiquidHEX(cfg.LiquidHEX)
+
+    w.WriteHeader(http.StatusOK)
 }
 
 // =============================================
@@ -626,41 +678,38 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 // =============================================
 
 func main() {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Fatal("Failed to create data directory:", err)
-	}
+    if err := os.MkdirAll(dataDir, 0755); err != nil {
+        log.Fatal("Failed to create data directory:", err)
+    }
 
-	initializeMiners()
-	
-	if err := updateLocalHEXJSON(); err != nil {
-		debugLog("Initial HEXJSON load failed:", err)
-	}
-	startDailyHEXJSONUpdate()
+    initializeMiners()
 
-	if data, err := fetchLiveData(); err == nil {
-		liveDataMutex.Lock()
-		latestLiveData = data
-		liveDataMutex.Unlock()
-	} else {
-		debugLog("Initial live data fetch failed:", err)
-	}
+    // Load config first
+    cfg, _ := loadConfig()
+    configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
+    configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+    configManager.SetLiquidHEX(cfg.LiquidHEX)
 
-	cfg, _ := loadConfig()
-	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
-	configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
-        configManager.SetLiquidHEX(cfg.LiquidHEX)
+    // Initial HEXJSON load
+    if err := updateLocalHEXJSON(); err != nil {
+        debugLog("Initial HEXJSON load failed:", err)
+    }
+    startDailyHEXJSONUpdate()
+    startLiveDataBackgroundUpdater()
 
-	subFS, _ := fs.Sub(staticFiles, "static")
-	http.Handle("/", http.FileServer(http.FS(subFS)))
+    // Serve static files
+    subFS, _ := fs.Sub(staticFiles, "static")
+    http.Handle("/", http.FileServer(http.FS(subFS)))
 
-	http.HandleFunc("/api/live-data", handleLiveData)
-	http.HandleFunc("/api/hexjson", handleHEXJSON)
-	http.HandleFunc("/api/miners", handleMiners)
-	http.HandleFunc("/api/add-miner", handleAddMiner)
-	http.HandleFunc("/api/end-miner", handleEndMiner)
-	http.HandleFunc("/api/delete-miner", handleDeleteMiner)
-	http.HandleFunc("/api/config", handleConfig)
+    // API routes
+    http.HandleFunc("/api/live-data", handleLiveData)
+    http.HandleFunc("/api/hexjson", handleHEXJSON)
+    http.HandleFunc("/api/miners", handleMiners)
+    http.HandleFunc("/api/add-miner", handleAddMiner)
+    http.HandleFunc("/api/end-miner", handleEndMiner)
+    http.HandleFunc("/api/delete-miner", handleDeleteMiner)
+    http.HandleFunc("/api/config", handleConfig)
 
-	log.Println("⬢ HEX Stats server starting on :5555 ⬢")
-	log.Fatal(http.ListenAndServe(":5555", nil))
+    log.Println("⬢ HEX Stats server starting on :5555 ⬢")
+    log.Fatal(http.ListenAndServe(":5555", nil))
 }
