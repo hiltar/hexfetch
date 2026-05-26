@@ -386,16 +386,16 @@ function renderChartsWithData(data) {
     const latest = sorted[sorted.length - 1] || {};
 
     const priceEl = document.getElementById('price-value');
-    if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(4)}` : '$0.0000';
+    if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(5)}` : '$0.0000';
 
     const tshareEl = document.getElementById('tshare-rate-value');
-    if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX)} HEX` : '0 HEX';
+    if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX.toFixed(0)} HEX` : '0 HEX';
 
     const payoutEl = document.getElementById('payout-per-tshare-value');
-    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(3))} HEX` : '0.000 HEX';
+    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(1))} HEX` : '0.000 HEX';
 
     const dailyEl = document.getElementById('daily-payout-value');
-    if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX)} HEX` : '0 HEX';
+    if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX.toFixed(0)} HEX` : '0 HEX';
 
     const configs = [
         { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
