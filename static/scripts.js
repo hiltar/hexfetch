@@ -392,7 +392,7 @@ function renderChartsWithData(data) {
     if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX.toFixed(0))} HEX` : '0 HEX';
 
     const payoutEl = document.getElementById('payout-per-tshare-value');
-    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(1))} HEX` : '0.000 HEX';
+    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(2))} HEX` : '0.000 HEX';
 
     const dailyEl = document.getElementById('daily-payout-value');
     if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX.toFixed(0))} HEX` : '0 HEX';
