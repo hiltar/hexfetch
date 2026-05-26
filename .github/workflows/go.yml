@@ -35,10 +35,10 @@ jobs:
 
     - name: Download and Install UPX
       run: |
-        wget -q https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz
-        tar -xf upx-4.2.4-amd64_linux.tar.xz
-        chmod +x upx-4.2.4-amd64_linux/upx
-        cp upx-4.2.4-amd64_linux/upx /usr/local/bin/upx
+        wget -q https://github.com/upx/upx/releases/download/v5.1.1/upx-5.1.1-amd64_linux.tar.xz
+        tar -xf upx-5.1.1-amd64_linux.tar.xz
+        chmod +x upx-5.1.1-amd64_linux/upx
+        cp upx-5.1.1-amd64_linux/upx /usr/local/bin/upx
         rm -rf upx-*
 
     - name: Build ARM64 (Raspberry Pi Zero 2W)
