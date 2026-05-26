@@ -261,9 +261,9 @@ function updateLiveDataUI(data) {
     liveDataCache = data;
     document.getElementById('price').textContent = `$${data.price_Pulsechain.toFixed(5)}`;
     document.getElementById('tshare-price').textContent = `$${data.tsharePrice_Pulsechain.toFixed(2)}`;
-    document.getElementById('tshare-rate').textContent = `${formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain.toFixed(0))} HEX`;
+    document.getElementById('tshare-rate').textContent = `${formatWithCommas(Math.floor(data.tshareRateHEX_Pulsechain.toFixed(0)))} HEX`;
     document.getElementById('payout').textContent = `${data.payoutPerTshare_Pulsechain.toFixed(2)} HEX`;
-    document.getElementById('penalties').textContent = `${formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain.toFixed(0))} HEX`;
+    document.getElementById('penalties').textContent = `${formatWithCommas(Math.floor(data.penaltiesHEX_Pulsechain.toFixed(0)))} HEX`;
     document.getElementById('beat').textContent = `${formatWithCommas(data.beat)}`;
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     document.title = `HEX Stats - $${data.price_Pulsechain.toFixed(5)}`;
