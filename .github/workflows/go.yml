@@ -41,6 +41,7 @@ jobs:
 
     - name: Build
       run: |
+        go mod init hexfetch
         CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
         go build -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" .
 
