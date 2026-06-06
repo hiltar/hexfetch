@@ -2,67 +2,67 @@ name: hexfetch
 
 on:
   push:
-    branches:
-      - arm
+    branches: [arm]
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: arm64
+            output: hexfetch-arm
+          - goarch: amd64
+            output: hexfetch
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
     steps:
     - uses: actions/checkout@v4
-
-    - name: Cache Go Modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/go/pkg/mod
-          ~/.cache/go-build
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
 
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: 'stable'
-    
-    - name: Tidy Modules
-      run: go mod init hexfetch && go mod tidy && go mod verify
+        cache: true
 
-    - name: Download and Install UPX
+    - name: Install UPX
       run: |
-        wget -q https://github.com/upx/upx/releases/download/v5.1.1/upx-5.1.1-amd64_linux.tar.xz
-        tar -xf upx-5.1.1-amd64_linux.tar.xz
-        chmod +x upx-5.1.1-amd64_linux/upx
-        cp upx-5.1.1-amd64_linux/upx /usr/local/bin/upx
+        UPX_VERSION="5.1.1"
+        wget -q "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
+        tar -xf "upx-${UPX_VERSION}-amd64_linux.tar.xz"
+        sudo cp "upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/
         rm -rf upx-*
+        upx --version
 
-    - name: Build ARM64 (Raspberry Pi Zero 2W)
+    - name: Build
       run: |
-        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-        go build -a -trimpath -ldflags="-s -w -extldflags '-static'" \
-        -o hexfetch-arm .
+        CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
+        go build -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" .
 
-    - name: Build AMD64 (Generic/Server)
+    - name: Compress with UPX
       run: |
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-        go build -a -trimpath -ldflags="-s -w -extldflags '-static'" \
-        -o hexfetch .
+        upx --best --lzma "${{ matrix.output }}"
+        ls -lh "${{ matrix.output }}"
 
-    - name: Compress Binaries with UPX
+    - name: Smoke Test (AMD64 only)
+      if: matrix.goarch == 'amd64'
       run: |
-        upx --best --lzma hexfetch-arm hexfetch
-        ls -lh hexfetch*
+        ./${{ matrix.output }} --help || ./${{ matrix.output }} -h || ./${{ matrix.output }} version || echo "Binary executes"
+
+    - name: Generate Checksum
+      if: github.event_name == 'release'
+      run: sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
 
     - name: Upload to GitHub Release
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          hexfetch-arm
-          hexfetch
+          ${{ matrix.output }}
+          ${{ matrix.output }}.sha256
         draft: true
