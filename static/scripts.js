@@ -330,13 +330,57 @@ async function initialLoad() {
         document.getElementById('profile-message').textContent = activeMiners.length ? '' : 'Empty profile. Please add HEX miners in Settings.';
         
         activeMiners.forEach((m, i) => {
-            const [d, mo, y] = m.endDate.split('-'); 
-            const endUTC = Date.UTC(y, mo-1, d); 
-            const matured = endUTC <= Date.now();
-            const daysLeft = matured ? 0 : Math.ceil((endUTC - Date.now())/(1000*60*60*24));
-            const div = document.createElement('div'); 
-            div.className = 'list-item';
-            div.innerHTML = `<span>${m.startDate} - ${m.endDate} • T-Shares: ${m.tShares.toFixed(2)} ${matured ? '(Matured)' : `(${daysLeft} days left)`}</span>${matured ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End</button>` : ''}`;
+            const [startD, startMo, startY] = m.startDate.split('-');
+            const [endD, endMo, endY] = m.endDate.split('-');
+            const startUTC = Date.UTC(startY, startMo-1, startD);
+            const endUTC = Date.UTC(endY, endMo-1, endD);
+            const now = Date.now();
+            const matured = endUTC <= now;
+            const totalDays = Math.ceil((endUTC - startUTC) / (1000 * 60 * 60 * 24));
+            const daysElapsed = Math.max(0, Math.ceil((now - startUTC) / (1000 * 60 * 60 * 24)));
+            const daysLeft = matured ? 0 : Math.ceil((endUTC - now) / (1000 * 60 * 60 * 24));
+            const percentage = totalDays > 0 ? Math.min(100, (daysElapsed / totalDays) * 100) : 0;
+    
+            const div = document.createElement('div');
+            div.className = 'miner-card';
+            div.innerHTML = `
+                <div class="miner-card-header">
+                    <div class="miner-dates">
+                       <div>
+                            <span class="miner-date-label">Start Date</span>
+                            <div class="miner-date-value">${m.startDate}</div>
+                       </div>
+                       <div>
+                           <span class="miner-date-label">End Date</span>
+                           <div class="miner-date-value">${m.endDate}</div>
+                      </div>
+                    </div>
+                    <div class="miner-tshares">
+                        <div class="miner-tshares-label">T-Shares</div>
+                        <div class="miner-tshares-value">${m.tShares.toFixed(2)}</div>
+                   </div>
+                </div>
+        
+                <div class="miner-progress-container">
+                    <div class="miner-progress-info">
+                        <span class="miner-days-left">
+                            ${matured ? '<strong>Matured</strong>' : `<strong>${daysLeft}</strong> days remaining`}
+                        </span>
+                        <span class="miner-percentage">${percentage.toFixed(1)}% complete</span>
+                    </div>
+                    <div class="miner-progress-bar">
+                        <div class="miner-progress-fill ${matured ? 'matured' : ''}" 
+                            style="width: ${percentage}%"></div>
+                        </div>
+                </div>
+        
+                <div class="miner-card-footer">
+                    ${matured 
+                        ? `<button class="btn btn-sm btn-danger" onclick="endMiner(${indices[i]})">End Miner</button>`
+                        : `<span class="miner-status-badge active">Active</span>`
+                    }
+                </div>
+            `;
             activeDiv.appendChild(div);
         });
 
