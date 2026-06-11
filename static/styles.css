@@ -278,6 +278,153 @@ canvas { width: 100% !important; height: 100% !important; }
     cursor: pointer;
 }
 
+/* Miner Cards */
+.miner-card {
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.miner-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+
+.miner-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.miner-dates {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.miner-date-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.miner-date-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.miner-tshares {
+    text-align: right;
+}
+
+.miner-tshares-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.miner-tshares-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+/* Progress Bar */
+.miner-progress-container {
+    margin: 1rem 0;
+}
+
+.miner-progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.miner-days-left {
+    color: var(--text-muted);
+}
+
+.miner-days-left strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.miner-percentage {
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.miner-progress-bar {
+    width: 100%;
+    height: 12px;
+    background: var(--surface);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border);
+}
+
+.miner-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0d1137 0%, #1a1040 25%, #2d1b69 50%, #4a2c8a 75%, #7b3fa0 100%);
+    border-radius: 6px;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.miner-progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 50%, rgba(0,0,0,0.1) 100%);
+    border-radius: 6px;
+}
+
+.miner-progress-fill.matured {
+    background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+}
+
+.miner-card-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.miner-status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.miner-status-badge.active {
+    background: rgba(0, 183, 235, 0.15);
+    color: var(--primary);
+}
+
+.miner-status-badge.matured {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success);
+}
+
 /* Responsive */
 @media (max-width: 640px) {
     .header-content { justify-content: center; text-align: center; }
