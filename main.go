@@ -1,18 +1,23 @@
 package main
 
 import (
+	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"embed"
 	"fmt"
 	"io/fs"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+
 	"github.com/cenkalti/backoff/v4"
 )
 
@@ -22,86 +27,115 @@ var staticFiles embed.FS
 // =============================================
 // CONFIGURATION
 // =============================================
-
 const (
-	dataDir = "/opt/hexfetch"
-	dateLayout = "02-01-2006"
-	defaultLiveDataFrequency = 15 
+	dataDir                  = "/opt/hexfetch"
+	dateLayout               = "02-01-2006"
+	defaultLiveDataFrequency = 15
+
+	// Direct RPC & DexScreener Endpoints
+	RpcURL         = "https://rpc.pulsechain.com"
+	HexContract    = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39"
+	DexScreenerURL = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39"
 )
 
 // Global cached data
 var (
-	latestLiveData LiveData
-	liveDataMutex sync.RWMutex
-	hexJSONData HEXJSON
-	hexJSONMutex sync.RWMutex
-
-	httpClient = &http.Client{
+	latestLiveData  LiveData
+	liveDataMutex   sync.RWMutex
+	hexJSONData     HEXJSON
+	hexJSONMutex    sync.RWMutex
+	httpClient      = &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns: 10,
-			IdleConnTimeout: 30 * time.Second,
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
 			DisableCompression: true,
 		},
 	}
 
 	// Config notification
 	configSubsMu sync.Mutex
-	configSubs []chan struct{}
-	
+	configSubs   []chan struct{}
+
 	// Optimized Miner Cache
-	cachedMiners []Miner
+	cachedMiners  []Miner
 	minersCacheMu sync.RWMutex
 )
 
 // =============================================
 // DATA STRUCTURES
 // =============================================
-
 type HEXJSONEntry struct {
-	CurrentDay int `json:"currentDay"`
-	TshareRateHEX float64 `json:"tshareRateHEX"`
-	DailyPayoutHEX float64 `json:"dailyPayoutHEX"`
+	CurrentDay         int     `json:"currentDay"`
+	TshareRateHEX      float64 `json:"tshareRateHEX"`
+	DailyPayoutHEX     float64 `json:"dailyPayoutHEX"`
 	PayoutPerTshareHEX float64 `json:"payoutPerTshareHEX"`
-	PricePulseX float64 `json:"pricePulseX"`
+	PricePulseX        float64 `json:"pricePulseX"`
 }
 
 type HEXJSON []HEXJSONEntry
 
 type LiveData struct {
-	PricePulsechain float64 `json:"price_Pulsechain"`
-	TsharePricePulsechain float64 `json:"tsharePrice_Pulsechain"`
-	TshareRateHEXPulsechain float64 `json:"tshareRateHEX_Pulsechain"`
-	PenaltiesHEXPulsechain float64 `json:"penaltiesHEX_Pulsechain"`
+	PricePulsechain           float64 `json:"price_Pulsechain"`
+	TsharePricePulsechain     float64 `json:"tsharePrice_Pulsechain"`
+	TshareRateHEXPulsechain   float64 `json:"tshareRateHEX_Pulsechain"`
+	PenaltiesHEXPulsechain    float64 `json:"penaltiesHEX_Pulsechain"`
 	PayoutPerTsharePulsechain float64 `json:"payoutPerTshare_Pulsechain"`
-	Beat int64 `json:"beat"`
+	Beat                      float64 `json:"beat"`
 }
 
 type Miner struct {
-	StartDate string `json:"startDate"`
-	EndDate string `json:"endDate"`
-	TShares float64 `json:"tShares"`
-	Status string `json:"status,omitempty"`
+	StartDate string  `json:"startDate"`
+	EndDate   string  `json:"endDate"`
+	TShares   float64 `json:"tShares"`
+	Status    string  `json:"status,omitempty"`
 }
 
 type Config struct {
-	LiveDataFrequency int `json:"liveDataFrequency"`
-	LiquidHEX float64 `json:"liquidHEX"`
-	HistoricalStartDay int `json:"historicalStartDay"`
+	LiveDataFrequency  int     `json:"liveDataFrequency"`
+	LiquidHEX          float64 `json:"liquidHEX"`
+	HistoricalStartDay int     `json:"historicalStartDay"`
+}
+
+// RPC & DexScreener Structures
+type RPCRequest struct {
+	Jsonrpc string      `json:"jsonrpc"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params"`
+	ID      int         `json:"id"`
+}
+
+type RPCResponse struct {
+	Jsonrpc string    `json:"jsonrpc"`
+	ID      int       `json:"id"`
+	Result  string    `json:"result"`
+	Error   *RPCError `json:"error,omitempty"`
+}
+
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type DexPair struct {
+	PriceUsd interface{} `json:"priceUsd"`
+}
+
+type DexResponse struct {
+	Pairs []DexPair `json:"pairs"`
 }
 
 // =============================================
 // CONFIG MANAGER
 // =============================================
-
 type ConfigManager struct {
-	mu sync.RWMutex
+	mu     sync.RWMutex
 	config Config
 }
 
 var configManager = &ConfigManager{
 	config: Config{
-		LiveDataFrequency: defaultLiveDataFrequency,
+		LiveDataFrequency:  defaultLiveDataFrequency,
 		HistoricalStartDay: 1260,
 	},
 }
@@ -159,7 +193,6 @@ func (cm *ConfigManager) SetLiquidHEX(val float64) {
 	cm.broadcastChange()
 }
 
-// Subscribe returns a channel that receives a notification when config changes.
 func (cm *ConfigManager) Subscribe() chan struct{} {
 	ch := make(chan struct{}, 1)
 	configSubsMu.Lock()
@@ -168,7 +201,6 @@ func (cm *ConfigManager) Subscribe() chan struct{} {
 	return ch
 }
 
-// Unsubscribe removes the channel from the subscriber list.
 func (cm *ConfigManager) Unsubscribe(ch chan struct{}) {
 	configSubsMu.Lock()
 	defer configSubsMu.Unlock()
@@ -198,7 +230,6 @@ func (cm *ConfigManager) broadcastChange() {
 // =============================================
 // HELPERS
 // =============================================
-
 func debugLog(v ...any) {
 	if os.Getenv("DEBUG") == "true" {
 		log.Println(v...)
@@ -218,15 +249,81 @@ func getMaxDay(data HEXJSON) int {
 	return max
 }
 
+func HexToBigInt(hexStr string) *big.Int {
+	hexStr = strings.TrimPrefix(hexStr, "0x")
+	if len(hexStr)%2 != 0 {
+		hexStr = "0" + hexStr
+	}
+	b, _ := hex.DecodeString(hexStr)
+	return new(big.Int).SetBytes(b)
+}
+
+func CallRPC(method string, params interface{}) (string, error) {
+	reqBody := RPCRequest{
+		Jsonrpc: "2.0",
+		Method:  method,
+		Params:  params,
+		ID:      1,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := httpClient.Post(RpcURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return "", err
+	}
+
+	if rpcResp.Error != nil {
+		return "", fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
+	}
+
+	return rpcResp.Result, nil
+}
+
+func GetHexPrice() (float64, error) {
+	resp, err := httpClient.Get(DexScreenerURL)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var dexResp DexResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dexResp); err != nil {
+		return 0, err
+	}
+
+	if len(dexResp.Pairs) == 0 {
+		return 0, fmt.Errorf("no pairs found")
+	}
+
+	priceRaw := dexResp.Pairs[0].PriceUsd
+	switch v := priceRaw.(type) {
+	case float64:
+		return v, nil
+	case string:
+		var f float64
+		fmt.Sscanf(v, "%f", &f)
+		return f, nil
+	}
+	return 0, fmt.Errorf("unknown price format")
+}
+
 // =============================================
 // DATA FETCHING
 // =============================================
-
 func fetchHEXJSON() (HEXJSON, error) {
 	var data HEXJSON
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = 5 * time.Minute
-
 	err := backoff.Retry(func() error {
 		resp, err := httpClient.Get("https://hexdailystats.com/fulldatapulsechain")
 		if err != nil {
@@ -241,92 +338,175 @@ func fetchHEXJSON() (HEXJSON, error) {
 	return data, err
 }
 
+// fetchLiveData fetches data directly from PulseChain RPC and DexScreener
 func fetchLiveData() (LiveData, error) {
-    var data LiveData
-    b := backoff.NewExponentialBackOff()
-    b.MaxElapsedTime = 5 * time.Minute
+	var data LiveData
+	b := backoff.NewExponentialBackOff()
+	b.MaxElapsedTime = 5 * time.Minute
+	err := backoff.Retry(func() error {
+		var res LiveData
 
-    err := backoff.Retry(func() error {
-        resp, err := httpClient.Get("https://hexdailystats.com/livedata")
-        if err != nil {
-            debugLog("LiveData GET error:", err)
-            return err
-        }
-        defer resp.Body.Close()
+		price, err := GetHexPrice()
+		if err != nil {
+			debugLog("DexScreener price error:", err)
+			return err
+		}
+		res.PricePulsechain = price
 
-        if resp.StatusCode != http.StatusOK {
-            return fmt.Errorf("status %d", resp.StatusCode)
-        }
+		// 1 Beat = 1 Gwei = 1,000,000,000 Wei
+		gasPriceHex, err := CallRPC("eth_gasPrice", []interface{}{})
+		if err != nil {
+			debugLog("RPC eth_gasPrice error:", err)
+			return err
+		}
+		gasPriceWei := HexToBigInt(gasPriceHex)
+		beatsFloat, _ := new(big.Float).Quo(
+			new(big.Float).SetInt(gasPriceWei),
+			big.NewFloat(1e9),
+		).Float64()
+		res.Beat = beatsFloat
 
-        if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-            debugLog("LiveData JSON decode error:", err)
-            return err
-        }
+		// Selector for globals(): 0xc3124525
+		globalsRes, err := CallRPC("eth_call", []interface{}{
+			map[string]string{"to": HexContract, "data": "0xc3124525"},
+			"latest",
+		})
+		if err != nil {
+			debugLog("RPC globals() error:", err)
+			return err
+		}
 
-        debugLog("LiveData fetched successfully, beat:", data.Beat)
-        return nil
-    }, b)
+		globalsRes = strings.TrimPrefix(globalsRes, "0x")
+		if len(globalsRes) >= 5*64 {
+			shareRate := HexToBigInt(globalsRes[2*64 : 3*64])
+			penaltyTotal := HexToBigInt(globalsRes[3*64 : 4*64])
+			dailyDataCount := HexToBigInt(globalsRes[4*64 : 5*64])
 
-    return data, err
+			if shareRate.Cmp(big.NewInt(0)) > 0 {
+				// tshareRateHEX = shareRate / 10.0
+				tshareRateFloat := float64(shareRate.Int64()) / 10.0
+				res.TshareRateHEXPulsechain = tshareRateFloat
+				res.TsharePricePulsechain = tshareRateFloat * res.PricePulsechain
+			}
+
+			penaltiesFloat, _ := new(big.Float).Quo(
+				new(big.Float).SetInt(penaltyTotal),
+				big.NewFloat(1e8), // HEX has 8 decimals
+			).Float64()
+			res.PenaltiesHEXPulsechain = penaltiesFloat
+
+			dayToQuery := new(big.Int).Sub(dailyDataCount, big.NewInt(1))
+			if dayToQuery.Cmp(big.NewInt(0)) < 0 {
+				dayToQuery = big.NewInt(0)
+			}
+
+			// Selector for dailyData(uint256): 0x90de6871
+			dayPadded := fmt.Sprintf("%064x", dayToQuery)
+			dailyRes, err := CallRPC("eth_call", []interface{}{
+				map[string]string{"to": HexContract, "data": "0x90de6871" + dayPadded},
+				"latest",
+			})
+
+			dayPayoutTotal := big.NewInt(0)
+			dayStakeSharesTotal := big.NewInt(0)
+
+			if err == nil {
+				dailyRes = strings.TrimPrefix(dailyRes, "0x")
+				if len(dailyRes) >= 3*64 {
+					dayPayoutTotal = HexToBigInt(dailyRes[0*64 : 1*64])
+					dayStakeSharesTotal = HexToBigInt(dailyRes[1*64 : 2*64])
+				}
+			}
+
+			// Fallback to current day if previous day data is still 0
+			if dayPayoutTotal.Cmp(big.NewInt(0)) == 0 {
+				dayPaddedCurr := fmt.Sprintf("%064x", dailyDataCount)
+				currDailyRes, err := CallRPC("eth_call", []interface{}{
+					map[string]string{"to": HexContract, "data": "0x90de6871" + dayPaddedCurr},
+					"latest",
+				})
+				if err == nil {
+					currDailyRes = strings.TrimPrefix(currDailyRes, "0x")
+					if len(currDailyRes) >= 3*64 {
+						dayPayoutTotal = HexToBigInt(currDailyRes[0*64 : 1*64])
+						dayStakeSharesTotal = HexToBigInt(currDailyRes[1*64 : 2*64])
+					}
+				}
+			}
+
+			if dayStakeSharesTotal.Cmp(big.NewInt(0)) > 0 {
+				payoutNum := new(big.Float).SetInt(dayPayoutTotal)
+				payoutDen := new(big.Float).SetInt(dayStakeSharesTotal)
+
+				resFloat := new(big.Float).Quo(payoutNum, payoutDen)
+				resFloat = resFloat.Mul(resFloat, big.NewFloat(10000.0))
+
+				payoutPerTShareFloat, _ := resFloat.Float64()
+				res.PayoutPerTsharePulsechain = payoutPerTShareFloat
+			}
+		} else {
+			return fmt.Errorf("invalid globals() response length")
+		}
+
+		data = res
+		debugLog("LiveData fetched successfully via RPC, beat:", data.Beat)
+		return nil
+	}, b)
+
+	return data, err
 }
 
 // startLiveDataBackgroundUpdater starts a background goroutine that fetches live data
 // at the frequency defined in ConfigManager. It automatically restarts when frequency changes.
 func startLiveDataBackgroundUpdater() {
-    var ticker *time.Ticker
-    var stopChan = make(chan struct{})
+	var ticker *time.Ticker
+	var stopChan = make(chan struct{})
+	configSub := configManager.Subscribe()
 
-    // Subscribe to config changes
-    configSub := configManager.Subscribe()
+	go func() {
+		defer configManager.Unsubscribe(configSub)
 
-    go func() {
-        defer configManager.Unsubscribe(configSub)
+		if data, err := fetchLiveData(); err == nil {
+			liveDataMutex.Lock()
+			latestLiveData = data
+			liveDataMutex.Unlock()
+			debugLog("Initial live data fetched successfully")
+		} else {
+			debugLog("Initial live data fetch failed:", err)
+		}
 
-        // Initial fetch
-        if data, err := fetchLiveData(); err == nil {
-            liveDataMutex.Lock()
-            latestLiveData = data
-            liveDataMutex.Unlock()
-            debugLog("Initial live data fetched successfully")
-        } else {
-            debugLog("Initial live data fetch failed:", err)
-        }
+		for {
+			frequency := configManager.GetLiveDataFrequency()
+			if ticker != nil {
+				ticker.Stop()
+			}
+			ticker = time.NewTicker(time.Duration(frequency) * time.Minute)
 
-        for {
-            frequency := configManager.GetLiveDataFrequency()
-            if ticker != nil {
-                ticker.Stop()
-            }
-            ticker = time.NewTicker(time.Duration(frequency) * time.Minute)
+			select {
+			case <-ticker.C:
+				if data, err := fetchLiveData(); err == nil {
+					liveDataMutex.Lock()
+					latestLiveData = data
+					liveDataMutex.Unlock()
+				} else {
+					debugLog("Background live data fetch failed:", err)
+				}
 
-            select {
-            case <-ticker.C:
-                // Time to fetch
-                if data, err := fetchLiveData(); err == nil {
-                    liveDataMutex.Lock()
-                    latestLiveData = data
-                    liveDataMutex.Unlock()
-                } else {
-                    debugLog("Background live data fetch failed:", err)
-                }
+			case <-configSub:
+				debugLog("Live data frequency changed, restarting updater...")
+				continue
 
-            case <-configSub:
-                // Config changed → restart ticker with new frequency
-                debugLog("Live data frequency changed, restarting updater...")
-                continue // will recreate ticker with new frequency
-
-            case <-stopChan:
-                ticker.Stop()
-                return
-            }
-        }
-    }()
+			case <-stopChan:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
 }
 
 // =============================================
 // LOCAL STORAGE
 // =============================================
-
 func loadLocalHEXJSON() (HEXJSON, error) {
 	hexJSONMutex.RLock()
 	defer hexJSONMutex.RUnlock()
@@ -335,7 +515,6 @@ func loadLocalHEXJSON() (HEXJSON, error) {
 
 func saveLocalHEXJSON(data HEXJSON) {
 	hexJSONMutex.Lock()
-	// keep data sorted by day
 	sort.Slice(data, func(i, j int) bool {
 		return data[i].CurrentDay < data[j].CurrentDay
 	})
@@ -353,7 +532,6 @@ func updateLocalHEXJSON() error {
 		saveLocalHEXJSON(remote)
 		return nil
 	}
-
 	localMax := getMaxDay(local)
 	var newEntries []HEXJSONEntry
 	for _, entry := range remote {
@@ -375,7 +553,6 @@ func startDailyHEXJSONUpdate() {
 			now := time.Now().UTC()
 			nextUpdate := now.Truncate(24*time.Hour).Add(27 * time.Hour)
 			time.Sleep(nextUpdate.Sub(now))
-
 			debugLog("Running daily HEXJSON update...")
 			if err := updateLocalHEXJSON(); err != nil {
 				debugLog("HEXJSON update failed:", err)
@@ -386,8 +563,9 @@ func startDailyHEXJSONUpdate() {
 	}()
 }
 
-
-// initializeMiners loads miners once at startup into RAM
+// =============================================
+// MINERS & CONFIG DISK IO
+// =============================================
 func initializeMiners() {
 	path := filepath.Join(dataDir, "miners.json")
 	file, err := os.Open(path)
@@ -402,47 +580,43 @@ func initializeMiners() {
 		return
 	}
 	defer file.Close()
-
 	var miners []Miner
 	if err := json.NewDecoder(file).Decode(&miners); err != nil {
 		log.Printf("Error decoding miners file: %v", err)
 		return
 	}
-	
+
 	minersCacheMu.Lock()
 	cachedMiners = miners
 	minersCacheMu.Unlock()
 	debugLog("Loaded miners into RAM cache.")
 }
 
-
 func persistMiners(miners []Miner) error {
 	current, _ := loadMinersFromDisk()
 	if reflect.DeepEqual(current, miners) {
 		return nil
 	}
-	
 	path := filepath.Join(dataDir, "miners.json")
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	
+
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
-	
+
 	enc := json.NewEncoder(file)
-	enc.SetIndent("", " ")
+	enc.SetIndent("", "  ")
 	if err := enc.Encode(miners); err != nil {
 		file.Close()
 		return err
 	}
-	
+
 	return file.Close()
 }
-
 
 func loadConfig() (Config, error) {
 	path := filepath.Join(dataDir, "config.json")
@@ -477,12 +651,11 @@ func saveConfig(cfg Config) error {
 	if cfg.LiquidHEX < 0 {
 		cfg.LiquidHEX = 0
 	}
-	
 	current, _ := loadConfig()
 	if reflect.DeepEqual(current, cfg) {
 		return nil
 	}
-	
+
 	path := filepath.Join(dataDir, "config.json")
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -494,9 +667,9 @@ func saveConfig(cfg Config) error {
 		return err
 	}
 	defer file.Close()
-	
+
 	enc := json.NewEncoder(file)
-	enc.SetIndent("", " ")
+	enc.SetIndent("", "  ")
 	return enc.Encode(cfg)
 }
 
@@ -515,7 +688,6 @@ func loadMinersFromDisk() ([]Miner, error) {
 // =============================================
 // API HANDLERS
 // =============================================
-
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
@@ -551,7 +723,6 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
 	start, err := time.Parse(dateLayout, miner.StartDate)
 	if err != nil {
 		http.Error(w, "Invalid start date format (DD-MM-YYYY)", http.StatusBadRequest)
@@ -571,7 +742,6 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update Memory First
 	minersCacheMu.Lock()
 	cachedMiners = append(cachedMiners, miner)
 	minersCacheMu.Unlock()
@@ -580,9 +750,8 @@ func handleAddMiner(w http.ResponseWriter, r *http.Request) {
 	toPersist := make([]Miner, len(cachedMiners))
 	copy(toPersist, cachedMiners)
 	minersCacheMu.RUnlock()
-	
-	_ = persistMiners(toPersist)
 
+	_ = persistMiners(toPersist)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -596,7 +765,6 @@ func handleEndMiner(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	
 	minersCacheMu.Lock()
 	if req.Index < 0 || req.Index >= len(cachedMiners) {
 		minersCacheMu.Unlock()
@@ -622,14 +790,12 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
 	minersCacheMu.Lock()
 	if req.Index < 0 || req.Index >= len(cachedMiners) {
 		minersCacheMu.Unlock()
 		http.Error(w, "Invalid miner index", http.StatusBadRequest)
 		return
 	}
-	// Delete from slice
 	cachedMiners = append(cachedMiners[:req.Index], cachedMiners[req.Index+1:]...)
 	toPersist := make([]Miner, len(cachedMiners))
 	copy(toPersist, cachedMiners)
@@ -640,74 +806,67 @@ func handleDeleteMiner(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
-    if r.Method == http.MethodGet {
-        configManager.mu.RLock()
-        cfg := configManager.config
-        configManager.mu.RUnlock()
-        writeJSON(w, cfg)
-        return
-    }
+	if r.Method == http.MethodGet {
+		configManager.mu.RLock()
+		cfg := configManager.config
+		configManager.mu.RUnlock()
+		writeJSON(w, cfg)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-    if r.Method != http.MethodPost {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
+	var cfg Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
 
-    var cfg Config
-    if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-        http.Error(w, "Invalid JSON", http.StatusBadRequest)
-        return
-    }
+	if err := saveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    if err := saveConfig(cfg); err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
+	configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+	configManager.SetLiquidHEX(cfg.LiquidHEX)
 
-    configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
-    configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
-    configManager.SetLiquidHEX(cfg.LiquidHEX)
-
-    w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusOK)
 }
 
 // =============================================
 // MAIN
 // =============================================
-
 func main() {
-    if err := os.MkdirAll(dataDir, 0755); err != nil {
-        log.Fatal("Failed to create data directory:", err)
-    }
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Fatal("Failed to create data directory:", err)
+	}
+	initializeMiners()
 
-    initializeMiners()
+	cfg, _ := loadConfig()
+	configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
+	configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
+	configManager.SetLiquidHEX(cfg.LiquidHEX)
 
-    // Load config first
-    cfg, _ := loadConfig()
-    configManager.SetLiveDataFrequency(cfg.LiveDataFrequency)
-    configManager.SetHistoricalStartDay(cfg.HistoricalStartDay)
-    configManager.SetLiquidHEX(cfg.LiquidHEX)
+	if err := updateLocalHEXJSON(); err != nil {
+		debugLog("Initial HEXJSON load failed:", err)
+	}
+	startDailyHEXJSONUpdate()
+	startLiveDataBackgroundUpdater()
 
-    // Initial HEXJSON load
-    if err := updateLocalHEXJSON(); err != nil {
-        debugLog("Initial HEXJSON load failed:", err)
-    }
-    startDailyHEXJSONUpdate()
-    startLiveDataBackgroundUpdater()
+	subFS, _ := fs.Sub(staticFiles, "static")
+	http.Handle("/", http.FileServer(http.FS(subFS)))
 
-    // Serve static files
-    subFS, _ := fs.Sub(staticFiles, "static")
-    http.Handle("/", http.FileServer(http.FS(subFS)))
+	http.HandleFunc("/api/live-data", handleLiveData)
+	http.HandleFunc("/api/hexjson", handleHEXJSON)
+	http.HandleFunc("/api/miners", handleMiners)
+	http.HandleFunc("/api/add-miner", handleAddMiner)
+	http.HandleFunc("/api/end-miner", handleEndMiner)
+	http.HandleFunc("/api/delete-miner", handleDeleteMiner)
+	http.HandleFunc("/api/config", handleConfig)
 
-    // API routes
-    http.HandleFunc("/api/live-data", handleLiveData)
-    http.HandleFunc("/api/hexjson", handleHEXJSON)
-    http.HandleFunc("/api/miners", handleMiners)
-    http.HandleFunc("/api/add-miner", handleAddMiner)
-    http.HandleFunc("/api/end-miner", handleEndMiner)
-    http.HandleFunc("/api/delete-miner", handleDeleteMiner)
-    http.HandleFunc("/api/config", handleConfig)
-
-    log.Println("⬢ HEX Stats server starting on :5555 ⬢")
-    log.Fatal(http.ListenAndServe(":5555", nil))
+	log.Println("⬢ HEX Stats server starting on :5555 ⬢")
+	log.Fatal(http.ListenAndServe(":5555", nil))
 }
