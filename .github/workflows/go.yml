@@ -30,25 +30,11 @@ jobs:
         go-version: 'stable'
         cache: true
 
-    - name: Install UPX
-      run: |
-        UPX_VERSION="5.1.1"
-        wget -q "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
-        tar -xf "upx-${UPX_VERSION}-amd64_linux.tar.xz"
-        sudo cp "upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/
-        rm -rf upx-*
-        upx --version
-
     - name: Build
       run: |
         go mod init hexfetch && go mod tidy
         CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
         go build -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" .
-
-    - name: Compress with UPX
-      run: |
-        upx --best --lzma "${{ matrix.output }}"
-        ls -lh "${{ matrix.output }}"
 
     - name: Generate Checksum
       if: github.event_name == 'release'
