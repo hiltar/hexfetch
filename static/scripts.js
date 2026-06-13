@@ -366,7 +366,7 @@ async function initialLoad() {
                         <span class="miner-days-left">
                             ${matured ? '<strong>Matured</strong>' : `<strong>${daysLeft}</strong> days remaining`}
                         </span>
-                        <span class="miner-percentage">${percentage.toFixed(1)}% complete</span>
+                        <span class="miner-percentage">${percentage.toFixed(1)}%</span>
                     </div>
                     <div class="miner-progress-bar">
                         <div class="miner-progress-fill ${matured ? 'matured' : ''}" 
