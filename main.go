@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
+	"github.com/cenkalti/backoff/v5"
 )
 
 //go:embed static
