@@ -10,8 +10,8 @@ use reqwest::Client;
 use ruint::aliases::U256;
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::{broadcast, RwLock};
 use tracing::{error, info};
 
 // =============================================
@@ -68,6 +68,11 @@ pub struct Config {
     pub historical_start_day: u64,
 }
 
+#[derive(Deserialize)]
+struct IndexRequest {
+    index: usize,
+}
+
 // =============================================
 // APPLICATION STATE
 // =============================================
@@ -87,8 +92,14 @@ fn parse_u256(hex_str: &str) -> U256 {
     U256::from_str_radix(s, 16).unwrap_or(U256::ZERO)
 }
 
+// Bulletproof U256 to f64 conversion using limbs (avoids ruint Display/std feature issues)
 fn u256_to_f64(u: U256) -> f64 {
-    u.to_string().parse::<f64>().unwrap_or(0.0)
+    let limbs = u.as_limbs();
+    let mut result: f64 = 0.0;
+    for (i, &limb) in limbs.iter().enumerate() {
+        result += (limb as f64) * (2.0_f64).powi(64 * i as i32);
+    }
+    result
 }
 
 async fn call_rpc(client: &Client, method: &str, params: serde_json::Value) -> Result<String, String> {
@@ -161,6 +172,7 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
     let mut payout_per_tshare = 0.0;
     if daily_data_count > U256::ZERO {
         let day_to_query = daily_data_count - U256::from(1);
+        // ruint supports LowerHex formatting natively
         let day_padded = format!("0x90de6871{:064x}", day_to_query);
         let daily_data = serde_json::json!([{"to": HEX_CONTRACT, "data": day_padded}, "latest"]);
         
@@ -207,7 +219,7 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
                 }
                 _ = rx.recv() => {
                     info!("Config changed, restarting updater loop...");
-                    break; // Break inner loop to recreate the interval with new frequency
+                    break; 
                 }
             }
         }
@@ -219,6 +231,37 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
 // =============================================
 async fn handle_live_data(State(state): State<Arc<AppState>>) -> Json<LiveData> {
     Json(state.live_data.read().await.clone())
+}
+
+async fn handle_miners(State(state): State<Arc<AppState>>) -> Json<Vec<Miner>> {
+    Json(state.miners.read().await.clone())
+}
+
+async fn handle_hex_json(State(state): State<Arc<AppState>>) -> Json<Vec<HexJsonEntry>> {
+    Json(state.hex_json.read().await.clone())
+}
+
+async fn handle_get_config(State(state): State<Arc<AppState>>) -> Json<Config> {
+    Json(state.config.read().await.clone())
+}
+
+async fn handle_post_config(
+    State(state): State<Arc<AppState>>,
+    Json(new_config): Json<Config>,
+) -> impl IntoResponse {
+    let mut config = state.config.write().await;
+    *config = new_config;
+    let cfg_clone = config.clone();
+    drop(config); // Release lock before disk I/O
+    
+    let _ = state.config_tx.send(());
+    
+    let path = format!("{}/config.json", DATA_DIR);
+    if let Ok(json) = serde_json::to_string_pretty(&cfg_clone) {
+        let _ = tokio::fs::write(path, json).await;
+    }
+    
+    StatusCode::OK
 }
 
 async fn handle_add_miner(
@@ -234,8 +277,54 @@ async fn handle_add_miner(
 
     let mut miners = state.miners.write().await;
     miners.push(miner);
-    // TODO: Persist to disk async
+    let miners_clone = miners.clone();
+    drop(miners);
+    
+    let path = format!("{}/miners.json", DATA_DIR);
+    if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
+        let _ = tokio::fs::write(path, json).await;
+    }
     StatusCode::CREATED
+}
+
+async fn handle_end_miner(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<IndexRequest>,
+) -> impl IntoResponse {
+    let mut miners = state.miners.write().await;
+    if req.index < miners.len() {
+        miners[req.index].status = Some("completed".to_string());
+        let miners_clone = miners.clone();
+        drop(miners);
+        
+        let path = format!("{}/miners.json", DATA_DIR);
+        if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
+            let _ = tokio::fs::write(path, json).await;
+        }
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    }
+}
+
+async fn handle_delete_miner(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<IndexRequest>,
+) -> impl IntoResponse {
+    let mut miners = state.miners.write().await;
+    if req.index < miners.len() {
+        miners.remove(req.index);
+        let miners_clone = miners.clone();
+        drop(miners);
+        
+        let path = format!("{}/miners.json", DATA_DIR);
+        if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
+            let _ = tokio::fs::write(path, json).await;
+        }
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    }
 }
 
 // =============================================
@@ -246,17 +335,32 @@ async fn main() {
     tracing_subscriber::fmt::init();
     tokio::fs::create_dir_all(DATA_DIR).await.expect("Failed to create data dir");
 
+    // Load initial state from disk so data persists across restarts
+    let initial_config = match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_else(|_| Config {
+            live_data_frequency: 15,
+            liquid_hex: 0.0,
+            historical_start_day: 1260,
+        }),
+        Err(_) => Config {
+            live_data_frequency: 15,
+            liquid_hex: 0.0,
+            historical_start_day: 1260,
+        },
+    };
+
+    let initial_miners = match tokio::fs::read_to_string(format!("{}/miners.json", DATA_DIR)).await {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+
     let (config_tx, _) = broadcast::channel(16);
 
     let state = Arc::new(AppState {
         live_data: RwLock::new(LiveData::default()),
         hex_json: RwLock::new(Vec::new()),
-        miners: RwLock::new(Vec::new()),
-        config: RwLock::new(Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1260,
-        }),
+        miners: RwLock::new(initial_miners),
+        config: RwLock::new(initial_config),
         config_tx,
     });
 
@@ -271,7 +375,12 @@ async fn main() {
     // Build Router
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
+        .route("/api/miners", get(handle_miners))
         .route("/api/add-miner", post(handle_add_miner))
+        .route("/api/end-miner", post(handle_end_miner))
+        .route("/api/delete-miner", post(handle_delete_miner))
+        .route("/api/hexjson", get(handle_hex_json))
+        .route("/api/config", get(handle_get_config).post(handle_post_config))
         .fallback(get(|uri: axum::http::Uri| async move {
             // Serve embedded static files
             let path = uri.path().trim_start_matches('/');
@@ -282,7 +391,6 @@ async fn main() {
                     let mime = mime_guess::from_path(path).first_or_octet_stream();
                     Ok::<_, StatusCode>(axum::response::Response::builder()
                         .header("Content-Type", mime.as_ref())
-                        // Explicitly convert to axum::body::Body via owned Vec<u8>
                         .body(axum::body::Body::from(content.data.into_owned()))
                         .unwrap())
                 }
