@@ -282,7 +282,8 @@ async fn main() {
                     let mime = mime_guess::from_path(path).first_or_octet_stream();
                     Ok::<_, StatusCode>(axum::response::Response::builder()
                         .header("Content-Type", mime.as_ref())
-                        .body(content.data.into())
+                        // Explicitly convert to axum::body::Body via owned Vec<u8>
+                        .body(axum::body::Body::from(content.data.into_owned()))
                         .unwrap())
                 }
                 None => Err(StatusCode::NOT_FOUND),
