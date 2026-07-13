@@ -227,6 +227,44 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
 }
 
 // =============================================
+// LIVE DATA WITH RETRY
+// =============================================
+async fn fetch_live_data_with_retry(client: &Client) -> Result<LiveData, String> {
+    let mut delay = Duration::from_secs(1);
+    let max_delay = Duration::from_secs(30);
+    let start = Instant::now();
+    let max_elapsed = Duration::from_secs(2 * 60); // 2 minutes max retry
+
+    loop {
+        match fetch_live_data(client).await {
+            Ok(data) => return Ok(data),
+            Err(e) => {
+                // Check if this looks like a network/not-ready error
+                let is_network_error = e.to_lowercase().contains("connection") 
+                    || e.to_lowercase().contains("dns")
+                    || e.to_lowercase().contains("timeout")
+                    || e.to_lowercase().contains("request");
+                
+                if !is_network_error || start.elapsed() > max_elapsed {
+                    return Err(format!("Live data fetch failed after retries: {}", e));
+                }
+                
+                debug_log!("Live data fetch error (likely network init): {}. Retrying in {:?}...", e, delay);
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, max_delay);
+            }
+        }
+    }
+}
+
+// Simple debug logger that respects DEBUG env var
+fn debug_log(msg: &str) {
+    if std::env::var("DEBUG").unwrap_or_default() == "true" {
+        info!("{}", msg);
+    }
+}
+
+// =============================================
 // HEXJSON FETCHING & MERGING
 // =============================================
 async fn fetch_hex_json(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
@@ -303,6 +341,17 @@ async fn update_local_hex_json(state: Arc<AppState>, client: &Client) {
 async fn live_data_updater(state: Arc<AppState>, client: Client) {
     let mut rx = state.config_tx.subscribe();
 
+    // Initial fetch with retry (handles boot-time network delay)
+    match fetch_live_data_with_retry(&client).await {
+        Ok(data) => {
+            *state.live_data.write().await = data;
+            info!("Initial live data fetched successfully");
+        }
+        Err(e) => {
+            error!("Initial live data fetch failed: {}", e);
+        }
+    }
+
     loop {
         let freq = state.config.read().await.live_data_frequency;
         let mut interval = tokio::time::interval(Duration::from_secs(freq * 60));
@@ -310,9 +359,10 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    match fetch_live_data(&client).await {
+                    // Use retry wrapper for periodic fetches too
+                    match fetch_live_data_with_retry(&client).await {
                         Ok(data) => *state.live_data.write().await = data,
-                        Err(e) => error!("Live data fetch failed: {}", e),
+                        Err(e) => error!("Background live data fetch failed: {}", e),
                     }
                 }
                 _ = rx.recv() => {
