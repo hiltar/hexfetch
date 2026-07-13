@@ -249,7 +249,6 @@ async fn fetch_live_data_with_retry(client: &Client) -> Result<LiveData, String>
                     return Err(format!("Live data fetch failed after retries: {}", e));
                 }
                 
-                debug_log!("Live data fetch error (likely network init): {}. Retrying in {:?}...", e, delay);
                 tokio::time::sleep(delay).await;
                 delay = std::cmp::min(delay * 2, max_delay);
             }
