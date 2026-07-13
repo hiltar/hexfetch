@@ -5,14 +5,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::NaiveDate;
 use reqwest::Client;
-use ruint::aliases::U256;
 use rust_embed::Embed;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::{broadcast, RwLock};
-use tracing::{error, info};
 
 // =============================================
 // CONFIGURATION & CONSTANTS
@@ -26,6 +23,16 @@ const HEX_JSON_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
 #[derive(Embed)]
 #[folder = "static/"]
 struct Assets;
+
+// =============================================
+// NATIVE LOGGING MACROS
+// =============================================
+macro_rules! info {
+    ($($arg:tt)*) => { println!("[INFO] {}", format!($($arg)*)); };
+}
+macro_rules! error {
+    ($($arg:tt)*) => { eprintln!("[ERROR] {}", format!($($arg)*)); };
+}
 
 // =============================================
 // CUSTOM DESERIALIZERS
@@ -118,22 +125,112 @@ struct AppState {
 }
 
 // =============================================
+// 1. CUSTOM DATE PARSER
+// =============================================
+fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
+    let mut parts = s.split('-');
+    let d: u32 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    let y: i32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() { return None; }
+    if d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100 { return None; }
+    Some((y, m, d))
+}
+
+// =============================================
+// 2. CUSTOM MIME GUESSER
+// =============================================
+fn get_mime_type(path: &str) -> &'static str {
+    match path.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "application/javascript",
+        Some("css") => "text/css",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("webp") => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
+
+// =============================================
+// 3. CUSTOM U256
+// =============================================
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct U256([u64; 4]);
+
+impl U256 {
+    const ZERO: Self = Self([0; 4]);
+
+    fn from_hex(s: &str) -> Self {
+        let s = s.strip_prefix("0x").unwrap_or(s);
+        let mut limbs = [0u64; 4];
+        if s.is_empty() { return Self::ZERO; }
+        
+        let mut limb_idx = 0;
+        let mut shift = 0;
+        
+        for c in s.chars().rev() {
+            let val = match c {
+                '0'..='9' => c as u64 - '0' as u64,
+                'a'..='f' => c as u64 - 'a' as u64 + 10,
+                'A'..='F' => c as u64 - 'A' as u64 + 10,
+                _ => continue, 
+            };
+            if limb_idx < 4 {
+                limbs[limb_idx] |= val << shift;
+            }
+            shift += 4;
+            if shift == 64 {
+                shift = 0;
+                limb_idx += 1;
+            }
+        }
+        Self(limbs)
+    }
+
+    fn to_f64(&self) -> f64 {
+        let mut result: f64 = 0.0;
+        for (i, &limb) in self.0.iter().enumerate() {
+            if limb != 0 {
+                result += (limb as f64) * (2.0_f64).powi(64 * i as i32);
+            }
+        }
+        result
+    }
+}
+
+impl std::ops::Sub<u64> for U256 {
+    type Output = Self;
+    fn sub(self, rhs: u64) -> Self {
+        let mut limbs = self.0;
+        let (res, overflow) = limbs[0].overflowing_sub(rhs);
+        limbs[0] = res;
+        let mut borrow = if overflow { 1 } else { 0 };
+        for i in 1..4 {
+            let (res, overflow) = limbs[i].overflowing_sub(borrow);
+            limbs[i] = res;
+            borrow = if overflow { 1 } else { 0 };
+        }
+        Self(limbs)
+    }
+}
+
+impl std::fmt::LowerHex for U256 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for i in (0..4).rev() {
+            write!(f, "{:016x}", self.0[i])?;
+        }
+        Ok(())
+    }
+}
+
+// =============================================
 // HELPERS & RPC LOGIC
 // =============================================
-fn parse_u256(hex_str: &str) -> U256 {
-    let s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    U256::from_str_radix(s, 16).unwrap_or(U256::ZERO)
-}
-
-fn u256_to_f64(u: U256) -> f64 {
-    let limbs = u.as_limbs();
-    let mut result: f64 = 0.0;
-    for (i, &limb) in limbs.iter().enumerate() {
-        result += (limb as f64) * (2.0_f64).powi(64 * i as i32);
-    }
-    result
-}
-
 async fn call_rpc(client: &Client, method: &str, params: serde_json::Value) -> Result<String, String> {
     let req_body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -175,8 +272,8 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
         .unwrap_or(0.0);
 
     let gas_price_hex = call_rpc(client, "eth_gasPrice", serde_json::json!([])).await?;
-    let gas_price_wei = parse_u256(&gas_price_hex);
-    let beat = u256_to_f64(gas_price_wei) / 1e9;
+    let gas_price_wei = U256::from_hex(&gas_price_hex);
+    let beat = gas_price_wei.to_f64() / 1e9;
 
     let globals_data = serde_json::json!([{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"]);
     let globals_hex = call_rpc(client, "eth_call", globals_data).await?;
@@ -187,30 +284,30 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
     let mut daily_data_count = U256::ZERO;
 
     if g_str.len() >= 320 {
-        let share_rate = parse_u256(&g_str[128..192]);
-        let penalty_total = parse_u256(&g_str[192..256]);
-        daily_data_count = parse_u256(&g_str[256..320]);
+        let share_rate = U256::from_hex(&g_str[128..192]);
+        let penalty_total = U256::from_hex(&g_str[192..256]);
+        daily_data_count = U256::from_hex(&g_str[256..320]);
 
         if share_rate > U256::ZERO {
-            tshare_rate = u256_to_f64(share_rate) / 10.0;
+            tshare_rate = share_rate.to_f64() / 10.0;
         }
-        penalties = u256_to_f64(penalty_total) / 1e8;
+        penalties = penalty_total.to_f64() / 1e8;
     }
 
     let mut payout_per_tshare = 0.0;
     if daily_data_count > U256::ZERO {
-        let day_to_query = daily_data_count - U256::from(1);
-        let day_padded = format!("0x90de6871{:064x}", day_to_query);
+        let day_to_query = daily_data_count - 1;
+        let day_padded = format!("0x90de6871{:x}", day_to_query);
         let daily_data = serde_json::json!([{"to": HEX_CONTRACT, "data": day_padded}, "latest"]);
         
         if let Ok(daily_hex) = call_rpc(client, "eth_call", daily_data).await {
             let d_str = daily_hex.strip_prefix("0x").unwrap_or(&daily_hex);
             if d_str.len() >= 192 {
-                let day_payout = parse_u256(&d_str[0..64]);
-                let day_shares = parse_u256(&d_str[64..128]);
+                let day_payout = U256::from_hex(&d_str[0..64]);
+                let day_shares = U256::from_hex(&d_str[64..128]);
                 
                 if day_shares > U256::ZERO {
-                    payout_per_tshare = (u256_to_f64(day_payout) / u256_to_f64(day_shares)) * 10000.0;
+                    payout_per_tshare = (day_payout.to_f64() / day_shares.to_f64()) * 10000.0;
                 }
             }
         }
@@ -233,13 +330,12 @@ async fn fetch_live_data_with_retry(client: &Client) -> Result<LiveData, String>
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(30);
     let start = Instant::now();
-    let max_elapsed = Duration::from_secs(2 * 60); // 2 minutes max retry
+    let max_elapsed = Duration::from_secs(2 * 60);
 
     loop {
         match fetch_live_data(client).await {
             Ok(data) => return Ok(data),
             Err(e) => {
-                // Check if this looks like a network/not-ready error
                 let is_network_error = e.to_lowercase().contains("connection") 
                     || e.to_lowercase().contains("dns")
                     || e.to_lowercase().contains("timeout")
@@ -270,17 +366,14 @@ async fn fetch_hex_json(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
         return Err(format!("Status {}", resp.status()));
     }
     
-    // Read as text first to capture exact serde errors
     let text = resp.text().await.map_err(|e| e.to_string())?;
     
     serde_json::from_str::<Vec<HexJsonEntry>>(&text).map_err(|e| {
-        // Safely grab the first 300 characters to log what the API actually sent
         let snippet: String = text.chars().take(300).collect();
         format!("JSON decode error: {}. Snippet: {}", e, snippet)
     })
 }
 
-// Replicates Go's exponential backoff retry
 async fn fetch_hex_json_with_retry(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(60);
@@ -308,7 +401,6 @@ async fn update_local_hex_json(state: Arc<AppState>, client: &Client) {
             let mut local = state.hex_json.write().await;
             let local_max = local.iter().map(|e| e.current_day).max().unwrap_or(0);
             
-            // Filter only new days
             let mut new_entries: Vec<HexJsonEntry> = remote
                 .into_iter()
                 .filter(|e| e.current_day > local_max)
@@ -333,7 +425,6 @@ async fn update_local_hex_json(state: Arc<AppState>, client: &Client) {
 async fn live_data_updater(state: Arc<AppState>, client: Client) {
     let mut rx = state.config_tx.subscribe();
 
-    // Initial fetch with retry (handles boot-time network delay)
     match fetch_live_data_with_retry(&client).await {
         Ok(data) => {
             *state.live_data.write().await = data;
@@ -351,7 +442,6 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    // Use retry wrapper for periodic fetches too
                     match fetch_live_data_with_retry(&client).await {
                         Ok(data) => *state.live_data.write().await = data,
                         Err(e) => error!("Background live data fetch failed: {}", e),
@@ -367,9 +457,8 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
 }
 
 async fn hex_json_updater(state: Arc<AppState>, client: Client) {
-    // Run once every 24 hours
     let mut interval = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
-    interval.tick().await; // Consume the immediate first tick
+    interval.tick().await; 
     
     loop {
         interval.tick().await;
@@ -420,10 +509,10 @@ async fn handle_add_miner(
     State(state): State<Arc<AppState>>,
     Json(miner): Json<Miner>,
 ) -> impl IntoResponse {
-    let start = NaiveDate::parse_from_str(&miner.start_date, "%d-%m-%Y").ok();
-    let end = NaiveDate::parse_from_str(&miner.end_date, "%d-%m-%Y").ok();
+    let start = parse_date(&miner.start_date);
+    let end = parse_date(&miner.end_date);
 
-    if start.is_none() || end.is_none() || end < start || miner.t_shares <= 0.0 {
+    if start.is_none() || end.is_none() || end.unwrap() < start.unwrap() || miner.t_shares <= 0.0 {
         return StatusCode::BAD_REQUEST;
     }
 
@@ -484,7 +573,6 @@ async fn handle_delete_miner(
 // =============================================
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
     tokio::fs::create_dir_all(DATA_DIR).await.expect("Failed to create data dir");
 
     let initial_config = match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
@@ -515,13 +603,11 @@ async fn main() {
         config_tx,
     });
 
-    // Timeout increased slightly to 30s to accommodate the large HEXJSON payload
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
         
-    // 1. Initial HEXJSON fetch on startup
     let client_for_hex = client.clone();
     let state_for_hex = state.clone();
     tokio::spawn(async move {
@@ -529,11 +615,9 @@ async fn main() {
         update_local_hex_json(state_for_hex, &client_for_hex).await;
     });
 
-    // 2. Start background tasks
     tokio::spawn(live_data_updater(state.clone(), client.clone()));
     tokio::spawn(hex_json_updater(state.clone(), client));
 
-    // Build Router
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
         .route("/api/miners", get(handle_miners))
@@ -548,9 +632,9 @@ async fn main() {
             
             match Assets::get(path) {
                 Some(content) => {
-                    let mime = mime_guess::from_path(path).first_or_octet_stream();
+                    let mime = get_mime_type(path);
                     Ok::<_, StatusCode>(axum::response::Response::builder()
-                        .header("Content-Type", mime.as_ref())
+                        .header("Content-Type", mime)
                         .body(axum::body::Body::from(content.data.into_owned()))
                         .unwrap())
                 }
