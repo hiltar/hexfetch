@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 use reqwest::Client;
 use ruint::aliases::U256;
 use rust_embed::Embed;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{error, info};
@@ -28,19 +28,38 @@ const HEX_JSON_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
 struct Assets;
 
 // =============================================
+// CUSTOM DESERIALIZERS
+// =============================================
+fn f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or(0.0))
+}
+
+fn u64_or_default<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or(0))
+}
+
+// =============================================
 // DATA STRUCTURES
 // =============================================
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct HexJsonEntry {
-    #[serde(rename = "currentDay")]
+    #[serde(rename = "currentDay", default, deserialize_with = "u64_or_default")]
     pub current_day: u64,
-    #[serde(rename = "tshareRateHEX")]
+    #[serde(rename = "tshareRateHEX", default, deserialize_with = "f64_or_default")]
     pub tshare_rate_hex: f64,
-    #[serde(rename = "dailyPayoutHEX")]
+    #[serde(rename = "dailyPayoutHEX", default, deserialize_with = "f64_or_default")]
     pub daily_payout_hex: f64,
-    #[serde(rename = "payoutPerTshareHEX")]
+    #[serde(rename = "payoutPerTshareHEX", default, deserialize_with = "f64_or_default")]
     pub payout_per_tshare_hex: f64,
-    #[serde(rename = "pricePulseX")]
+    #[serde(rename = "pricePulseX", default, deserialize_with = "f64_or_default")]
     pub price_pulse_x: f64,
 }
 
@@ -221,9 +240,14 @@ async fn fetch_hex_json(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
         return Err(format!("Status {}", resp.status()));
     }
     
-    resp.json::<Vec<HexJsonEntry>>()
-        .await
-        .map_err(|e| e.to_string())
+    // Read as text first to capture exact serde errors
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    
+    serde_json::from_str::<Vec<HexJsonEntry>>(&text).map_err(|e| {
+        // Safely grab the first 300 characters to log what the API actually sent
+        let snippet: String = text.chars().take(300).collect();
+        format!("JSON decode error: {}. Snippet: {}", e, snippet)
+    })
 }
 
 // Replicates Go's exponential backoff retry
