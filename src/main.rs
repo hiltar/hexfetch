@@ -10,7 +10,7 @@ use reqwest::Client;
 use ruint::aliases::U256;
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{error, info};
 
@@ -21,6 +21,7 @@ const DATA_DIR: &str = "/opt/hexfetch";
 const RPC_URL: &str = "https://rpc.pulsechain.com";
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+const HEX_JSON_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
 
 #[derive(Embed)]
 #[folder = "static/"]
@@ -207,6 +208,72 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
 }
 
 // =============================================
+// HEXJSON FETCHING & MERGING
+// =============================================
+async fn fetch_hex_json(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
+    let resp = client
+        .get(HEX_JSON_URL)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+        
+    if !resp.status().is_success() {
+        return Err(format!("Status {}", resp.status()));
+    }
+    
+    resp.json::<Vec<HexJsonEntry>>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// Replicates Go's exponential backoff retry
+async fn fetch_hex_json_with_retry(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
+    let mut delay = Duration::from_secs(1);
+    let max_delay = Duration::from_secs(60);
+    let start = Instant::now();
+    let max_elapsed = Duration::from_secs(5 * 60);
+
+    loop {
+        match fetch_hex_json(client).await {
+            Ok(data) => return Ok(data),
+            Err(e) => {
+                if start.elapsed() > max_elapsed {
+                    return Err(format!("Max elapsed time reached: {}", e));
+                }
+                error!("HEXJSON fetch error: {}. Retrying in {:?}...", e, delay);
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, max_delay);
+            }
+        }
+    }
+}
+
+async fn update_local_hex_json(state: Arc<AppState>, client: &Client) {
+    match fetch_hex_json_with_retry(client).await {
+        Ok(remote) => {
+            let mut local = state.hex_json.write().await;
+            let local_max = local.iter().map(|e| e.current_day).max().unwrap_or(0);
+            
+            // Filter only new days
+            let mut new_entries: Vec<HexJsonEntry> = remote
+                .into_iter()
+                .filter(|e| e.current_day > local_max)
+                .collect();
+                
+            if !new_entries.is_empty() || local.is_empty() {
+                new_entries.extend(local.clone());
+                new_entries.sort_by_key(|e| e.current_day);
+                *local = new_entries;
+                info!("HEXJSON updated. Total entries: {}", local.len());
+            }
+        }
+        Err(e) => {
+            error!("HEXJSON fetch failed after retries: {}", e);
+        }
+    }
+}
+
+// =============================================
 // BACKGROUND TASKS
 // =============================================
 async fn live_data_updater(state: Arc<AppState>, client: Client) {
@@ -230,6 +297,18 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
                 }
             }
         }
+    }
+}
+
+async fn hex_json_updater(state: Arc<AppState>, client: Client) {
+    // Run once every 24 hours
+    let mut interval = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+    interval.tick().await; // Consume the immediate first tick
+    
+    loop {
+        interval.tick().await;
+        info!("Running daily HEXJSON update...");
+        update_local_hex_json(state.clone(), &client).await;
     }
 }
 
@@ -370,13 +449,25 @@ async fn main() {
         config_tx,
     });
 
+    // Timeout increased slightly to 30s to accommodate the large HEXJSON payload
     let client = Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
         
-    tokio::spawn(live_data_updater(state.clone(), client));
+    // 1. Initial HEXJSON fetch on startup
+    let client_for_hex = client.clone();
+    let state_for_hex = state.clone();
+    tokio::spawn(async move {
+        info!("Fetching initial HEXJSON data...");
+        update_local_hex_json(state_for_hex, &client_for_hex).await;
+    });
 
+    // 2. Start background tasks
+    tokio::spawn(live_data_updater(state.clone(), client.clone()));
+    tokio::spawn(hex_json_updater(state.clone(), client));
+
+    // Build Router
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
         .route("/api/miners", get(handle_miners))
