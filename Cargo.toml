@@ -1,0 +1,31 @@
+[package]
+name = "hexfetch-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async Runtime & Web Framework
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "signal"] }
+axum = "0.7.5"
+tower-http = { version = "0.5.2", features = ["fs"] }
+
+# HTTP Client (Minimal footprint, pure Rust TLS)
+reqwest = { version = "0.12.5", default-features = false, features = ["json", "rustls-tls"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+rust-embed = "8.4.0"      # Embeds static files into the binary
+ruint = "1.12.3"          # Lightweight 256-bit unsigned integers (for EVM math)
+chrono = "0.4.38"         # Date parsing
+tracing = "0.1.40"        # Structured logging
+tracing-subscriber = "0.3.18"
+
+[profile.release]
+opt-level = "z"           # Optimize strictly for binary size
+lto = true                # Link-Time Optimization (crucial for size)
+codegen-units = 1         # Slower compile, better optimization
+strip = true              # Strip debug symbols
+panic = "abort"           # Remove unwind tables (smaller binary)
