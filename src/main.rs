@@ -256,13 +256,6 @@ async fn fetch_live_data_with_retry(client: &Client) -> Result<LiveData, String>
     }
 }
 
-// Simple debug logger that respects DEBUG env var
-fn debug_log(msg: &str) {
-    if std::env::var("DEBUG").unwrap_or_default() == "true" {
-        info!("{}", msg);
-    }
-}
-
 // =============================================
 // HEXJSON FETCHING & MERGING
 // =============================================
