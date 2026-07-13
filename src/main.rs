@@ -30,41 +30,54 @@ struct Assets;
 // DATA STRUCTURES
 // =============================================
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct HexJsonEntry {
+    #[serde(rename = "currentDay")]
     pub current_day: u64,
+    #[serde(rename = "tshareRateHEX")]
     pub tshare_rate_hex: f64,
+    #[serde(rename = "dailyPayoutHEX")]
     pub daily_payout_hex: f64,
+    #[serde(rename = "payoutPerTshareHEX")]
     pub payout_per_tshare_hex: f64,
+    #[serde(rename = "pricePulseX")]
     pub price_pulse_x: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct LiveData {
+    #[serde(rename = "price_Pulsechain")]
     pub price_pulsechain: f64,
+    #[serde(rename = "tsharePrice_Pulsechain")]
     pub tshare_price_pulsechain: f64,
+    #[serde(rename = "tshareRateHEX_Pulsechain")]
     pub tshare_rate_hex_pulsechain: f64,
+    #[serde(rename = "penaltiesHEX_Pulsechain")]
     pub penalties_hex_pulsechain: f64,
+    #[serde(rename = "payoutPerTshare_Pulsechain")]
     pub payout_per_tshare_pulsechain: f64,
+    #[serde(rename = "beat")]
     pub beat: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct Miner {
+    #[serde(rename = "startDate")]
     pub start_date: String,
+    #[serde(rename = "endDate")]
     pub end_date: String,
+    #[serde(rename = "tShares")]
     pub t_shares: f64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct Config {
+    #[serde(rename = "liveDataFrequency")]
     pub live_data_frequency: u64,
+    #[serde(rename = "liquidHEX")]
     pub liquid_hex: f64,
+    #[serde(rename = "historicalStartDay")]
     pub historical_start_day: u64,
 }
 
@@ -92,7 +105,6 @@ fn parse_u256(hex_str: &str) -> U256 {
     U256::from_str_radix(s, 16).unwrap_or(U256::ZERO)
 }
 
-// Bulletproof U256 to f64 conversion using limbs (avoids ruint Display/std feature issues)
 fn u256_to_f64(u: U256) -> f64 {
     let limbs = u.as_limbs();
     let mut result: f64 = 0.0;
@@ -128,7 +140,6 @@ async fn call_rpc(client: &Client, method: &str, params: serde_json::Value) -> R
 }
 
 async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
-    // 1. DexScreener Price
     let dex_resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
         .send()
@@ -143,12 +154,10 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
         .or_else(|| dex_resp["pairs"][0]["priceUsd"].as_str().and_then(|s| s.parse().ok()))
         .unwrap_or(0.0);
 
-    // 2. Gas Price (Beat)
     let gas_price_hex = call_rpc(client, "eth_gasPrice", serde_json::json!([])).await?;
     let gas_price_wei = parse_u256(&gas_price_hex);
     let beat = u256_to_f64(gas_price_wei) / 1e9;
 
-    // 3. Globals (0xc3124525)
     let globals_data = serde_json::json!([{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"]);
     let globals_hex = call_rpc(client, "eth_call", globals_data).await?;
     let g_str = globals_hex.strip_prefix("0x").unwrap_or(&globals_hex);
@@ -168,11 +177,9 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
         penalties = u256_to_f64(penalty_total) / 1e8;
     }
 
-    // 4. Daily Data Payout
     let mut payout_per_tshare = 0.0;
     if daily_data_count > U256::ZERO {
         let day_to_query = daily_data_count - U256::from(1);
-        // ruint supports LowerHex formatting natively
         let day_padded = format!("0x90de6871{:064x}", day_to_query);
         let daily_data = serde_json::json!([{"to": HEX_CONTRACT, "data": day_padded}, "latest"]);
         
@@ -252,7 +259,7 @@ async fn handle_post_config(
     let mut config = state.config.write().await;
     *config = new_config;
     let cfg_clone = config.clone();
-    drop(config); // Release lock before disk I/O
+    drop(config);
     
     let _ = state.config_tx.send(());
     
@@ -335,7 +342,6 @@ async fn main() {
     tracing_subscriber::fmt::init();
     tokio::fs::create_dir_all(DATA_DIR).await.expect("Failed to create data dir");
 
-    // Load initial state from disk so data persists across restarts
     let initial_config = match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or_else(|_| Config {
             live_data_frequency: 15,
@@ -364,7 +370,6 @@ async fn main() {
         config_tx,
     });
 
-    // Start background tasks
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -372,7 +377,6 @@ async fn main() {
         
     tokio::spawn(live_data_updater(state.clone(), client));
 
-    // Build Router
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
         .route("/api/miners", get(handle_miners))
@@ -382,7 +386,6 @@ async fn main() {
         .route("/api/hexjson", get(handle_hex_json))
         .route("/api/config", get(handle_get_config).post(handle_post_config))
         .fallback(get(|uri: axum::http::Uri| async move {
-            // Serve embedded static files
             let path = uri.path().trim_start_matches('/');
             let path = if path.is_empty() { "index.html" } else { path };
             
