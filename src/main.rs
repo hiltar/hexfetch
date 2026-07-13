@@ -10,9 +10,9 @@ use reqwest::Client;
 use ruint::aliases::U256;
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, RwLock};
-use tracing::{error, info, warn};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tracing::{error, info};
 
 // =============================================
 // CONFIGURATION & CONSTANTS
@@ -87,6 +87,10 @@ fn parse_u256(hex_str: &str) -> U256 {
     U256::from_str_radix(s, 16).unwrap_or(U256::ZERO)
 }
 
+fn u256_to_f64(u: U256) -> f64 {
+    u.to_string().parse::<f64>().unwrap_or(0.0)
+}
+
 async fn call_rpc(client: &Client, method: &str, params: serde_json::Value) -> Result<String, String> {
     let req_body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -131,7 +135,7 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
     // 2. Gas Price (Beat)
     let gas_price_hex = call_rpc(client, "eth_gasPrice", serde_json::json!([])).await?;
     let gas_price_wei = parse_u256(&gas_price_hex);
-    let beat = gas_price_wei.to_f64() / 1e9;
+    let beat = u256_to_f64(gas_price_wei) / 1e9;
 
     // 3. Globals (0xc3124525)
     let globals_data = serde_json::json!([{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"]);
@@ -148,9 +152,9 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
         daily_data_count = parse_u256(&g_str[256..320]);
 
         if share_rate > U256::ZERO {
-            tshare_rate = share_rate.to_f64() / 10.0;
+            tshare_rate = u256_to_f64(share_rate) / 10.0;
         }
-        penalties = penalty_total.to_f64() / 1e8;
+        penalties = u256_to_f64(penalty_total) / 1e8;
     }
 
     // 4. Daily Data Payout
@@ -167,7 +171,7 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
                 let day_shares = parse_u256(&d_str[64..128]);
                 
                 if day_shares > U256::ZERO {
-                    payout_per_tshare = (day_payout.to_f64() / day_shares.to_f64()) * 10000.0;
+                    payout_per_tshare = (u256_to_f64(day_payout) / u256_to_f64(day_shares)) * 10000.0;
                 }
             }
         }
