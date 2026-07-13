@@ -30,10 +30,17 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ matrix.target }}
+
     - name: Cache cargo dependencies
       uses: Swatinem/rust-cache@v2
+
+    # Install Zig (Pinned to stable version 0.13.0)
     - name: Setup Zig
       uses: mlugg/setup-zig@v1
+      with:
+        version: 0.13.0
+
+    # Install cargo-zigbuild (replaces cross)
     - name: Install cargo-zigbuild
       uses: taiki-e/install-action@cargo-zigbuild
 
