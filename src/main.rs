@@ -16,7 +16,12 @@ use tokio::sync::{broadcast, RwLock};
 // CONFIGURATION & CONSTANTS
 // =============================================
 const DATA_DIR: &str = "/opt/hexfetch";
-const RPC_URL: &str = "https://rpc.pulsechain.com";
+const RPC_ENDPOINTS: &[&str] = &[
+    "https://rpc.pulsechain.com",
+    "https://rpc-pulsechain.g4mm4.io",
+    "https://pulsechain-rpc.publicnode.com",
+    "https://rpc.pulsechainrpc.com",
+];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const HEX_JSON_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
@@ -123,6 +128,7 @@ struct AppState {
     miners: RwLock<Vec<Miner>>,
     config: RwLock<Config>,
     config_tx: broadcast::Sender<()>,
+    active_rpc_idx: RwLock<usize>,
 }
 
 // =============================================
@@ -251,7 +257,7 @@ fn get_duration_until_next_3am_utc() -> std::time::Duration {
 // =============================================
 // HELPERS & RPC LOGIC
 // =============================================
-async fn call_rpc(client: &Client, method: &str, params: serde_json::Value) -> Result<String, String> {
+async fn call_rpc(client: &Client, state: &Arc<AppState>, method: &str, params: serde_json::Value) -> Result<String, String> {
     let req_body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -259,24 +265,45 @@ async fn call_rpc(client: &Client, method: &str, params: serde_json::Value) -> R
         "id": 1
     });
 
-    let resp = client
-        .post(RPC_URL)
-        .json(&req_body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| e.to_string())?;
+    let start_idx = *state.active_rpc_idx.read().await;
+    let mut last_err = String::new();
 
-    if let Some(err) = resp.get("error") {
-        return Err(format!("RPC error: {}", err["message"].as_str().unwrap_or("unknown")));
+    // Iterate through endpoints starting from the currently active one
+    for i in 0..RPC_ENDPOINTS.len() {
+        let idx = (start_idx + i) % RPC_ENDPOINTS.len();
+        let url = RPC_ENDPOINTS[idx];
+
+        match client.post(url).json(&req_body).send().await {
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(json) => {
+                    if let Some(err) = json.get("error") {
+                        last_err = format!("RPC error on {}: {}", url, err["message"].as_str().unwrap_or("unknown"));
+                        continue;
+                    }
+                    
+                    // If we successfully connected to an endpoint other than the start_idx, update the active index
+                    if idx != start_idx {
+                        info!("Successfully connected to fallback RPC: {} (index {})", url, idx);
+                        *state.active_rpc_idx.write().await = idx;
+                    }
+                    return Ok(json["result"].as_str().unwrap_or("").to_string());
+                }
+                Err(e) => {
+                    last_err = format!("JSON parse error on {}: {}", url, e);
+                    continue;
+                }
+            },
+            Err(e) => {
+                last_err = format!("Network error on {}: {}", url, e);
+                continue;
+            }
+        }
     }
 
-    Ok(resp["result"].as_str().unwrap_or("").to_string())
+    Err(format!("All RPC endpoints failed. Last error: {}", last_err))
 }
 
-async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
+async fn fetch_live_data(client: &Client, state: &Arc<AppState>) -> Result<LiveData, String> {
     let dex_resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
         .send()
@@ -291,12 +318,12 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
         .or_else(|| dex_resp["pairs"][0]["priceUsd"].as_str().and_then(|s| s.parse().ok()))
         .unwrap_or(0.0);
 
-    let gas_price_hex = call_rpc(client, "eth_gasPrice", serde_json::json!([])).await?;
+    let gas_price_hex = call_rpc(client, state, "eth_gasPrice", serde_json::json!([])).await?;
     let gas_price_wei = U256::from_hex(&gas_price_hex);
     let beat = gas_price_wei.to_f64() / 1e9;
 
     let globals_data = serde_json::json!([{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"]);
-    let globals_hex = call_rpc(client, "eth_call", globals_data).await?;
+    let globals_hex = call_rpc(client, state, "eth_call", globals_data).await?;
     let g_str = globals_hex.strip_prefix("0x").unwrap_or(&globals_hex);
 
     let mut tshare_rate = 0.0;
@@ -320,7 +347,7 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
         let day_padded = format!("0x90de6871{:x}", day_to_query);
         let daily_data = serde_json::json!([{"to": HEX_CONTRACT, "data": day_padded}, "latest"]);
         
-        if let Ok(daily_hex) = call_rpc(client, "eth_call", daily_data).await {
+        if let Ok(daily_hex) = call_rpc(client, state, "eth_call", daily_data).await {
             let d_str = daily_hex.strip_prefix("0x").unwrap_or(&daily_hex);
             if d_str.len() >= 192 {
                 let day_payout = U256::from_hex(&d_str[0..64]);
@@ -346,20 +373,21 @@ async fn fetch_live_data(client: &Client) -> Result<LiveData, String> {
 // =============================================
 // LIVE DATA WITH RETRY
 // =============================================
-async fn fetch_live_data_with_retry(client: &Client) -> Result<LiveData, String> {
+async fn fetch_live_data_with_retry(client: &Client, state: &Arc<AppState>) -> Result<LiveData, String> {
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(30);
     let start = Instant::now();
     let max_elapsed = Duration::from_secs(2 * 60);
 
     loop {
-        match fetch_live_data(client).await {
+        match fetch_live_data(client, state).await {
             Ok(data) => return Ok(data),
             Err(e) => {
                 let is_network_error = e.to_lowercase().contains("connection") 
                     || e.to_lowercase().contains("dns")
                     || e.to_lowercase().contains("timeout")
-                    || e.to_lowercase().contains("request");
+                    || e.to_lowercase().contains("request")
+                    || e.to_lowercase().contains("all rpc endpoints failed");
                 
                 if !is_network_error || start.elapsed() > max_elapsed {
                     return Err(format!("Live data fetch failed after retries: {}", e));
@@ -445,7 +473,7 @@ async fn update_local_hex_json(state: Arc<AppState>, client: &Client) {
 async fn live_data_updater(state: Arc<AppState>, client: Client) {
     let mut rx = state.config_tx.subscribe();
 
-    match fetch_live_data_with_retry(&client).await {
+    match fetch_live_data_with_retry(&client, &state).await {
         Ok(data) => {
             *state.live_data.write().await = data;
             info!("Initial live data fetched successfully");
@@ -462,7 +490,7 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    match fetch_live_data_with_retry(&client).await {
+                    match fetch_live_data_with_retry(&client, &state).await {
                         Ok(data) => *state.live_data.write().await = data,
                         Err(e) => error!("Background live data fetch failed: {}", e),
                     }
@@ -482,6 +510,43 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
         tokio::time::sleep(sleep_duration).await;
         info!("Running daily HEXJSON update at 3:00 AM UTC...");
         update_local_hex_json(state.clone(), &client).await;
+    }
+}
+
+async fn test_rpc(client: &Client, url: &str) -> bool {
+    let req_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_chainId",
+        "params": [],
+        "id": 1
+    });
+
+    match client.post(url).json(&req_body).send().await {
+        Ok(resp) => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => json.get("error").is_none(),
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
+    }
+}
+
+async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
+    loop {
+        // Wait 24 hours before checking
+        tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+        
+        let current_idx = *state.active_rpc_idx.read().await;
+        if current_idx != 0 {
+            info!("24h RPC health check: Testing primary RPC endpoint ({})...", RPC_ENDPOINTS[0]);
+            if test_rpc(&client, RPC_ENDPOINTS[0]).await {
+                info!("Primary RPC endpoint is back online! Switching back.");
+                *state.active_rpc_idx.write().await = 0;
+            } else {
+                info!("Primary RPC endpoint still down. Will check again in 24h.");
+            }
+        }
     }
 }
 
@@ -619,6 +684,7 @@ async fn main() {
         miners: RwLock::new(initial_miners),
         config: RwLock::new(initial_config),
         config_tx,
+        active_rpc_idx: RwLock::new(0), // Initialize to first endpoint
     });
 
     let client = Client::builder()
@@ -634,7 +700,8 @@ async fn main() {
     });
 
     tokio::spawn(live_data_updater(state.clone(), client.clone()));
-    tokio::spawn(hex_json_updater(state.clone(), client));
+    tokio::spawn(hex_json_updater(state.clone(), client.clone()));
+    tokio::spawn(rpc_health_checker(state.clone(), client));
 
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
