@@ -5,6 +5,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chrono::{Utc, NaiveTime, Days};
 use reqwest::Client;
 use rust_embed::Embed;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -226,6 +227,25 @@ impl std::fmt::LowerHex for U256 {
         }
         Ok(())
     }
+}
+
+// =============================================
+// 4. UTC TIME CALCULATION
+// =============================================
+fn get_duration_until_next_3am_utc() -> std::time::Duration {
+    let now = Utc::now();
+    
+    // Get today's date at exactly 03:00:00 UTC
+    let today_3am = now.date_naive().and_time(NaiveTime::from_hms_opt(3, 0, 0).unwrap());
+    let mut next_3am = today_3am.and_utc();
+    
+    // If 3 AM UTC has already passed today, schedule for tomorrow
+    if next_3am <= now {
+        next_3am = next_3am.checked_add_days(Days::new(1)).unwrap();
+    }
+    
+    // Convert chrono::Duration to std::time::Duration for tokio::time::sleep
+    (next_3am - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
 }
 
 // =============================================
@@ -457,12 +477,10 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
 }
 
 async fn hex_json_updater(state: Arc<AppState>, client: Client) {
-    let mut interval = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
-    interval.tick().await; 
-    
     loop {
-        interval.tick().await;
-        info!("Running daily HEXJSON update...");
+        let sleep_duration = get_duration_until_next_3am_utc();        
+        tokio::time::sleep(sleep_duration).await;
+        info!("Running daily HEXJSON update at 3:00 AM UTC...");
         update_local_hex_json(state.clone(), &client).await;
     }
 }
