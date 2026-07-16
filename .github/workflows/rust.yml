@@ -10,57 +10,61 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Run cargo test
+        run: cargo test --verbose
+        env:
+          HEXFETCH_DATA_DIR: /tmp/hexfetch-test
+      - name: Run cargo clippy
+        run: cargo clippy -- -D warnings
+
   build:
+    name: Build (${{ matrix.target }})
+    needs: test
     strategy:
       fail-fast: false
       matrix:
         include:
-          # x86_64 AMD64 target (Fully static via musl)
           - target: x86_64-unknown-linux-musl
             output: hexfetch
-          # ARM64 target (Fully static via musl)
           - target: aarch64-unknown-linux-musl
             output: hexfetch-arm
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
-
-    - name: Cache cargo dependencies
-      uses: Swatinem/rust-cache@v2
-
-    # Install Zig (Pinned to stable version 0.13.0)
-    - name: Setup Zig
-      uses: mlugg/setup-zig@v1
-      with:
-        version: 0.13.0
-
-    # Install cargo-zigbuild (replaces cross)
-    - name: Install cargo-zigbuild
-      uses: taiki-e/install-action@cargo-zigbuild
-
-    - name: Build
-      run: |
-        # Use zigbuild to cross-compile natively without Docker
-        cargo zigbuild --release --target ${{ matrix.target }}
-        
-        # Rename the binary to match your release assets
-        mv target/${{ matrix.target }}/release/hexfetch-rs ${{ matrix.output }}
-
-    - name: Generate Checksum
-      if: github.event_name == 'release'
-      run: sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
-
-    - name: Upload to GitHub Release
-      if: github.event_name == 'release'
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          ${{ matrix.output }}
-          ${{ matrix.output }}.sha256
-        draft: true
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@cargo-zigbuild
+      - name: Build
+        run: |
+          cargo zigbuild --release --target ${{ matrix.target }}
+          mv target/${{ matrix.target }}/release/hexfetch-rs ${{ matrix.output }}
+      - name: Generate Checksum
+        if: github.event_name == 'release'
+        run: sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.output }}
+            ${{ matrix.output }}.sha256
+          draft: true
