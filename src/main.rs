@@ -734,3 +734,186 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
+
+
+// ==========================================
+// TEST UNITS
+// ==========================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use tokio::sync::broadcast;
+
+    // ==========================================
+    // TEST HELPER: Create a mock AppState
+    // ==========================================
+    fn create_test_state() -> Arc<AppState> {
+        let (config_tx, _) = broadcast::channel(16);
+        Arc::new(AppState {
+            live_data: RwLock::new(LiveData::default()),
+            hex_json: RwLock::new(Vec::new()),
+            miners: RwLock::new(Vec::new()),
+            config: RwLock::new(Config {
+                live_data_frequency: 15,
+                liquid_hex: 0.0,
+                historical_start_day: 1260,
+            }),
+            config_tx,
+            active_rpc_idx: RwLock::new(0),
+        })
+    }
+
+    // ==========================================
+    // 1. UNIT TESTS: UTILS & PARSING
+    // ==========================================
+
+    #[test]
+    fn test_parse_date_valid() {
+        // Test standard valid dates
+        assert_eq!(parse_date("15-08-2023"), Some((2023, 8, 15)));
+        assert_eq!(parse_date("01-01-2000"), Some((2000, 1, 1)));
+    }
+
+    #[test]
+    fn test_parse_date_invalid() {
+        // Test bounds and malformed strings
+        assert_eq!(parse_date("32-01-2020"), None); // Day > 31
+        assert_eq!(parse_date("15-13-2020"), None); // Month > 12
+        assert_eq!(parse_date("15-08-1999"), None); // Year < 2000
+        assert_eq!(parse_date("invalid-date"), None);
+        assert_eq!(parse_date("15-08-2023-extra"), None); // Too many parts
+    }
+
+    #[test]
+    fn test_get_mime_type() {
+        assert_eq!(get_mime_type("index.html"), "text/html; charset=utf-8");
+        assert_eq!(get_mime_type("app.js"), "application/javascript");
+        assert_eq!(get_mime_type("style.css"), "text/css");
+        assert_eq!(get_mime_type("data.json"), "application/json");
+        assert_eq!(get_mime_type("unknown.xyz"), "application/octet-stream");
+        assert_eq!(get_mime_type("no_extension"), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_u256_from_hex_and_math() {
+        // 0x400 is 1024 in decimal
+        let val = U256::from_hex("0x400");
+        assert_eq!(val.to_f64(), 1024.0);
+
+        // Test subtraction (Crucial for your daily_data_count - 1 logic)
+        let res = val - 24;
+        assert_eq!(res.to_f64(), 1000.0);
+
+        // Test large hex (simulating T-Share rate or wei)
+        let large_val = U256::from_hex("0xDE0B6B3A7640000"); // 1 ETH in wei (1e18)
+        assert!(large_val.to_f64() > 1e17);
+    }
+
+    // ==========================================
+    // 2. INTEGRATION TESTS: API HANDLERS
+    // ==========================================
+    
+    #[tokio::test]
+    async fn test_handle_add_miner_success() {
+        let state = create_test_state();
+        let miner = Miner {
+            start_date: "01-01-2023".to_string(),
+            end_date: "01-01-2024".to_string(),
+            t_shares: 100.0,
+            status: None,
+        };
+        
+        let response = handle_add_miner(State(state.clone()), Json(miner)).await;
+        
+        // The handler returns `impl IntoResponse`, so we convert it to check the HTTP status
+        let status = response.into_response().status();
+        assert_eq!(status, StatusCode::CREATED);
+        
+        // Verify the in-memory state was updated
+        let miners = state.miners.read().await;
+        assert_eq!(miners.len(), 1);
+        assert_eq!(miners[0].t_shares, 100.0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_miner_invalid_date() {
+        let state = create_test_state();
+        let miner = Miner {
+            start_date: "32-01-2023".to_string(), // Invalid day
+            end_date: "01-01-2024".to_string(),
+            t_shares: 100.0,
+            status: None,
+        };
+        
+        let response = handle_add_miner(State(state.clone()), Json(miner)).await;
+        assert_eq!(response.into_response().status(), StatusCode::BAD_REQUEST);
+        
+        // Verify state was NOT updated because validation failed
+        assert_eq!(state.miners.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_miner_end_before_start() {
+        let state = create_test_state();
+        let miner = Miner {
+            start_date: "01-01-2024".to_string(),
+            end_date: "01-01-2023".to_string(), // End before start
+            t_shares: 100.0,
+            status: None,
+        };
+        
+        let response = handle_add_miner(State(state.clone()), Json(miner)).await;
+        assert_eq!(response.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_handle_delete_miner() {
+        let state = create_test_state();
+        
+        // Pre-populate state with a miner
+        {
+            let mut miners = state.miners.write().await;
+            miners.push(Miner {
+                start_date: "01-01-2023".into(),
+                end_date: "01-01-2024".into(),
+                t_shares: 10.0,
+                status: None,
+            });
+        }
+
+        let req = IndexRequest { index: 0 };
+        let response = handle_delete_miner(State(state.clone()), Json(req)).await;
+        assert_eq!(response.into_response().status(), StatusCode::OK);
+        
+        // Verify it was removed
+        assert_eq!(state.miners.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_delete_miner_out_of_bounds() {
+        let state = create_test_state();
+        let req = IndexRequest { index: 99 }; // No miners exist, so 99 is invalid
+        
+        let response = handle_delete_miner(State(state.clone()), Json(req)).await;
+        assert_eq!(response.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_handle_post_config() {
+        let state = create_test_state();
+        let new_config = Config {
+            live_data_frequency: 5,
+            liquid_hex: 1000.0,
+            historical_start_day: 1000,
+        };
+        
+        let response = handle_post_config(State(state.clone()), Json(new_config)).await;
+        assert_eq!(response.into_response().status(), StatusCode::OK);
+        
+        // Verify state update
+        let config = state.config.read().await;
+        assert_eq!(config.live_data_frequency, 5);
+        assert_eq!(config.liquid_hex, 1000.0);
+    }
+}
