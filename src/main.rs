@@ -140,7 +140,7 @@ fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
     let m: u32 = parts.next()?.parse().ok()?;
     let y: i32 = parts.next()?.parse().ok()?;
     if parts.next().is_some() { return None; }
-    if d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100 { return None; }
+    if !(1..=31).contains(&d) || !(1..=12).contains(&m) || !(2000..=2100).contains(&y) { return None; }
     Some((y, m, d))
 }
 
@@ -199,7 +199,7 @@ impl U256 {
         Self(limbs)
     }
 
-    fn to_f64(&self) -> f64 {
+    fn to_f64(self) -> f64 {
         let mut result: f64 = 0.0;
         for (i, &limb) in self.0.iter().enumerate() {
             if limb != 0 {
@@ -212,16 +212,19 @@ impl U256 {
 
 impl std::ops::Sub<u64> for U256 {
     type Output = Self;
+
     fn sub(self, rhs: u64) -> Self {
         let mut limbs = self.0;
         let (res, overflow) = limbs[0].overflowing_sub(rhs);
         limbs[0] = res;
         let mut borrow = if overflow { 1 } else { 0 };
-        for i in 1..4 {
-            let (res, overflow) = limbs[i].overflowing_sub(borrow);
-            limbs[i] = res;
+
+        for limb in limbs.iter_mut().skip(1) {
+            let (res, overflow) = limb.overflowing_sub(borrow);
+            *limb = res;
             borrow = if overflow { 1 } else { 0 };
         }
+
         Self(limbs)
     }
 }
@@ -659,16 +662,11 @@ async fn main() {
     tokio::fs::create_dir_all(DATA_DIR).await.expect("Failed to create data dir");
 
     let initial_config = match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_else(|_| Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1260,
-        }),
-        Err(_) => Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1260,
-        },
+         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
+             live_data_frequency: 15,
+             liquid_hex: 0.0,
+             historical_start_day: 1260,
+         }),
     };
 
     let initial_miners = match tokio::fs::read_to_string(format!("{}/miners.json", DATA_DIR)).await {
