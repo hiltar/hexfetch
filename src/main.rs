@@ -662,11 +662,16 @@ async fn main() {
     tokio::fs::create_dir_all(DATA_DIR).await.expect("Failed to create data dir");
 
     let initial_config = match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
-         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
-             live_data_frequency: 15,
-             liquid_hex: 0.0,
-             historical_start_day: 1260,
-         }),
+        Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
+            live_data_frequency: 15,
+            liquid_hex: 0.0,
+            historical_start_day: 1260,
+        }),
+        Err(_) => Config {
+            live_data_frequency: 15,
+            liquid_hex: 0.0,
+            historical_start_day: 1260,
+        },
     };
 
     let initial_miners = match tokio::fs::read_to_string(format!("{}/miners.json", DATA_DIR)).await {
