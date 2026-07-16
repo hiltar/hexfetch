@@ -19,10 +19,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
+      - name: Create data directory for tests
+        run: sudo mkdir -p /opt/hexfetch && sudo chmod 777 /opt/hexfetch
       - name: Run cargo test
         run: cargo test --verbose
-        env:
-          HEXFETCH_DATA_DIR: /tmp/hexfetch-test
       - name: Run cargo clippy
         run: cargo clippy -- -D warnings
 
