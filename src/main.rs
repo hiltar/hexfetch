@@ -517,20 +517,39 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
 }
 
 async fn test_rpc(client: &Client, url: &str) -> bool {
-    let req_body = serde_json::json!({
+    let block_req = serde_json::json!({
         "jsonrpc": "2.0",
-        "method": "eth_chainId",
+        "method": "eth_blockNumber",
         "params": [],
         "id": 1
     });
+    
+    let basic_ok = match client.post(url).json(&block_req).send().await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => json.get("error").is_none() && json.get("result").is_some(),
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
+    
+    if !basic_ok {
+        return false; // Node is completely down
+    }
 
-    match client.post(url).json(&req_body).send().await {
-        Ok(resp) => {
-            match resp.json::<serde_json::Value>().await {
-                Ok(json) => json.get("error").is_none(),
-                Err(_) => false,
-            }
-        }
+    let call_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"],
+        "id": 2
+    });
+    
+    match client.post(url).json(&call_req).send().await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => {
+                json.get("error").is_none() && json.get("result").is_some()
+            },
+            Err(_) => false,
+        },
         Err(_) => false,
     }
 }
