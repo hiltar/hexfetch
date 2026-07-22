@@ -23,8 +23,23 @@ const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechainrpc.com",
 ];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-const HEX_JSON_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
+const DEXSCREENER_URL: &str =
+    "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+
+/// globals() selector: keccak256("globals()")[0..4]
+const GLOBALS_SELECTOR: &str = "0xc3124525";
+/// dailyData(uint256) selector: keccak256("dailyData(uint256)")[0..4]
+const DAILY_DATA_SELECTOR: &str = "0x90de6871";
+
+/// 1 HEX = 10^8 hearts
+const HEARTS_PER_HEX: f64 = 1e8;
+/// T-Share precision factor used in payout calculation
+const TSHARE_UNIT: f64 = 10000.0;
+
+/// Delay between RPC calls during backfill to avoid rate-limiting
+const BACKFILL_DELAY_MS: u64 = 60;
+/// Save progress to disk every N days during backfill
+const BACKFILL_SAVE_INTERVAL: usize = 200;
 
 #[derive(Embed)]
 #[folder = "static/"]
@@ -34,10 +49,13 @@ struct Assets;
 // NATIVE LOGGING MACROS
 // =============================================
 macro_rules! info {
-    ($($arg:tt)*) => { println!("[INFO] {}", format!($($arg)*)) }
+    ($($arg:tt)) => { println!("[INFO] {}", format!($($arg))) }
 }
 macro_rules! error {
-    ($($arg:tt)*) => { eprintln!("[ERROR] {}", format!($($arg)*)) }
+    ($($arg:tt)) => { eprintln!("[ERROR] {}", format!($($arg))) }
+}
+macro_rules! warn {
+    ($($arg:tt)) => { eprintln!("[WARN] {}", format!($($arg))) }
 }
 
 // =============================================
@@ -139,8 +157,12 @@ fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
     let d: u32 = parts.next()?.parse().ok()?;
     let m: u32 = parts.next()?.parse().ok()?;
     let y: i32 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() { return None; }
-    if !(1..=31).contains(&d) || !(1..=12).contains(&m) || !(2000..=2100).contains(&y) { return None; }
+    if parts.next().is_some() {
+        return None;
+    }
+    if !(1..=31).contains(&d) || !(1..=12).contains(&m) || !(2000..=2100).contains(&y) {
+        return None;
+    }
     Some((y, m, d))
 }
 
@@ -175,17 +197,17 @@ impl U256 {
     fn from_hex(s: &str) -> Self {
         let s = s.strip_prefix("0x").unwrap_or(s);
         let mut limbs = [0u64; 4];
-        if s.is_empty() { return Self::ZERO; }
-        
+        if s.is_empty() {
+            return Self::ZERO;
+        }
         let mut limb_idx = 0;
         let mut shift = 0;
-        
         for c in s.chars().rev() {
             let val = match c {
                 '0'..='9' => c as u64 - '0' as u64,
                 'a'..='f' => c as u64 - 'a' as u64 + 10,
                 'A'..='F' => c as u64 - 'A' as u64 + 10,
-                _ => continue, 
+                _ => continue,
             };
             if limb_idx < 4 {
                 limbs[limb_idx] |= val << shift;
@@ -212,19 +234,16 @@ impl U256 {
 
 impl std::ops::Sub<u64> for U256 {
     type Output = Self;
-
     fn sub(self, rhs: u64) -> Self {
         let mut limbs = self.0;
         let (res, overflow) = limbs[0].overflowing_sub(rhs);
         limbs[0] = res;
         let mut borrow = if overflow { 1 } else { 0 };
-
         for limb in limbs.iter_mut().skip(1) {
             let (res, overflow) = limb.overflowing_sub(borrow);
             *limb = res;
             borrow = if overflow { 1 } else { 0 };
         }
-
         Self(limbs)
     }
 }
@@ -243,24 +262,27 @@ impl std::fmt::LowerHex for U256 {
 // =============================================
 fn get_duration_until_next_3am_utc() -> std::time::Duration {
     let now = Utc::now();
-    
-    // Get today's date at exactly 03:00:00 UTC
-    let today_3am = now.date_naive().and_time(NaiveTime::from_hms_opt(3, 0, 0).unwrap());
+    let today_3am = now
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(3, 0, 0).unwrap());
     let mut next_3am = today_3am.and_utc();
-    
-    // If 3 AM UTC has already passed today, schedule for tomorrow
     if next_3am <= now {
         next_3am = next_3am.checked_add_days(Days::new(1)).unwrap();
     }
-    
-    // Convert chrono::Duration to std::time::Duration for tokio::time::sleep
-    (next_3am - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
+    (next_3am - now)
+        .to_std()
+        .unwrap_or(std::time::Duration::from_secs(60))
 }
 
 // =============================================
 // HELPERS & RPC LOGIC
 // =============================================
-async fn call_rpc(client: &Client, state: &Arc<AppState>, method: &str, params: serde_json::Value) -> Result<String, String> {
+async fn call_rpc(
+    client: &Client,
+    state: &Arc<AppState>,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<String, String> {
     let req_body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -271,20 +293,20 @@ async fn call_rpc(client: &Client, state: &Arc<AppState>, method: &str, params: 
     let start_idx = *state.active_rpc_idx.read().await;
     let mut last_err = String::new();
 
-    // Iterate through endpoints starting from the currently active one
     for i in 0..RPC_ENDPOINTS.len() {
         let idx = (start_idx + i) % RPC_ENDPOINTS.len();
         let url = RPC_ENDPOINTS[idx];
-
         match client.post(url).json(&req_body).send().await {
             Ok(resp) => match resp.json::<serde_json::Value>().await {
                 Ok(json) => {
                     if let Some(err) = json.get("error") {
-                        last_err = format!("RPC error on {}: {}", url, err["message"].as_str().unwrap_or("unknown"));
+                        last_err = format!(
+                            "RPC error on {}: {}",
+                            url,
+                            err["message"].as_str().unwrap_or("unknown")
+                        );
                         continue;
                     }
-                    
-                    // If we successfully connected to an endpoint other than the start_idx, update the active index
                     if idx != start_idx {
                         info!("Successfully connected to fallback RPC: {} (index {})", url, idx);
                         *state.active_rpc_idx.write().await = idx;
@@ -302,11 +324,326 @@ async fn call_rpc(client: &Client, state: &Arc<AppState>, method: &str, params: 
             }
         }
     }
-
     Err(format!("All RPC endpoints failed. Last error: {}", last_err))
 }
 
-async fn fetch_live_data(client: &Client, state: &Arc<AppState>) -> Result<LiveData, String> {
+// =============================================
+// 5. ON-CHAIN DATA READING (RPC-BASED HEXJSON)
+// =============================================
+
+/// Reads globals() from the HEX contract.
+/// Returns (tshare_rate_hex, daily_data_count, penalties_hex).
+async fn read_globals(
+    client: &Client,
+    state: &Arc<AppState>,
+) -> Result<(f64, u64, f64), String> {
+    let params = serde_json::json!([{"to": HEX_CONTRACT, "data": GLOBALS_SELECTOR}, "latest"]);
+    let hex_result = call_rpc(client, state, "eth_call", params).await?;
+    let g_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
+
+    if g_str.len() < 320 {
+        return Err(format!("globals() response too short ({} chars)", g_str.len()));
+    }
+
+    let share_rate_raw = U256::from_hex(&g_str[128..192]);
+    let penalty_raw = U256::from_hex(&g_str[192..256]);
+    let daily_data_count = U256::from_hex(&g_str[256..320]);
+
+    let tshare_rate = if share_rate_raw > U256::ZERO {
+        share_rate_raw.to_f64() / 10.0
+    } else {
+        0.0
+    };
+    let penalties = penalty_raw.to_f64() / 1e8;
+    let day_count = daily_data_count.to_f64() as u64;
+
+    Ok((tshare_rate, day_count, penalties))
+}
+
+/// Reads dailyData(day) from the HEX contract via eth_call.
+/// Returns (day_payout_hearts, day_stake_shares).
+async fn read_daily_data(
+    client: &Client,
+    state: &Arc<AppState>,
+    day: u64,
+) -> Result<(f64, f64), String> {
+    // ABI encode: selector + uint256(day) zero-padded to 64 hex chars
+    let call_data = format!("{}{:064x}", DAILY_DATA_SELECTOR, day);
+    let params = serde_json::json!([{"to": HEX_CONTRACT, "data": call_data}, "latest"]);
+    let hex_result = call_rpc(client, state, "eth_call", params).await?;
+    let d_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
+
+    if d_str.len() < 128 {
+        return Err(format!(
+            "dailyData({}) response too short ({} chars)",
+            day,
+            d_str.len()
+        ));
+    }
+
+    let day_payout = U256::from_hex(&d_str[0..64]);
+    let day_shares = U256::from_hex(&d_str[64..128]);
+
+    Ok((day_payout.to_f64(), day_shares.to_f64()))
+}
+
+/// Fetches the current HEX price from DEXScreener.
+async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
+    let resp: serde_json::Value = client
+        .get(DEXSCREENER_URL)
+        .send()
+        .await
+        .map_err(|e| format!("DEXScreener request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
+
+    let price = resp["pairs"][0]["priceUsd"]
+        .as_f64()
+        .or_else(|| resp["pairs"][0]["priceUsd"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0.0);
+
+    if price <= 0.0 {
+        return Err("DEXScreener returned zero or invalid price".to_string());
+    }
+    Ok(price)
+}
+
+// =============================================
+// 6. HEXJSON PERSISTENCE
+// =============================================
+
+fn hexjson_file_path() -> String {
+    format!("{}/hexjson.json", DATA_DIR)
+}
+
+async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
+    let path = hexjson_file_path();
+    match serde_json::to_string(data) {
+        Ok(json) => {
+            if let Err(e) = tokio::fs::write(&path, json).await {
+                error!("Failed to save hexjson to {}: {}", path, e);
+            }
+        }
+        Err(e) => error!("Failed to serialize hexjson: {}", e),
+    }
+}
+
+async fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
+    let path = hexjson_file_path();
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => match serde_json::from_str::<Vec<HexJsonEntry>>(&content) {
+            Ok(data) => {
+                info!("Loaded {} hexjson entries from file", data.len());
+                data
+            }
+            Err(e) => {
+                warn!("Failed to parse hexjson file: {}. Starting fresh.", e);
+                Vec::new()
+            }
+        },
+        Err(_) => {
+            info!("No hexjson file found. Will build from RPC.");
+            Vec::new()
+        }
+    }
+}
+
+// =============================================
+// 7. BACKFILL: BUILD HEXJSON ENTIRELY FROM RPC
+// =============================================
+
+/// Builds the complete HEXJSON history from on-chain data.
+/// - dailyPayoutHEX and payoutPerTshareHEX are read per-day from the contract (accurate).
+/// - tshareRateHEX uses the current globals() value (best available for history).
+/// - pricePulseX uses the current DEXScreener price (best available for history).
+async fn backfill_hex_json(
+    client: &Client,
+    state: &Arc<AppState>,
+    existing_data: &[HexJsonEntry],
+) -> Vec<HexJsonEntry> {
+    info!("Starting HEXJSON backfill from on-chain RPC data...");
+
+    // 1. Get current globals (tshare rate + day count)
+    let (tshare_rate, day_count, _penalties) = match read_globals(client, state).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Backfill failed: cannot read globals(): {}", e);
+            return existing_data.to_vec();
+        }
+    };
+    info!(
+        "globals(): tshareRate={:.1} HEX, dailyDataCount={}",
+        tshare_rate, day_count
+    );
+
+    if day_count == 0 {
+        warn!("dailyDataCount is 0. Nothing to backfill.");
+        return existing_data.to_vec();
+    }
+
+    // 2. Get current price from DEXScreener
+    let price = match fetch_price_dexscreener(client).await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("DEXScreener price fetch failed during backfill: {}. Using 0.0.", e);
+            0.0
+        }
+    };
+    info!("Current HEX price from DEXScreener: ${:.8}", price);
+
+    // 3. Determine which days we already have
+    let existing_max_day = existing_data.iter().map(|e| e.current_day).max().unwrap_or(0);
+    let start_day = if existing_max_day > 0 {
+        existing_max_day + 1
+    } else {
+        1 // Start from day 1 (day 0 typically has no meaningful data)
+    };
+
+    if start_day >= day_count {
+        info!("HEXJSON already up to date (max day {} >= count {}).", existing_max_day, day_count);
+        return existing_data.to_vec();
+    }
+
+    let total_to_fetch = day_count - start_day;
+    info!(
+        "Backfilling days {} to {} ({} entries to fetch)...",
+        start_day,
+        day_count - 1,
+        total_to_fetch
+    );
+
+    // 4. Iterate through each day and read dailyData
+    let mut new_entries: Vec<HexJsonEntry> = Vec::with_capacity(total_to_fetch as usize);
+    let mut consecutive_errors = 0u32;
+    let max_consecutive_errors = 50u32;
+
+    for day in start_day..day_count {
+        match read_daily_data(client, state, day).await {
+            Ok((payout_hearts, shares)) => {
+                consecutive_errors = 0;
+
+                let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
+                let payout_per_tshare = if shares > 0.0 {
+                    (payout_hearts / shares) * TSHARE_UNIT
+                } else {
+                    0.0
+                };
+
+                // Skip days with absolutely zero data (pre-staking era)
+                if daily_payout_hex == 0.0 && shares == 0.0 && day < 10 {
+                    continue;
+                }
+
+                new_entries.push(HexJsonEntry {
+                    current_day: day,
+                    tshare_rate_hex: tshare_rate,
+                    daily_payout_hex,
+                    payout_per_tshare_hex: payout_per_tshare,
+                    price_pulse_x: price,
+                });
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= max_consecutive_errors {
+                    error!(
+                        "Backfill aborted at day {}: {} consecutive errors. Last: {}",
+                        day, consecutive_errors, e
+                    );
+                    break;
+                }
+                // Log only occasionally to avoid spam
+                if consecutive_errors <= 3 || consecutive_errors % 20 == 0 {
+                    warn!("Backfill: error reading day {}: {}", day, e);
+                }
+            }
+        }
+
+        // Progress logging
+        let fetched = (day - start_day + 1) as usize;
+        if fetched % 100 == 0 || fetched == total_to_fetch as usize {
+            info!(
+                "Backfill progress: {}/{} days fetched ({:.1}%)",
+                fetched,
+                total_to_fetch,
+                (fetched as f64 / total_to_fetch as f64) * 100.0
+            );
+        }
+
+        // Periodic save to avoid losing progress
+        if fetched % BACKFILL_SAVE_INTERVAL == 0 && !new_entries.is_empty() {
+            let mut partial = existing_data.to_vec();
+            partial.extend(new_entries.clone());
+            partial.sort_by_key(|e| e.current_day);
+            save_hex_json_to_file(&partial).await;
+            info!("Backfill: intermediate save ({} total entries)", partial.len());
+        }
+
+        // Rate-limit delay
+        tokio::time::sleep(Duration::from_millis(BACKFILL_DELAY_MS)).await;
+    }
+
+    // 5. Merge with existing data
+    let mut result = existing_data.to_vec();
+    result.extend(new_entries);
+    result.sort_by_key(|e| e.current_day);
+    result.dedup_by_key(|e| e.current_day);
+
+    info!(
+        "Backfill complete. Total HEXJSON entries: {}",
+        result.len()
+    );
+    result
+}
+
+// =============================================
+// 8. DAILY RECORDING (GOING FORWARD)
+// =============================================
+
+/// Records a single day's data using live RPC + DEXScreener values.
+/// Called daily at 3 AM UTC.
+async fn record_daily_entry(
+    client: &Client,
+    state: &Arc<AppState>,
+) -> Result<HexJsonEntry, String> {
+    // Get current globals
+    let (tshare_rate, day_count, _) = read_globals(client, state).await?;
+
+    if day_count == 0 {
+        return Err("dailyDataCount is 0, cannot record".to_string());
+    }
+
+    // The most recently completed day is day_count - 1
+    let target_day = day_count - 1;
+
+    // Get daily payout data for the completed day
+    let (payout_hearts, shares) = read_daily_data(client, state, target_day).await?;
+    let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
+    let payout_per_tshare = if shares > 0.0 {
+        (payout_hearts / shares) * TSHARE_UNIT
+    } else {
+        0.0
+    };
+
+    // Get current price
+    let price = fetch_price_dexscreener(client).await.unwrap_or(0.0);
+
+    Ok(HexJsonEntry {
+        current_day: target_day,
+        tshare_rate_hex: tshare_rate,
+        daily_payout_hex,
+        payout_per_tshare_hex: payout_per_tshare,
+        price_pulse_x: price,
+    })
+}
+
+// =============================================
+// 9. LIVE DATA FETCHING (UNCHANGED)
+// =============================================
+async fn fetch_live_data(
+    client: &Client,
+    state: &Arc<AppState>,
+) -> Result<LiveData, String> {
     let dex_resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
         .send()
@@ -325,40 +662,14 @@ async fn fetch_live_data(client: &Client, state: &Arc<AppState>) -> Result<LiveD
     let gas_price_wei = U256::from_hex(&gas_price_hex);
     let beat = gas_price_wei.to_f64() / 1e9;
 
-    let globals_data = serde_json::json!([{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"]);
-    let globals_hex = call_rpc(client, state, "eth_call", globals_data).await?;
-    let g_str = globals_hex.strip_prefix("0x").unwrap_or(&globals_hex);
-
-    let mut tshare_rate = 0.0;
-    let mut penalties = 0.0;
-    let mut daily_data_count = U256::ZERO;
-
-    if g_str.len() >= 320 {
-        let share_rate = U256::from_hex(&g_str[128..192]);
-        let penalty_total = U256::from_hex(&g_str[192..256]);
-        daily_data_count = U256::from_hex(&g_str[256..320]);
-
-        if share_rate > U256::ZERO {
-            tshare_rate = share_rate.to_f64() / 10.0;
-        }
-        penalties = penalty_total.to_f64() / 1e8;
-    }
+    let (tshare_rate, daily_data_count, penalties) = read_globals(client, state).await?;
 
     let mut payout_per_tshare = 0.0;
-    if daily_data_count > U256::ZERO {
+    if daily_data_count > 0 {
         let day_to_query = daily_data_count - 1;
-        let day_padded = format!("0x90de6871{:x}", day_to_query);
-        let daily_data = serde_json::json!([{"to": HEX_CONTRACT, "data": day_padded}, "latest"]);
-        
-        if let Ok(daily_hex) = call_rpc(client, state, "eth_call", daily_data).await {
-            let d_str = daily_hex.strip_prefix("0x").unwrap_or(&daily_hex);
-            if d_str.len() >= 192 {
-                let day_payout = U256::from_hex(&d_str[0..64]);
-                let day_shares = U256::from_hex(&d_str[64..128]);
-                
-                if day_shares > U256::ZERO {
-                    payout_per_tshare = (day_payout.to_f64() / day_shares.to_f64()) * 10000.0;
-                }
+        if let Ok((payout_hearts, shares)) = read_daily_data(client, state, day_to_query).await {
+            if shares > 0.0 {
+                payout_per_tshare = (payout_hearts / shares) * TSHARE_UNIT;
             }
         }
     }
@@ -376,7 +687,10 @@ async fn fetch_live_data(client: &Client, state: &Arc<AppState>) -> Result<LiveD
 // =============================================
 // LIVE DATA WITH RETRY
 // =============================================
-async fn fetch_live_data_with_retry(client: &Client, state: &Arc<AppState>) -> Result<LiveData, String> {
+async fn fetch_live_data_with_retry(
+    client: &Client,
+    state: &Arc<AppState>,
+) -> Result<LiveData, String> {
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(30);
     let start = Instant::now();
@@ -386,86 +700,18 @@ async fn fetch_live_data_with_retry(client: &Client, state: &Arc<AppState>) -> R
         match fetch_live_data(client, state).await {
             Ok(data) => return Ok(data),
             Err(e) => {
-                let is_network_error = e.to_lowercase().contains("connection") 
+                let is_network_error = e.to_lowercase().contains("connection")
                     || e.to_lowercase().contains("dns")
                     || e.to_lowercase().contains("timeout")
                     || e.to_lowercase().contains("request")
                     || e.to_lowercase().contains("all rpc endpoints failed");
-                
+
                 if !is_network_error || start.elapsed() > max_elapsed {
                     return Err(format!("Live data fetch failed after retries: {}", e));
                 }
-                
                 tokio::time::sleep(delay).await;
                 delay = std::cmp::min(delay * 2, max_delay);
             }
-        }
-    }
-}
-
-// =============================================
-// HEXJSON FETCHING & MERGING
-// =============================================
-async fn fetch_hex_json(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
-    let resp = client
-        .get(HEX_JSON_URL)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-        
-    if !resp.status().is_success() {
-        return Err(format!("Status {}", resp.status()));
-    }
-    
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    
-    serde_json::from_str::<Vec<HexJsonEntry>>(&text).map_err(|e| {
-        let snippet: String = text.chars().take(300).collect();
-        format!("JSON decode error: {}. Snippet: {}", e, snippet)
-    })
-}
-
-async fn fetch_hex_json_with_retry(client: &Client) -> Result<Vec<HexJsonEntry>, String> {
-    let mut delay = Duration::from_secs(1);
-    let max_delay = Duration::from_secs(60);
-    let start = Instant::now();
-    let max_elapsed = Duration::from_secs(5 * 60);
-
-    loop {
-        match fetch_hex_json(client).await {
-            Ok(data) => return Ok(data),
-            Err(e) => {
-                if start.elapsed() > max_elapsed {
-                    return Err(format!("Max elapsed time reached: {}", e));
-                }
-                error!("HEXJSON fetch error: {}. Retrying in {:?}...", e, delay);
-                tokio::time::sleep(delay).await;
-                delay = std::cmp::min(delay * 2, max_delay);
-            }
-        }
-    }
-}
-
-async fn update_local_hex_json(state: Arc<AppState>, client: &Client) {
-    match fetch_hex_json_with_retry(client).await {
-        Ok(remote) => {
-            let mut local = state.hex_json.write().await;
-            let local_max = local.iter().map(|e| e.current_day).max().unwrap_or(0);
-            
-            let mut new_entries: Vec<HexJsonEntry> = remote
-                .into_iter()
-                .filter(|e| e.current_day > local_max)
-                .collect();
-                
-            if !new_entries.is_empty() || local.is_empty() {
-                new_entries.extend(local.clone());
-                new_entries.sort_by_key(|e| e.current_day);
-                *local = new_entries;
-                info!("HEXJSON updated. Total entries: {}", local.len());
-            }
-        }
-        Err(e) => {
-            error!("HEXJSON fetch failed after retries: {}", e);
         }
     }
 }
@@ -500,19 +746,116 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
                 }
                 _ = rx.recv() => {
                     info!("Config changed, restarting updater loop...");
-                    break; 
+                    break;
                 }
             }
         }
     }
 }
 
+/// HEXJSON updater: backfills on startup, then records daily at 3 AM UTC.
+/// Fully self-contained — no external HEXJSON API dependency.
 async fn hex_json_updater(state: Arc<AppState>, client: Client) {
+    // --- Phase 1: Initial load or backfill ---
+    let file_data = load_hex_json_from_file().await;
+
+    let initial_data = if file_data.is_empty() {
+        info!("No persisted HEXJSON data. Building from RPC (this may take several minutes)...");
+        let backfilled = backfill_hex_json(&client, &state, &[]).await;
+        save_hex_json_to_file(&backfilled).await;
+        backfilled
+    } else {
+        // Check if we need to catch up (e.g., program was offline for days)
+        let max_day_in_file = file_data.iter().map(|e| e.current_day).max().unwrap_or(0);
+        match read_globals(&client, &state).await {
+            Ok((_, day_count, _)) => {
+                if day_count > max_day_in_file + 1 {
+                    info!(
+                        "HEXJSON file is behind (file max day={}, chain day count={}). Catching up...",
+                        max_day_in_file, day_count
+                    );
+                    let updated = backfill_hex_json(&client, &state, &file_data).await;
+                    save_hex_json_to_file(&updated).await;
+                    updated
+                } else {
+                    file_data
+                }
+            }
+            Err(e) => {
+                warn!("Cannot check chain state for catch-up: {}. Using file data as-is.", e);
+                file_data
+            }
+        }
+    };
+
+    // Store in memory
+    {
+        let mut hex_json = state.hex_json.write().await;
+        *hex_json = initial_data;
+        info!("HEXJSON loaded into memory: {} entries", hex_json.len());
+    }
+
+    // --- Phase 2: Daily recording loop at 3 AM UTC ---
     loop {
-        let sleep_duration = get_duration_until_next_3am_utc();        
+        let sleep_duration = get_duration_until_next_3am_utc();
+        info!(
+            "HEXJSON updater sleeping for {:?} until next 3 AM UTC recording...",
+            sleep_duration
+        );
         tokio::time::sleep(sleep_duration).await;
-        info!("Running daily HEXJSON update at 3:00 AM UTC...");
-        update_local_hex_json(state.clone(), &client).await;
+
+        info!("Running daily HEXJSON recording...");
+
+        // Retry logic for daily recording
+        let mut delay = Duration::from_secs(5);
+        let max_retries = 10;
+        let mut recorded = false;
+
+        for attempt in 1..=max_retries {
+            match record_daily_entry(&client, &state).await {
+                Ok(entry) => {
+                    let mut hex_json = state.hex_json.write().await;
+
+                    // Avoid duplicates
+                    if hex_json.iter().any(|e| e.current_day == entry.current_day) {
+                        info!(
+                            "Day {} already recorded. Skipping.",
+                            entry.current_day
+                        );
+                    } else {
+                        info!(
+                            "Recorded day {}: payout={:.2} HEX, payout/tshare={:.4} HEX, tshareRate={:.1}, price=${:.8}",
+                            entry.current_day,
+                            entry.daily_payout_hex,
+                            entry.payout_per_tshare_hex,
+                            entry.tshare_rate_hex,
+                            entry.price_pulse_x
+                        );
+                        hex_json.push(entry);
+                        hex_json.sort_by_key(|e| e.current_day);
+                    }
+
+                    // Persist to file
+                    let data_clone = hex_json.clone();
+                    drop(hex_json);
+                    save_hex_json_to_file(&data_clone).await;
+                    recorded = true;
+                    break;
+                }
+                Err(e) => {
+                    warn!(
+                        "Daily recording attempt {}/{} failed: {}. Retrying in {:?}...",
+                        attempt, max_retries, e, delay
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = std::cmp::min(delay * 2, Duration::from_secs(120));
+                }
+            }
+        }
+
+        if !recorded {
+            error!("Daily HEXJSON recording failed after {} attempts. Will retry next cycle.", max_retries);
+        }
     }
 }
 
@@ -523,7 +866,6 @@ async fn test_rpc(client: &Client, url: &str) -> bool {
         "params": [],
         "id": 1
     });
-    
     let basic_ok = match client.post(url).json(&block_req).send().await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(json) => json.get("error").is_none() && json.get("result").is_some(),
@@ -531,23 +873,19 @@ async fn test_rpc(client: &Client, url: &str) -> bool {
         },
         Err(_) => false,
     };
-    
     if !basic_ok {
-        return false; // Node is completely down
+        return false;
     }
 
     let call_req = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "eth_call",
-        "params": [{"to": HEX_CONTRACT, "data": "0xc3124525"}, "latest"],
+        "params": [{"to": HEX_CONTRACT, "data": GLOBALS_SELECTOR}, "latest"],
         "id": 2
     });
-    
     match client.post(url).json(&call_req).send().await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
-            Ok(json) => {
-                json.get("error").is_none() && json.get("result").is_some()
-            },
+            Ok(json) => json.get("error").is_none() && json.get("result").is_some(),
             Err(_) => false,
         },
         Err(_) => false,
@@ -556,12 +894,14 @@ async fn test_rpc(client: &Client, url: &str) -> bool {
 
 async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
     loop {
-        // Wait 24 hours before checking
         tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
-        
+
         let current_idx = *state.active_rpc_idx.read().await;
         if current_idx != 0 {
-            info!("24h RPC health check: Testing primary RPC endpoint ({})...", RPC_ENDPOINTS[0]);
+            info!(
+                "24h RPC health check: Testing primary RPC endpoint ({})...",
+                RPC_ENDPOINTS[0]
+            );
             if test_rpc(&client, RPC_ENDPOINTS[0]).await {
                 info!("Primary RPC endpoint is back online! Switching back.");
                 *state.active_rpc_idx.write().await = 0;
@@ -599,14 +939,13 @@ async fn handle_post_config(
     *config = new_config;
     let cfg_clone = config.clone();
     drop(config);
-    
+
     let _ = state.config_tx.send(());
-    
+
     let path = format!("{}/config.json", DATA_DIR);
     if let Ok(json) = serde_json::to_string_pretty(&cfg_clone) {
         let _ = tokio::fs::write(path, json).await;
     }
-    
     StatusCode::OK
 }
 
@@ -616,7 +955,6 @@ async fn handle_add_miner(
 ) -> impl IntoResponse {
     let start = parse_date(&miner.start_date);
     let end = parse_date(&miner.end_date);
-
     if start.is_none() || end.is_none() || end.unwrap() < start.unwrap() || miner.t_shares <= 0.0 {
         return StatusCode::BAD_REQUEST;
     }
@@ -625,7 +963,7 @@ async fn handle_add_miner(
     miners.push(miner);
     let miners_clone = miners.clone();
     drop(miners);
-    
+
     let path = format!("{}/miners.json", DATA_DIR);
     if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
         let _ = tokio::fs::write(path, json).await;
@@ -642,7 +980,7 @@ async fn handle_end_miner(
         miners[req.index].status = Some("completed".to_string());
         let miners_clone = miners.clone();
         drop(miners);
-        
+
         let path = format!("{}/miners.json", DATA_DIR);
         if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
             let _ = tokio::fs::write(path, json).await;
@@ -662,7 +1000,7 @@ async fn handle_delete_miner(
         miners.remove(req.index);
         let miners_clone = miners.clone();
         drop(miners);
-        
+
         let path = format!("{}/miners.json", DATA_DIR);
         if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
             let _ = tokio::fs::write(path, json).await;
@@ -678,25 +1016,29 @@ async fn handle_delete_miner(
 // =============================================
 #[tokio::main]
 async fn main() {
-    tokio::fs::create_dir_all(DATA_DIR).await.expect("Failed to create data dir");
+    tokio::fs::create_dir_all(DATA_DIR)
+        .await
+        .expect("Failed to create data dir");
 
-    let initial_config = match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1260,
-        }),
-        Err(_) => Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1260,
-        },
-    };
+    let initial_config =
+        match tokio::fs::read_to_string(format!("{}/config.json", DATA_DIR)).await {
+            Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
+                live_data_frequency: 15,
+                liquid_hex: 0.0,
+                historical_start_day: 1260,
+            }),
+            Err(_) => Config {
+                live_data_frequency: 15,
+                liquid_hex: 0.0,
+                historical_start_day: 1260,
+            },
+        };
 
-    let initial_miners = match tokio::fs::read_to_string(format!("{}/miners.json", DATA_DIR)).await {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+    let initial_miners =
+        match tokio::fs::read_to_string(format!("{}/miners.json", DATA_DIR)).await {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
 
     let (config_tx, _) = broadcast::channel(16);
 
@@ -706,24 +1048,18 @@ async fn main() {
         miners: RwLock::new(initial_miners),
         config: RwLock::new(initial_config),
         config_tx,
-        active_rpc_idx: RwLock::new(0), // Initialize to first endpoint
+        active_rpc_idx: RwLock::new(0),
     });
 
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
-        
-    let client_for_hex = client.clone();
-    let state_for_hex = state.clone();
-    tokio::spawn(async move {
-        info!("Fetching initial HEXJSON data...");
-        update_local_hex_json(state_for_hex, &client_for_hex).await;
-    });
 
+    // Spawn background tasks
     tokio::spawn(live_data_updater(state.clone(), client.clone()));
     tokio::spawn(hex_json_updater(state.clone(), client.clone()));
-    tokio::spawn(rpc_health_checker(state.clone(), client));
+    tokio::spawn(rpc_health_checker(state.clone(), client.clone()));
 
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
@@ -736,14 +1072,15 @@ async fn main() {
         .fallback(get(|uri: axum::http::Uri| async move {
             let path = uri.path().trim_start_matches('/');
             let path = if path.is_empty() { "index.html" } else { path };
-            
             match Assets::get(path) {
                 Some(content) => {
                     let mime = get_mime_type(path);
-                    Ok::<_, StatusCode>(axum::response::Response::builder()
-                        .header("Content-Type", mime)
-                        .body(axum::body::Body::from(content.data.into_owned()))
-                        .unwrap())
+                    Ok::<_, StatusCode>(
+                        axum::response::Response::builder()
+                            .header("Content-Type", mime)
+                            .body(axum::body::Body::from(content.data.into_owned()))
+                            .unwrap(),
+                    )
                 }
                 None => Err(StatusCode::NOT_FOUND),
             }
@@ -752,11 +1089,10 @@ async fn main() {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 5555));
     info!("⬢ HEX Stats server starting on {} ⬢", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
-
 
 // ==========================================
 // TEST UNITS
@@ -767,9 +1103,6 @@ mod tests {
     use axum::http::StatusCode;
     use tokio::sync::broadcast;
 
-    // ==========================================
-    // TEST HELPER: Create a mock AppState
-    // ==========================================
     fn create_test_state() -> Arc<AppState> {
         let (config_tx, _) = broadcast::channel(16);
         Arc::new(AppState {
@@ -786,25 +1119,19 @@ mod tests {
         })
     }
 
-    // ==========================================
-    // 1. UNIT TESTS: UTILS & PARSING
-    // ==========================================
-
     #[test]
     fn test_parse_date_valid() {
-        // Test standard valid dates
         assert_eq!(parse_date("15-08-2023"), Some((2023, 8, 15)));
         assert_eq!(parse_date("01-01-2000"), Some((2000, 1, 1)));
     }
 
     #[test]
     fn test_parse_date_invalid() {
-        // Test bounds and malformed strings
-        assert_eq!(parse_date("32-01-2020"), None); // Day > 31
-        assert_eq!(parse_date("15-13-2020"), None); // Month > 12
-        assert_eq!(parse_date("15-08-1999"), None); // Year < 2000
+        assert_eq!(parse_date("32-01-2020"), None);
+        assert_eq!(parse_date("15-13-2020"), None);
+        assert_eq!(parse_date("15-08-1999"), None);
         assert_eq!(parse_date("invalid-date"), None);
-        assert_eq!(parse_date("15-08-2023-extra"), None); // Too many parts
+        assert_eq!(parse_date("15-08-2023-extra"), None);
     }
 
     #[test]
@@ -819,23 +1146,39 @@ mod tests {
 
     #[test]
     fn test_u256_from_hex_and_math() {
-        // 0x400 is 1024 in decimal
         let val = U256::from_hex("0x400");
         assert_eq!(val.to_f64(), 1024.0);
 
-        // Test subtraction (Crucial for your daily_data_count - 1 logic)
         let res = val - 24;
         assert_eq!(res.to_f64(), 1000.0);
 
-        // Test large hex (simulating T-Share rate or wei)
-        let large_val = U256::from_hex("0xDE0B6B3A7640000"); // 1 ETH in wei (1e18)
+        let large_val = U256::from_hex("0xDE0B6B3A7640000");
         assert!(large_val.to_f64() > 1e17);
     }
 
-    // ==========================================
-    // 2. INTEGRATION TESTS: API HANDLERS
-    // ==========================================
-    
+    #[test]
+    fn test_daily_data_call_encoding() {
+        // Verify ABI encoding for dailyData(uint256)
+        let day: u64 = 1500;
+        let call_data = format!("{}{:064x}", DAILY_DATA_SELECTOR, day);
+        assert_eq!(call_data.len(), 2 + 8 + 64); // "0x" + selector + 64 hex chars
+        assert!(call_data.starts_with("0x90de6871"));
+        assert!(call_data.ends_with("5dc")); // 1500 in hex
+    }
+
+    #[test]
+    fn test_payout_calculation() {
+        // Simulate: 1,000,000 HEX payout (in hearts), 500,000 shares
+        let payout_hearts = 1_000_000.0 * HEARTS_PER_HEX; // 1e14 hearts
+        let shares = 500_000.0;
+        let payout_per_tshare = (payout_hearts / shares) * TSHARE_UNIT;
+        // = (1e14 / 5e5) * 1e4 = 2e8 * 1e4 = 2e12
+        assert!(payout_per_tshare > 0.0);
+
+        let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
+        assert_eq!(daily_payout_hex, 1_000_000.0);
+    }
+
     #[tokio::test]
     async fn test_handle_add_miner_success() {
         let state = create_test_state();
@@ -845,14 +1188,9 @@ mod tests {
             t_shares: 100.0,
             status: None,
         };
-        
         let response = handle_add_miner(State(state.clone()), Json(miner)).await;
-        
-        // The handler returns `impl IntoResponse`, so we convert it to check the HTTP status
         let status = response.into_response().status();
         assert_eq!(status, StatusCode::CREATED);
-        
-        // Verify the in-memory state was updated
         let miners = state.miners.read().await;
         assert_eq!(miners.len(), 1);
         assert_eq!(miners[0].t_shares, 100.0);
@@ -862,16 +1200,13 @@ mod tests {
     async fn test_handle_add_miner_invalid_date() {
         let state = create_test_state();
         let miner = Miner {
-            start_date: "32-01-2023".to_string(), // Invalid day
+            start_date: "32-01-2023".to_string(),
             end_date: "01-01-2024".to_string(),
             t_shares: 100.0,
             status: None,
         };
-        
         let response = handle_add_miner(State(state.clone()), Json(miner)).await;
         assert_eq!(response.into_response().status(), StatusCode::BAD_REQUEST);
-        
-        // Verify state was NOT updated because validation failed
         assert_eq!(state.miners.read().await.len(), 0);
     }
 
@@ -880,11 +1215,10 @@ mod tests {
         let state = create_test_state();
         let miner = Miner {
             start_date: "01-01-2024".to_string(),
-            end_date: "01-01-2023".to_string(), // End before start
+            end_date: "01-01-2023".to_string(),
             t_shares: 100.0,
             status: None,
         };
-        
         let response = handle_add_miner(State(state.clone()), Json(miner)).await;
         assert_eq!(response.into_response().status(), StatusCode::BAD_REQUEST);
     }
@@ -892,8 +1226,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_delete_miner() {
         let state = create_test_state();
-        
-        // Pre-populate state with a miner
         {
             let mut miners = state.miners.write().await;
             miners.push(Miner {
@@ -903,20 +1235,16 @@ mod tests {
                 status: None,
             });
         }
-
         let req = IndexRequest { index: 0 };
         let response = handle_delete_miner(State(state.clone()), Json(req)).await;
         assert_eq!(response.into_response().status(), StatusCode::OK);
-        
-        // Verify it was removed
         assert_eq!(state.miners.read().await.len(), 0);
     }
 
     #[tokio::test]
     async fn test_handle_delete_miner_out_of_bounds() {
         let state = create_test_state();
-        let req = IndexRequest { index: 99 }; // No miners exist, so 99 is invalid
-        
+        let req = IndexRequest { index: 99 };
         let response = handle_delete_miner(State(state.clone()), Json(req)).await;
         assert_eq!(response.into_response().status(), StatusCode::BAD_REQUEST);
     }
@@ -929,13 +1257,31 @@ mod tests {
             liquid_hex: 1000.0,
             historical_start_day: 1000,
         };
-        
         let response = handle_post_config(State(state.clone()), Json(new_config)).await;
         assert_eq!(response.into_response().status(), StatusCode::OK);
-        
-        // Verify state update
         let config = state.config.read().await;
         assert_eq!(config.live_data_frequency, 5);
         assert_eq!(config.liquid_hex, 1000.0);
+    }
+
+    #[test]
+    fn test_hexjson_entry_serialization() {
+        let entry = HexJsonEntry {
+            current_day: 1500,
+            tshare_rate_hex: 12345.6,
+            daily_payout_hex: 789.01,
+            payout_per_tshare_hex: 0.005,
+            price_pulse_x: 0.00012,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"currentDay\":1500"));
+        assert!(json.contains("\"tshareRateHEX\":"));
+        assert!(json.contains("\"dailyPayoutHEX\":"));
+        assert!(json.contains("\"payoutPerTshareHEX\":"));
+        assert!(json.contains("\"pricePulseX\":"));
+
+        // Verify round-trip
+        let parsed: HexJsonEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.current_day, 1500);
     }
 }
