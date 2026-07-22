@@ -1,6 +1,6 @@
 [package]
 name = "hexfetch-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -13,9 +13,9 @@ serde_json = "1.0"
 rust-embed = "8.4"
 
 [profile.release]
-opt-level = "z"           # Optimize strictly for binary size
-lto = "fat"               # Explicit Fat LTO (merges all crates into one optimization unit)
-codegen-units = 1         # Slower compile, better optimization
-strip = "symbols"         # Explicitly strip all symbols and debug info
-panic = "abort"           # Remove unwind tables
-debug = false             # Ensure no debug info is generated
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+debug = false
