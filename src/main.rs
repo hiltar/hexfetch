@@ -49,13 +49,13 @@ struct Assets;
 // NATIVE LOGGING MACROS
 // =============================================
 macro_rules! info {
-    ($($arg:tt)) => { println!("[INFO] {}", format!($($arg))) }
+    ($($arg:tt)*) => { println!("[INFO] {}", format!($($arg)*)) }
 }
 macro_rules! error {
-    ($($arg:tt)) => { eprintln!("[ERROR] {}", format!($($arg))) }
+    ($($arg:tt)*) => { eprintln!("[ERROR] {}", format!($($arg)*)) }
 }
 macro_rules! warn {
-    ($($arg:tt)) => { eprintln!("[WARN] {}", format!($($arg))) }
+    ($($arg:tt)*) => { eprintln!("[WARN] {}", format!($($arg)*)) }
 }
 
 // =============================================
