@@ -33,7 +33,7 @@ const DEXSCREENER_URL: &str =
 
 /// CoinGecko – HEX on PulseChain (per-day historical prices)
 const COINGECKO_URL: &str =
-    "https://api.coingecko.com/api/v3/coins/hex-pulsechain/market_chart?vs_currency=usd&days=max&interval=daily";
+    "https://api.coingecko.com/api/v3/coins/hex-pulsechain/market_chart?vs_currency=usd&days=365&interval=daily";
 
 /// HEXDailyStats – used ONCE during initial backfill for historical T-Share rates.
 /// After the first successful backfill the system never contacts this endpoint again.
@@ -429,7 +429,7 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
-/// Historical per-day prices from CoinGecko (hex-pulsechain).
+/// Historical per-day prices from CoinGecko (hex-pulsechain, last 365 days).
 /// Returns HashMap<hex_day, price_usd>. Empty map on any failure.
 async fn fetch_price_history_coingecko(client: &Client) -> HashMap<u64, f64> {
     let resp: serde_json::Value = match client.get(COINGECKO_URL).send().await {
@@ -445,6 +445,16 @@ async fn fetch_price_history_coingecko(client: &Client) -> HashMap<u64, f64> {
             return HashMap::new();
         }
     };
+
+    // Check for CoinGecko API-level errors (rate limit, time range, etc.)
+    if let Some(err) = resp.get("error").or_else(|| resp.get("status")) {
+        let msg = err["error_message"]
+            .as_str()
+            .or_else(|| err["message"].as_str())
+            .unwrap_or("unknown error");
+        warn!("CoinGecko API error: {}", msg);
+        return HashMap::new();
+    }
 
     let prices = match resp["prices"].as_array() {
         Some(p) => p,
