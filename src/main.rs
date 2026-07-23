@@ -437,7 +437,8 @@ async fn fetch_price_history_coingecko(client: &Client) -> HashMap<u64, f64> {
         .header("User-Agent", "hexfetch/0.2.0")
         .send()
         .await
-        {
+    {
+        Ok(r) => match r.json().await {
             Ok(v) => v,
             Err(e) => {
                 warn!("CoinGecko JSON parse failed: {}", e);
