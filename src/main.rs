@@ -432,8 +432,12 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
 /// Historical per-day prices from CoinGecko (hex-pulsechain, last 365 days).
 /// Returns HashMap<hex_day, price_usd>. Empty map on any failure.
 async fn fetch_price_history_coingecko(client: &Client) -> HashMap<u64, f64> {
-    let resp: serde_json::Value = match client.get(COINGECKO_URL).send().await {
-        Ok(r) => match r.json().await {
+    let resp: serde_json::Value = match client
+        .get(COINGECKO_URL)
+        .header("User-Agent", "hexfetch/0.2.0")
+        .send()
+        .await
+        {
             Ok(v) => v,
             Err(e) => {
                 warn!("CoinGecko JSON parse failed: {}", e);
