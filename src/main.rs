@@ -434,7 +434,7 @@ async fn fetch_hexdailystats_backfill(
         Ok(r) => r,
         Err(e) => {
             warn!(
-                "HEXDailyStats unreachable: {}. Will use CoinGecko prices + current T-Share rate.",
+                "HEXDailyStats unreachable: {}",
                 e
             );
             return (HashMap::new(), HashMap::new());
@@ -443,7 +443,7 @@ async fn fetch_hexdailystats_backfill(
 
     if !resp.status().is_success() {
         warn!(
-            "HEXDailyStats returned HTTP {}. Will use CoinGecko prices + current T-Share rate.",
+            "HEXDailyStats returned HTTP {}",
             resp.status()
         );
         return (HashMap::new(), HashMap::new());
