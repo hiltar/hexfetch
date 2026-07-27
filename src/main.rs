@@ -59,13 +59,19 @@ struct Assets;
 // NATIVE LOGGING MACROS
 // =============================================
 macro_rules! info {
-    ($($arg:tt)*) => { println!("[INFO] {}", format!($($arg)*)) }
+    ($($arg:tt)*) => {
+        println!("[{}] [INFO] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), format!($($arg)*))
+    }
 }
 macro_rules! error {
-    ($($arg:tt)*) => { eprintln!("[ERROR] {}", format!($($arg)*)) }
+    ($($arg:tt)*) => {
+        eprintln!("[{}] [ERROR] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), format!($($arg)*))
+    }
 }
 macro_rules! warn {
-    ($($arg:tt)*) => { eprintln!("[WARN] {}", format!($($arg)*)) }
+    ($($arg:tt)*) => {
+        eprintln!("[{}] [WARN] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), format!($($arg)*))
+    }
 }
 
 // =============================================
