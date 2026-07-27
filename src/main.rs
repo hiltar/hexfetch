@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{broadcast, RwLock};
+use tower_http::compression::CompressionLayer;
 
 // =============================================
 // CONFIGURATION & CONSTANTS
@@ -1164,6 +1165,7 @@ async fn main() {
                 None => Err(StatusCode::NOT_FOUND),
             }
         }))
+        .layer(CompressionLayer::new())
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 5555));
