@@ -8,11 +8,11 @@ command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/hexfetch.log"
 error_log="/var/log/hexfetch.log"
-export GOMEMLIMIT="128MiB"
 
 depend() {
     need localmount
-    after bootmisc
+    use net dns
+    after bootmisc clock
 }
     
 start_pre() {
