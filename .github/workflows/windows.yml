@@ -1,4 +1,4 @@
-name: hexfetch
+name: hexfetch-windows
 
 on:
   push:
@@ -35,20 +35,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
-        
-      - name: Build Release
+      - name: Build
         run: cargo build --release
-        
-      - name: Rename and Generate Checksum
+      - name: Rename executable
+        run: mv target/release/hexfetch-rs.exe hexfetch.exe
+      - name: Generate Checksum
         if: github.event_name == 'release'
         shell: pwsh
-        run: |
-          $exeName = "hexfetch-rs.exe"
-          $outName = "hexfetch.exe"
-          Move-Item -Path "target/release/$exeName" -Destination $outName
-          $hash = (Get-FileHash $outName -Algorithm SHA256).Hash.ToLower()
-          "$hash  $outName" | Out-File -Encoding ASCII "$outName.sha256"
-          
+        run: (Get-FileHash hexfetch.exe -Algorithm SHA256).Hash | Out-File -Encoding ASCII hexfetch.exe.sha256
       - name: Upload to GitHub Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
