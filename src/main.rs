@@ -10,7 +10,7 @@ use reqwest::Client;
 use rust_embed::Embed;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{
     net::SocketAddr,
     sync::Arc,
@@ -30,12 +30,24 @@ const RPC_ENDPOINTS: &[&str] = &[
 ];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+
+/// HEXDailyStats – used ONCE during initial backfill for historical T-Share rates.
+/// After the first successful backfill the system never contacts this endpoint again.
 const HEXDAILYSTATS_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
+
+/// globals() selector: keccak256("globals()")[0..4]
 const GLOBALS_SELECTOR: &str = "0xc3124525";
+/// dailyData(uint256) selector: keccak256("dailyData(uint256)")[0..4]
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
+
+/// 1 HEX = 10^8 hearts
 const HEARTS_PER_HEX: f64 = 1e8;
+/// T-Share precision factor used in payout calculation
 const TSHARE_UNIT: f64 = 10000.0;
+
+/// Delay between RPC calls during backfill to avoid rate-limiting
 const BACKFILL_DELAY_MS: u64 = 60;
+/// Save progress to disk every N days during backfill
 const BACKFILL_SAVE_INTERVAL: usize = 200;
 
 #[derive(Embed)]
@@ -59,17 +71,6 @@ macro_rules! warn {
     ($($arg:tt)*) => {
         eprintln!("[{}] [WARN] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), format!($($arg)*))
     }
-}
-
-// =============================================
-// DATA DIRECTORY RESOLUTION
-// =============================================
-fn get_data_dir() -> PathBuf {
-    std::env::current_exe()
-        .expect("Failed to get current executable path")
-        .parent()
-        .expect("Failed to get executable parent directory")
-        .to_path_buf()
 }
 
 // =============================================
@@ -155,6 +156,7 @@ struct IndexRequest {
 // APPLICATION STATE
 // =============================================
 struct AppState {
+    data_dir: PathBuf,
     live_data: RwLock<LiveData>,
     hex_json: RwLock<Vec<HexJsonEntry>>,
     miners: RwLock<Vec<Miner>>,
@@ -347,6 +349,8 @@ async fn call_rpc(
 // =============================================
 // 5. ON-CHAIN DATA READING
 // =============================================
+
+/// Reads globals() → (tshare_rate_hex, daily_data_count, penalties_hex)
 async fn read_globals(
     client: &Client,
     state: &Arc<AppState>,
@@ -374,6 +378,7 @@ async fn read_globals(
     Ok((tshare_rate, day_count, penalties))
 }
 
+/// Reads dailyData(day) → (day_payout_hearts, day_stake_shares)
 async fn read_daily_data(
     client: &Client,
     state: &Arc<AppState>,
@@ -401,6 +406,8 @@ async fn read_daily_data(
 // =============================================
 // 6. EXTERNAL DATA SOURCES
 // =============================================
+
+/// Current price from DEXScreener (single value, used for live data & fallback).
 async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
@@ -422,6 +429,9 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
+/// ONE-TIME fetch of historical T-Share rates (and prices) from HEXDailyStats.
+/// Returns (tshare_map, price_map). Both empty on any failure.
+/// After the initial backfill this endpoint is never contacted again.
 async fn fetch_hexdailystats_backfill(
     client: &Client,
 ) -> (HashMap<u64, f64>, HashMap<u64, f64>) {
@@ -430,13 +440,19 @@ async fn fetch_hexdailystats_backfill(
     let resp = match client.get(HEXDAILYSTATS_URL).send().await {
         Ok(r) => r,
         Err(e) => {
-            warn!("HEXDailyStats unreachable: {}", e);
+            warn!(
+                "HEXDailyStats unreachable: {}",
+                e
+            );
             return (HashMap::new(), HashMap::new());
         }
     };
 
     if !resp.status().is_success() {
-        warn!("HEXDailyStats returned HTTP {}", resp.status());
+        warn!(
+            "HEXDailyStats returned HTTP {}",
+            resp.status()
+        );
         return (HashMap::new(), HashMap::new());
     }
 
@@ -471,12 +487,9 @@ async fn fetch_hexdailystats_backfill(
 // =============================================
 // 7. HEXJSON PERSISTENCE
 // =============================================
-fn hexjson_file_path() -> PathBuf {
-    get_data_dir().join("hexjson.json")
-}
 
-async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
-    let path = hexjson_file_path();
+async fn save_hex_json_to_file(data_dir: &Path, data: &[HexJsonEntry]) {
+    let path = data_dir.join("hexjson.json");
     match serde_json::to_string(data) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
@@ -487,8 +500,8 @@ async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
     }
 }
 
-async fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
-    let path = hexjson_file_path();
+async fn load_hex_json_from_file(data_dir: &Path) -> Vec<HexJsonEntry> {
+    let path = data_dir.join("hexjson.json");
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => match serde_json::from_str::<Vec<HexJsonEntry>>(&content) {
             Ok(data) => {
@@ -501,7 +514,7 @@ async fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
             }
         },
         Err(_) => {
-            info!("No hexjson file found at {}. Will build from RPC + external sources.", path.display());
+            info!("No hexjson file found. Will build from RPC + external sources.");
             Vec::new()
         }
     }
@@ -517,6 +530,7 @@ async fn backfill_hex_json(
 ) -> Vec<HexJsonEntry> {
     info!("Starting HEXJSON backfill...");
 
+    // 1. On-chain globals → current tshare rate + day count
     let (current_tshare_rate, day_count, _penalties) = match read_globals(client, state).await {
         Ok(v) => v,
         Err(e) => {
@@ -534,8 +548,10 @@ async fn backfill_hex_json(
         return existing_data.to_vec();
     }
 
+    // 2. HEXDailyStats one-time fetch (per-day prices + T-Share rates)
     let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill(client).await;
 
+    // 3. DEXScreener current price (flat fallback if HEXDailyStats has no prices)
     let fallback_price = if hds_prices.is_empty() {
         match fetch_price_dexscreener(client).await {
             Ok(p) => {
@@ -551,6 +567,7 @@ async fn backfill_hex_json(
         0.0
     };
 
+    // 4. Determine which days to fetch
     let existing_max_day = existing_data.iter().map(|e| e.current_day).max().unwrap_or(0);
     let start_day = if existing_max_day > 0 {
         existing_max_day + 1
@@ -574,6 +591,7 @@ async fn backfill_hex_json(
         total_to_fetch
     );
 
+    // 5. Iterate through each day
     let mut new_entries: Vec<HexJsonEntry> = Vec::with_capacity(total_to_fetch as usize);
     let mut consecutive_errors = 0u32;
     let max_consecutive_errors = 50u32;
@@ -594,11 +612,13 @@ async fn backfill_hex_json(
                     continue;
                 }
 
+                // Price: HEXDailyStats per-day → DEXScreener flat fallback
                 let price = hds_prices
                     .get(&day)
                     .copied()
                     .unwrap_or(fallback_price);
 
+                // T-Share rate: HEXDailyStats per-day → current globals() fallback
                 let tshare = hds_tshares
                     .get(&day)
                     .copied()
@@ -641,13 +661,14 @@ async fn backfill_hex_json(
             let mut partial = existing_data.to_vec();
             partial.extend(new_entries.clone());
             partial.sort_by_key(|e| e.current_day);
-            save_hex_json_to_file(&partial).await;
+            save_hex_json_to_file(&state.data_dir, &partial).await;
             info!("Backfill: intermediate save ({} total entries)", partial.len());
         }
 
         tokio::time::sleep(Duration::from_millis(BACKFILL_DELAY_MS)).await;
     }
 
+    // 6. Merge
     let mut result = existing_data.to_vec();
     result.extend(new_entries);
     result.sort_by_key(|e| e.current_day);
@@ -660,6 +681,9 @@ async fn backfill_hex_json(
 // =============================================
 // 9. DAILY RECORDING (GOING FORWARD)
 // =============================================
+
+/// Records one day's data using live RPC + DEXScreener values.
+/// Called daily at 3 AM UTC. No external HEXJSON API needed.
 async fn record_daily_entry(
     client: &Client,
     state: &Arc<AppState>,
@@ -698,6 +722,7 @@ async fn fetch_live_data(
     client: &Client,
     state: &Arc<AppState>,
 ) -> Result<LiveData, String> {
+    // DEXScreener → current price
     let dex_resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
         .send()
@@ -712,12 +737,15 @@ async fn fetch_live_data(
         .or_else(|| dex_resp["pairs"][0]["priceUsd"].as_str().and_then(|s| s.parse().ok()))
         .unwrap_or(0.0);
 
+    // RPC → gas price (beat)
     let gas_price_hex = call_rpc(client, state, "eth_gasPrice", serde_json::json!([])).await?;
     let gas_price_wei = U256::from_hex(&gas_price_hex);
     let beat = gas_price_wei.to_f64() / 1e9;
 
+    // RPC → globals (tshare rate, penalties, day count)
     let (tshare_rate, daily_data_count, penalties) = read_globals(client, state).await?;
 
+    // RPC → dailyData for latest day (payout per tshare)
     let mut payout_per_tshare = 0.0;
     if daily_data_count > 0 {
         let day_to_query = daily_data_count - 1;
@@ -738,6 +766,9 @@ async fn fetch_live_data(
     })
 }
 
+// =============================================
+// LIVE DATA WITH RETRY
+// =============================================
 async fn fetch_live_data_with_retry(
     client: &Client,
     state: &Arc<AppState>,
@@ -804,15 +835,19 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
     }
 }
 
+/// HEXJSON updater: backfills on startup, then records daily at 3 AM UTC.
+/// Fully self-contained after initial backfill — no continuous external API dependency.
 async fn hex_json_updater(state: Arc<AppState>, client: Client) {
-    let file_data = load_hex_json_from_file().await;
+    // ── Phase 1: Initial load or backfill ────────────────────────────
+    let file_data = load_hex_json_from_file(&state.data_dir).await;
 
     let initial_data = if file_data.is_empty() {
         info!("No persisted HEXJSON data. Building from RPC + external sources (this may take several minutes)...");
         let backfilled = backfill_hex_json(&client, &state, &[]).await;
-        save_hex_json_to_file(&backfilled).await;
+        save_hex_json_to_file(&state.data_dir, &backfilled).await;
         backfilled
     } else {
+        // Check if we need to catch up (program was offline for days)
         let max_day_in_file = file_data.iter().map(|e| e.current_day).max().unwrap_or(0);
         match read_globals(&client, &state).await {
             Ok((_, day_count, _)) => {
@@ -822,7 +857,7 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
                         max_day_in_file, day_count
                     );
                     let updated = backfill_hex_json(&client, &state, &file_data).await;
-                    save_hex_json_to_file(&updated).await;
+                    save_hex_json_to_file(&state.data_dir, &updated).await;
                     updated
                 } else {
                     file_data
@@ -838,12 +873,14 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
         }
     };
 
+    // Store in memory
     {
         let mut hex_json = state.hex_json.write().await;
         *hex_json = initial_data;
         info!("HEXJSON loaded into memory: {} entries", hex_json.len());
     }
 
+    // ── Phase 2: Daily recording loop at 3 AM UTC ────────────────────
     loop {
         let sleep_duration = get_duration_until_next_3am_utc();
         info!(
@@ -880,7 +917,7 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
 
                     let data_clone = hex_json.clone();
                     drop(hex_json);
-                    save_hex_json_to_file(&data_clone).await;
+                    save_hex_json_to_file(&state.data_dir, &data_clone).await;
                     recorded = true;
                     break;
                 }
@@ -987,7 +1024,7 @@ async fn handle_post_config(
 
     let _ = state.config_tx.send(());
 
-    let path = get_data_dir().join("config.json");
+    let path = state.data_dir.join("config.json");
     if let Ok(json) = serde_json::to_string_pretty(&cfg_clone) {
         let _ = tokio::fs::write(path, json).await;
     }
@@ -1009,7 +1046,7 @@ async fn handle_add_miner(
     let miners_clone = miners.clone();
     drop(miners);
 
-    let path = get_data_dir().join("miners.json");
+    let path = state.data_dir.join("miners.json");
     if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
         let _ = tokio::fs::write(path, json).await;
     }
@@ -1026,7 +1063,7 @@ async fn handle_end_miner(
         let miners_clone = miners.clone();
         drop(miners);
 
-        let path = get_data_dir().join("miners.json");
+        let path = state.data_dir.join("miners.json");
         if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
             let _ = tokio::fs::write(path, json).await;
         }
@@ -1046,7 +1083,7 @@ async fn handle_delete_miner(
         let miners_clone = miners.clone();
         drop(miners);
 
-        let path = get_data_dir().join("miners.json");
+        let path = state.data_dir.join("miners.json");
         if let Ok(json) = serde_json::to_string_pretty(&miners_clone) {
             let _ = tokio::fs::write(path, json).await;
         }
@@ -1061,7 +1098,12 @@ async fn handle_delete_miner(
 // =============================================
 #[tokio::main]
 async fn main() {
-    let data_dir = get_data_dir();
+    // Resolve directory where the executable is located
+    let data_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+
     tokio::fs::create_dir_all(&data_dir)
         .await
         .expect("Failed to create data dir");
@@ -1089,6 +1131,7 @@ async fn main() {
     let (config_tx, _) = broadcast::channel(16);
 
     let state = Arc::new(AppState {
+        data_dir,
         live_data: RwLock::new(LiveData::default()),
         hex_json: RwLock::new(Vec::new()),
         miners: RwLock::new(initial_miners),
@@ -1102,6 +1145,7 @@ async fn main() {
         .build()
         .unwrap();
 
+    // Spawn background tasks
     tokio::spawn(live_data_updater(state.clone(), client.clone()));
     tokio::spawn(hex_json_updater(state.clone(), client.clone()));
     tokio::spawn(rpc_health_checker(state.clone(), client.clone()));
@@ -1152,6 +1196,7 @@ mod tests {
     fn create_test_state() -> Arc<AppState> {
         let (config_tx, _) = broadcast::channel(16);
         Arc::new(AppState {
+            data_dir: PathBuf::from("."),
             live_data: RwLock::new(LiveData::default()),
             hex_json: RwLock::new(Vec::new()),
             miners: RwLock::new(Vec::new()),
