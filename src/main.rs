@@ -641,14 +641,14 @@ async fn backfill_hex_json(
                     );
                     break;
                 }
-                if consecutive_errors <= 3 || consecutive_errors % 20 == 0 {
+                if consecutive_errors <= 3 || consecutive_errors.is_multiple_of(20) {
                     warn!("Backfill: error reading day {}: {}", day, e);
                 }
             }
         }
 
         let fetched = (day - start_day + 1) as usize;
-        if fetched % 100 == 0 || fetched == total_to_fetch as usize {
+        if fetched.is_multiple_of(100) || fetched == total_to_fetch as usize {
             info!(
                 "Backfill progress: {}/{} days ({:.1}%)",
                 fetched,
@@ -657,7 +657,7 @@ async fn backfill_hex_json(
             );
         }
 
-        if fetched % BACKFILL_SAVE_INTERVAL == 0 && !new_entries.is_empty() {
+        if fetched.is_multiple_of(BACKFILL_SAVE_INTERVAL) && !new_entries.is_empty() {
             let mut partial = existing_data.to_vec();
             partial.extend(new_entries.clone());
             partial.sort_by_key(|e| e.current_day);
