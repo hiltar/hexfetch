@@ -276,16 +276,16 @@ impl std::fmt::LowerHex for U256 {
 // =============================================
 // 4. UTC TIME CALCULATION
 // =============================================
-fn get_duration_until_next_3am_utc() -> std::time::Duration {
+fn get_duration_until_next_0am_utc() -> std::time::Duration {
     let now = Utc::now();
-    let today_3am = now
+    let today_0am = now
         .date_naive()
-        .and_time(NaiveTime::from_hms_opt(3, 0, 0).unwrap());
-    let mut next_3am = today_3am.and_utc();
-    if next_3am <= now {
-        next_3am = next_3am.checked_add_days(Days::new(1)).unwrap();
+        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let mut next_0am = today_0am.and_utc();
+    if next_0am <= now {
+        next_0am = next_0am.checked_add_days(Days::new(1)).unwrap();
     }
-    (next_3am - now)
+    (next_0am - now)
         .to_std()
         .unwrap_or(std::time::Duration::from_secs(60))
 }
@@ -683,7 +683,7 @@ async fn backfill_hex_json(
 // =============================================
 
 /// Records one day's data using live RPC + DEXScreener values.
-/// Called daily at 3 AM UTC. No external HEXJSON API needed.
+/// Called daily at 0 AM UTC. No external HEXJSON API needed.
 async fn record_daily_entry(
     client: &Client,
     state: &Arc<AppState>,
@@ -835,7 +835,7 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
     }
 }
 
-/// HEXJSON updater: backfills on startup, then records daily at 3 AM UTC.
+/// HEXJSON updater: backfills on startup, then records daily at 0 AM UTC.
 /// Fully self-contained after initial backfill — no continuous external API dependency.
 async fn hex_json_updater(state: Arc<AppState>, client: Client) {
     // ── Phase 1: Initial load or backfill ────────────────────────────
@@ -882,9 +882,9 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
 
     // ── Phase 2: Daily recording loop at 3 AM UTC ────────────────────
     loop {
-        let sleep_duration = get_duration_until_next_3am_utc();
+        let sleep_duration = get_duration_until_next_0am_utc();
         info!(
-            "HEXJSON updater sleeping for {:?} until next 3 AM UTC recording...",
+            "HEXJSON updater sleeping for {:?} until next 0 AM UTC recording...",
             sleep_duration
         );
         tokio::time::sleep(sleep_duration).await;
