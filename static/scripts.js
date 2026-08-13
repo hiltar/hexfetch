@@ -315,7 +315,7 @@ function setConnectionStatus(status) {
   if (!pill || !label) return;
   if (pill.dataset.status === status) return;
   pill.dataset.status = status;
-  label.textContent = status === 'online' ? 'Live' : status === 'offline' ? 'Offline' : 'Connecting…';
+  label.textContent = status === 'online' ? 'Live' : status === 'offline' ? 'Off' : 'Conn';
 }
 
 function initTickerToggle() {
