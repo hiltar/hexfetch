@@ -17,76 +17,74 @@
 </head>
 <body>
 
-<!-- ================= HEADER (v2) ================= -->
+<!-- ================= HEADER ================= -->
 <header class="app-header">
-  <div class="container">
-    <div class="header-top">
+  <div class="container container-wide">
+    <div class="header-bar">
+
       <div class="brand">
         <img src="/icon.webp" alt="HEX Stats logo" class="logo">
         <span class="app-title">HEX Stats</span>
       </div>
 
-      <div class="connection-status" id="connection-status" data-status="connecting" role="status">
-        <span class="status-dot"></span>
-        <span id="connection-label">Connecting…</span>
+      <div class="live-ticker-wrap" id="live-ticker-wrap">
+        <div class="ticker-head">
+          <span class="ticker-title"><span class="live-pulse"></span> Live Data</span>
+          <button class="ticker-toggle" id="ticker-toggle" aria-expanded="true"
+                  aria-controls="live-ticker" aria-label="Toggle live data panel">
+            <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+        </div>
+
+        <div class="live-ticker" id="live-ticker">
+          <div class="ticker-item">
+            <span class="ticker-label">HEX Price</span>
+            <span class="ticker-value" id="price">$0.00000</span>
+          </div>
+          <div class="ticker-item">
+            <span class="ticker-label">T-Share Price</span>
+            <span class="ticker-value" id="tshare-price">$0.00</span>
+          </div>
+          <div class="ticker-item">
+            <span class="ticker-label">T-Share Rate</span>
+            <span class="ticker-value" id="tshare-rate">0 HEX</span>
+          </div>
+          <div class="ticker-item">
+            <span class="ticker-label">Payout / T-Share</span>
+            <span class="ticker-value" id="payout">0.00 HEX</span>
+          </div>
+          <div class="ticker-item">
+            <span class="ticker-label">Penalties</span>
+            <span class="ticker-value" id="penalties">0 HEX</span>
+          </div>
+          <div class="ticker-item">
+            <span class="ticker-label">Beat</span>
+            <span class="ticker-value" id="beat">0</span>
+          </div>
+          <div class="ticker-updated"><span id="last-updated">Waiting for data...</span></div>
+        </div>
       </div>
 
-      <div class="refresh-timer" title="Time until next live data refresh">
-        <div class="timer-ring">
-          <svg viewBox="0 0 36 36" aria-hidden="true">
-            <circle class="ring-bg" cx="18" cy="18" r="16"></circle>
-            <circle class="ring-progress" id="ring-progress" cx="18" cy="18" r="16"></circle>
-          </svg>
-          <span id="countdown">--:--</span>
+      <div class="header-side">
+        <div class="connection-status" id="connection-status" data-status="connecting" role="status">
+          <span class="status-dot"></span>
+          <span id="connection-label">Connecting…</span>
         </div>
-        <div class="timer-meta">
-          <span class="timer-label">Next refresh</span>
-          <span class="timer-sub" id="timer-sub">auto</span>
+        <div class="refresh-timer" title="Time until next live data refresh">
+          <div class="timer-ring">
+            <svg viewBox="0 0 36 36" aria-hidden="true">
+              <circle class="ring-bg" cx="18" cy="18" r="16"></circle>
+              <circle class="ring-progress" id="ring-progress" cx="18" cy="18" r="16"></circle>
+            </svg>
+            <span id="countdown">--:--</span>
+          </div>
         </div>
       </div>
+
     </div>
-
-    <div class="live-ticker-wrap" id="live-ticker-wrap">
-      <div class="ticker-head">
-        <span class="ticker-title"><span class="live-pulse"></span> Live Data</span>
-        <button class="ticker-toggle" id="ticker-toggle" aria-expanded="true"
-                aria-controls="live-ticker" aria-label="Toggle live data panel">
-          <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
-        <span id="last-updated">Waiting for data...</span>
-      </div>
-
-      <div class="live-ticker" id="live-ticker">
-        <div class="ticker-item ticker-item--price">
-          <span class="ticker-label">HEX Price</span>
-          <span class="ticker-value" id="price">$0.00000</span>
-        </div>
-        <div class="ticker-item">
-          <span class="ticker-label">T-Share Price</span>
-          <span class="ticker-value" id="tshare-price">$0.00</span>
-        </div>
-        <div class="ticker-item">
-          <span class="ticker-label">T-Share Rate</span>
-          <span class="ticker-value" id="tshare-rate">0 HEX</span>
-        </div>
-        <div class="ticker-item">
-          <span class="ticker-label">Payout / T-Share</span>
-          <span class="ticker-value" id="payout">0.00 HEX</span>
-        </div>
-        <div class="ticker-item">
-          <span class="ticker-label">Penalties</span>
-          <span class="ticker-value" id="penalties">0 HEX</span>
-        </div>
-        <div class="ticker-item">
-          <span class="ticker-label">Beat</span>
-          <span class="ticker-value" id="beat">0</span>
-        </div>
-      </div>
-    </div>
-
   </div>
 </header>
 
