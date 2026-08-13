@@ -1,247 +1,321 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HEX Stats</title>
-    <link rel="icon" type="image/webp" href="/icon.webp">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/air-datepicker@3.6.0/air-datepicker.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/air-datepicker@3.6.0/air-datepicker.min.js" defer></script>
-    <script src="/scripts.js" defer></script>
-    <link rel="stylesheet" href="/styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HEX Stats</title>
+<link rel="icon" href="icon.webp" type="image/webp">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <header class="app-header">
-        <div class="container header-content">
-            <img src="/icon.webp" alt="HEX" class="logo">
-            <h1 class="app-title">HEX Stats</h1>
-            <div class="refresh-timer">
-                Live Data Refresh: <span id="countdown">--:--</span>
-            </div>
+
+<header class="app-header">
+  <div class="container header-row">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#00b7eb"/><stop offset="1" stop-color="#7b3fa0"/>
+          </linearGradient>
+        </defs>
+        <path d="M16 2 28 9v14l-12 7L4 23V9z" fill="none" stroke="url(#lg)" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M11 11v10M21 11v10M11 16h10" stroke="url(#lg)" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">HEX Stats</span>
+      <span class="conn-pill" id="conn-pill" title="Data feed status">
+        <span class="conn-dot" id="conn-dot"></span><span id="conn-label">Connecting</span>
+      </span>
+    </div>
+
+    <div class="ticker" id="ticker" role="list" aria-label="Live market data">
+      <div class="tick" role="listitem">
+        <span class="tick-label">Price</span>
+        <span class="tick-row"><span class="tick-value" id="tick-price">—</span><span class="tick-delta" id="tick-price-delta"></span></span>
+      </div>
+      <div class="tick" role="listitem"><span class="tick-label">T-Share Price</span><span class="tick-value" id="tick-tshare-price">—</span></div>
+      <div class="tick" role="listitem"><span class="tick-label">T-Share Rate</span><span class="tick-value" id="tick-tshare-rate">—</span></div>
+      <div class="tick" role="listitem"><span class="tick-label">Payout / T-Share</span><span class="tick-value" id="tick-payout">—</span></div>
+      <div class="tick" role="listitem"><span class="tick-label">Penalties</span><span class="tick-value" id="tick-penalties">—</span></div>
+      <div class="tick" role="listitem"><span class="tick-label">Beat</span><span class="tick-value" id="tick-beat">—</span></div>
+      <div class="tick tick-meta" role="listitem"><span class="tick-label">Feed</span><span class="tick-value sm" id="last-updated">Waiting…</span></div>
+    </div>
+
+    <div class="header-actions">
+      <div class="refresh-wrap" id="refresh-wrap" title="Next refresh">
+        <svg class="ring" viewBox="0 0 36 36" aria-hidden="true">
+          <circle class="ring-bg" cx="18" cy="18" r="15.5"></circle>
+          <circle class="ring-fg" id="ring-fg" cx="18" cy="18" r="15.5"></circle>
+        </svg>
+        <span class="ring-text" id="countdown">--:--</span>
+      </div>
+      <button class="icon-btn" id="theme-toggle" aria-label="Toggle color theme" title="Toggle theme (T)">
+        <svg id="icon-sun" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg>
+        <svg id="icon-moon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <nav class="tab-nav" aria-label="Sections">
+    <div class="container tab-row">
+      <button class="tab-btn active" data-tab="overview">Overview <kbd>1</kbd></button>
+      <button class="tab-btn" data-tab="live">Live <kbd>5</kbd></button>
+      <button class="tab-btn" data-tab="charts">Charts <kbd>2</kbd></button>
+      <button class="tab-btn" data-tab="miners">Miners <kbd>3</kbd></button>
+      <button class="tab-btn" data-tab="settings">Settings <kbd>4</kbd></button>
+    </div>
+  </nav>
+</header>
+
+<main class="container">
+
+  <!-- ============ OVERVIEW ============ -->
+  <section class="tab-panel active" id="tab-overview">
+    <div class="stat-grid">
+      <article class="stat-card">
+        <span class="stat-label">T-Shares Value</span>
+        <span class="stat-value" id="ov-total-value">—</span>
+        <span class="stat-sub" id="ov-total-sub"></span>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Liquid HEX Value</span>
+        <span class="stat-value" id="ov-liquid-value">—</span>
+        <span class="stat-sub" id="ov-liquid-sub"></span>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Total T-Shares</span>
+        <span class="stat-value" id="ov-tshares">0.00</span>
+        <span class="stat-sub" id="ov-tshares-sub"></span>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Daily Interest</span>
+        <span class="stat-value" id="ov-interest-hex">—</span>
+        <span class="stat-sub" id="ov-interest-usd"></span>
+      </article>
+    </div>
+
+    <article class="card">
+      <header class="card-head">
+        <h2>Historical Portfolio Value</h2>
+        <span class="card-tag" id="hist-range-tag">—</span>
+      </header>
+      <div class="hist-stats">
+        <div><span class="hs-label">Start</span><span class="hs-value" id="hist-start-value">—</span></div>
+        <div><span class="hs-label">Current</span><span class="hs-value" id="hist-current-value">—</span></div>
+        <div><span class="hs-label">All-Time High</span><span class="hs-value" id="hist-ath">—</span></div>
+        <div><span class="hs-label">Growth</span><span class="hs-value" id="hist-growth">—</span><span class="hs-pct" id="hist-growth-pct"></span></div>
+      </div>
+      <div class="chart-wrap tall"><canvas id="portfolioChart" aria-label="Portfolio value history chart"></canvas></div>
+    </article>
+
+    <article class="card">
+      <header class="card-head"><h2>Income &amp; Miners</h2></header>
+      <div class="income-grid">
+        <div><span class="hs-label">Daily payout</span><span class="hs-value" id="inc-daily-hex">—</span><span class="hs-sub" id="inc-daily-usd"></span></div>
+        <div><span class="hs-label">Yearly (est.)</span><span class="hs-value" id="inc-yearly-hex">—</span><span class="hs-sub" id="inc-yearly-usd"></span></div>
+        <div><span class="hs-label">Est. APY</span><span class="hs-value" id="inc-apy">—</span><span class="hs-sub">at current rate</span></div>
+      </div>
+      <h3 class="mini-head">Active miners <button class="link-btn" id="manage-miners-btn">Manage →</button></h3>
+      <div id="ov-active-miners" class="mini-miners"></div>
+    </article>
+  </section>
+
+  <!-- ============ LIVE DATA (mobile-only tab) ============ -->
+  <section class="tab-panel" id="tab-live">
+    <article class="card">
+      <header class="card-head">
+        <h2>Live Data</h2>
+        <span class="card-tag" id="lv-updated">Waiting…</span>
+      </header>
+      <div class="live-list">
+        <div class="live-row live-row-main">
+          <span class="live-label">HEX Price</span>
+          <span class="live-value-row">
+            <span class="live-value accent" id="lv-price">—</span>
+            <span class="tick-delta" id="lv-price-delta"></span>
+          </span>
         </div>
-    </header>
-
-    <nav class="tab-nav">
-        <div class="container">
-            <button class="tab-btn active" data-tab="profile">Profile</button>
-            <button class="tab-btn" data-tab="live">Live Data</button>
-            <button class="tab-btn" data-tab="charts">Charts</button>
-            <button class="tab-btn" data-tab="settings">Settings</button>
+        <div class="live-row">
+          <span class="live-label">T-Share Price</span>
+          <span class="live-value" id="lv-tshare-price">—</span>
         </div>
-    </nav>
-
-    <main class="container">
-        <!-- PROFILE TAB -->
-        <section id="profile" class="tab-content active">
-            <div class="profile-grid">
-                <div class="stat-card">
-                    <strong>T-Shares Value</strong>
-                    <span id="total-value">$0.00</span>
-                </div>
-                <div class="stat-card">
-                    <strong>Liquid HEX Value</strong>
-                    <span id="liquid-hex-value">$0.00</span>
-                </div>
-                <div class="stat-card">
-                    <strong>T-Shares</strong>
-                    <span id="total-tshares">0.00</span>
-                </div>
-                <div class="stat-card">
-                    <strong>Daily Interest</strong>
-                    <div class="interest-values">
-                        <span id="interest-hex">0.00 HEX</span>
-                        <span id="interest-usd">$0.00</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Historical Portfolio Value</h3>
-                <div class="history-stats">
-                    <div>
-                        <span class="label">Starting (Day <span id="hist-start-day-label">1260</span>)</span>
-                        <span class="value" id="hist-start-value">$0.00</span>
-                    </div>
-                    <div>
-                        <span class="label">Current</span>
-                        <span class="value" id="hist-current-value">$0.00</span>
-                    </div>
-                    <div>
-                        <span class="label">All-Time High</span>
-                        <span class="value" id="hist-ath">$0.00</span>
-                    </div>
-                    <div>
-                        <span class="label">Growth</span>
-                        <span class="value" id="hist-growth">$0.00</span>
-                        <span class="pct" id="hist-growth-pct">0.00%</span>
-                    </div>
-                </div>
-                <div class="chart-container">
-                    <canvas id="historicalValueChart"></canvas>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Active Miners</h3>
-                <div id="profile-message" class="empty-msg"></div>
-                <div id="active-miners" class="list-container"></div>
-                <button id="show-completed-btn" class="btn btn-secondary btn-sm">View Completed Miners</button>
-            </div>
-        </section>
-
-        <!-- LIVE DATA TAB -->
-        <section id="live" class="tab-content">
-            <div class="card live-data-clear">
-                <div class="ld-row">
-                    <span class="ld-label">Price</span>
-                    <span class="ld-value" id="price">$0.00000</span>
-                </div>
-                <div class="ld-row">
-                    <span class="ld-label">T-Share Price</span>
-                    <span class="ld-value" id="tshare-price">$0.00</span>
-                </div>
-                <div class="ld-row">
-                    <span class="ld-label">T-Share Rate</span>
-                    <span class="ld-value" id="tshare-rate">0 HEX</span>
-                </div>
-                <div class="ld-row">
-                    <span class="ld-label">Payout Per T-Share</span>
-                    <span class="ld-value" id="payout">0.000 HEX</span>
-                </div>
-                <div class="ld-row">
-                    <span class="ld-label">Penalties</span>
-                    <span class="ld-value" id="penalties">0 HEX</span>
-                </div>
-                <div class="ld-row">
-                    <span class="ld-label">Beat</span>
-                    <span class="ld-value" id="beat">0</span>
-                </div>
-                <div class="timestamp" id="last-updated">Last updated: Waiting for data...</div>
-            </div>
-        </section>
-
-        <!-- CHARTS TAB -->
-        <section id="charts" class="tab-content">
-            <div class="charts-grid">
-                <div class="chart-card">
-                    <h4>HEX Price</h4>
-                    <span class="chart-metric" id="price-value">$0.0000</span>
-                    <div class="chart-container">
-                        <canvas id="priceChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h4>T-Share Rate</h4>
-                    <span class="chart-metric" id="tshare-rate-value">0.00 HEX</span>
-                    <div class="chart-container">
-                        <canvas id="tshareRateChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h4>Payout Per T-Share</h4>
-                    <span class="chart-metric" id="payout-per-tshare-value">0.000 HEX</span>
-                    <div class="chart-container">
-                        <canvas id="payoutPerTshareChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h4>Daily Payout</h4>
-                    <span class="chart-metric" id="daily-payout-value">0.00 HEX</span>
-                    <div class="chart-container">
-                        <canvas id="dailyPayoutChart"></canvas>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- SETTINGS TAB -->
-        <section id="settings" class="tab-content">
-            <div class="card">
-                <h3>Live Data Settings</h3>
-                <div class="form-group">
-                    <label for="frequency">Update Frequency (minutes)</label>
-                    <div class="input-group">
-                        <input type="number" id="frequency" class="form-input" min="1" max="60" value="15">
-                        <button class="btn btn-primary" onclick="saveFrequency()">Save Frequency</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Liquid HEX Settings</h3>
-                <div class="form-group">
-                    <label for="liquid-hex">Liquid HEX Amount</label>
-                    <div class="input-group">
-                        <input type="number" id="liquid-hex" class="form-input" step="0.01" min="0" placeholder="0.00">
-                        <button class="btn btn-primary" onclick="saveLiquidHEX()">Save Liquid HEX</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Historical Chart Settings</h3>
-                <div class="form-group">
-                    <label for="hist-start-day">Starting Day</label>
-                    <div class="input-group">
-                        <input type="number" id="hist-start-day" class="form-input" min="1" value="1260">
-                        <button class="btn btn-primary" onclick="saveHistoricalStartDay()">Save Starting Day</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Add New Miner</h3>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="start-date">Start Date</label>
-                        <input type="text" id="start-date" class="form-input" placeholder="DD-MM-YYYY" autocomplete="off">
-                    </div>
-                    <div class="form-group">
-                        <label for="end-date">End Date</label>
-                        <input type="text" id="end-date" class="form-input" placeholder="DD-MM-YYYY" autocomplete="off">
-                    </div>
-                    <div class="form-group">
-                        <label for="tshares">T-Shares</label>
-                        <input type="number" id="tshares" class="form-input" placeholder="0.00" step="0.01" min="0">
-                    </div>
-                </div>
-                <button id="add-miner-btn" class="btn btn-primary">Add Miner</button>
-            </div>
-
-            <div class="card">
-                <h3>Existing Miners</h3>
-                <div id="existing-miners" class="list-container"></div>
-            </div>
-        </section>
-    </main>
-
-    <dialog id="completed-miners-modal" class="modal">
-        <header class="modal-header">
-            <h3>Completed Miners</h3>
-            <button class="btn-close" aria-label="Close">×</button>
-        </header>
-        <div class="modal-body">
-            <ul id="completed-miners-list" class="modal-list"></ul>
+        <div class="live-row">
+          <span class="live-label">T-Share Rate</span>
+          <span class="live-value" id="lv-tshare-rate">—</span>
         </div>
-        <footer class="modal-footer">
-            <button class="btn btn-secondary modal-close-btn">Close</button>
-        </footer>
-    </dialog>
+        <div class="live-row">
+          <span class="live-label">Payout / T-Share</span>
+          <span class="live-value" id="lv-payout">—</span>
+        </div>
+        <div class="live-row">
+          <span class="live-label">Penalties</span>
+          <span class="live-value" id="lv-penalties">—</span>
+        </div>
+        <div class="live-row">
+          <span class="live-label">Beat</span>
+          <span class="live-value" id="lv-beat">—</span>
+        </div>
+      </div>
+      <p class="help" id="lv-note">Auto-refreshes every 15 minutes.</p>
+    </article>
+  </section>
 
-    <div id="notification-container" class="notification-container"></div>
-    <template id="confirm-modal-template">
-        <dialog class="modal">
-            <header class="modal-header">
-                <h3></h3>
-                <button class="btn-close" aria-label="Close">×</button>
-            </header>
-            <p class="modal-body"></p>
-            <footer class="modal-footer">
-                <button class="btn btn-secondary confirm-cancel">Cancel</button>
-                <button class="btn btn-danger confirm-action">Confirm</button>
-            </footer>
-        </dialog>
-    </template>
+  <!-- ============ CHARTS ============ -->
+  <section class="tab-panel" id="tab-charts">
+    <div class="toolbar">
+      <div class="seg" id="range-seg" role="group" aria-label="Chart range">
+        <button data-range="90">90D</button>
+        <button data-range="180">180D</button>
+        <button data-range="365">1Y</button>
+        <button data-range="all" class="active">All</button>
+      </div>
+      <span class="toolbar-info" id="range-info"></span>
+      <button class="seg-btn" id="scale-btn" aria-pressed="false">Log scale</button>
+    </div>
+
+    <div class="charts-grid">
+      <article class="card chart-card">
+        <header class="card-head"><h2>HEX Price</h2><span class="value-badge" id="ch-price-val">—</span></header>
+        <div class="chart-wrap"><canvas id="ch-price" aria-label="HEX price chart"></canvas></div>
+      </article>
+      <article class="card chart-card">
+        <header class="card-head"><h2>T-Share Rate</h2><span class="value-badge" id="ch-tshare-val">—</span></header>
+        <div class="chart-wrap"><canvas id="ch-tshare" aria-label="T-Share rate chart"></canvas></div>
+      </article>
+      <article class="card chart-card">
+        <header class="card-head"><h2>Payout per T-Share</h2><span class="value-badge" id="ch-payout-val">—</span></header>
+        <div class="chart-wrap"><canvas id="ch-payout" aria-label="Payout per T-Share chart"></canvas></div>
+      </article>
+      <article class="card chart-card">
+        <header class="card-head"><h2>Daily Payout</h2><span class="value-badge" id="ch-daily-val">—</span></header>
+        <div class="chart-wrap"><canvas id="ch-daily" aria-label="Daily payout chart"></canvas></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ============ MINERS ============ -->
+  <section class="tab-panel" id="tab-miners">
+    <div class="grid-2">
+      <article class="card">
+        <header class="card-head"><h2>Add Miner</h2></header>
+        <form id="miner-form" novalidate>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="m-start">Start date</label>
+              <input type="date" id="m-start" class="input" required>
+            </div>
+            <div class="form-group">
+              <label for="m-end">End date</label>
+              <input type="date" id="m-end" class="input" required>
+            </div>
+          </div>
+          <div class="chip-row" id="duration-chips" aria-label="Quick durations">
+            <button type="button" class="chip" data-days="30">30d</button>
+            <button type="button" class="chip" data-days="90">90d</button>
+            <button type="button" class="chip" data-days="180">180d</button>
+            <button type="button" class="chip" data-days="270">270d</button>
+            <button type="button" class="chip" data-days="390">390d</button>
+          </div>
+          <div class="form-group">
+            <label for="m-tshares">T-Shares</label>
+            <input type="number" id="m-tshares" class="input" min="0.01" step="0.01" placeholder="e.g. 125.50" required>
+          </div>
+          <div class="form-meta">
+            <span id="m-duration">Duration: —</span>
+            <span class="hint">Term bonus caps at 390 days</span>
+          </div>
+          <div class="form-error" id="m-error" role="alert"></div>
+          <button type="submit" class="btn btn-primary" id="m-submit">Add Miner</button>
+        </form>
+      </article>
+
+      <article class="card">
+        <header class="card-head"><h2>Summary</h2></header>
+        <div class="summary-grid">
+          <div><span class="hs-label">Active miners</span><span class="hs-value" id="ms-active-count">0</span></div>
+          <div><span class="hs-label">Total T-Shares</span><span class="hs-value" id="ms-total-tshares">0.00</span></div>
+          <div><span class="hs-label">Next maturity</span><span class="hs-value" id="ms-next-maturity">—</span><span class="hs-sub" id="ms-next-sub"></span></div>
+          <div><span class="hs-label">Matured</span><span class="hs-value" id="ms-matured-count">0</span></div>
+        </div>
+        <p class="help">Ending a miner marks it as completed after you have ended the contract on-chain and minted your HEX.</p>
+      </article>
+    </div>
+
+    <article class="card">
+      <header class="card-head"><h2>Active Miners</h2><span class="card-tag" id="active-count-tag"></span></header>
+      <div class="miner-grid" id="active-miners"></div>
+    </article>
+
+    <details class="card">
+      <summary class="card-head">
+        <h2>Completed Miners</h2><span class="card-tag" id="completed-count">0</span>
+      </summary>
+      <div id="completed-list" class="list"></div>
+    </details>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="tab-panel" id="tab-settings">
+    <div class="settings-grid">
+      <article class="card">
+        <header class="card-head"><h2>Live Data</h2></header>
+        <div class="form-group">
+          <label for="set-frequency">Refresh frequency (minutes)</label>
+          <div class="input-row">
+            <input type="number" id="set-frequency" class="input" min="1" max="1440" step="1">
+            <button class="btn btn-primary" id="save-frequency">Save</button>
+          </div>
+          <p class="help">How often the server is polled for live data.</p>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head"><h2>Liquid HEX</h2></header>
+        <div class="form-group">
+          <label for="set-liquid">Liquid HEX amount</label>
+          <div class="input-row">
+            <input type="number" id="set-liquid" class="input" min="0" step="0.01">
+            <button class="btn btn-primary" id="save-liquid">Save</button>
+          </div>
+          <p class="help">Included in portfolio history and liquid value.</p>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head"><h2>Historical Chart</h2></header>
+        <div class="form-group">
+          <label for="set-histday">Starting day</label>
+          <div class="input-row">
+            <input type="number" id="set-histday" class="input" min="1" step="1">
+            <button class="btn btn-primary" id="save-histday">Save</button>
+          </div>
+          <p class="help">First HEX day shown in the portfolio history chart.</p>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head"><h2>Data Export</h2></header>
+        <p class="help">Download the full recorded HEX history (one row per day) as CSV.</p>
+        <button class="btn btn-ghost" id="export-csv">Download CSV</button>
+      </article>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>HEX Stats</p>
+  </footer>
+</main>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<dialog class="dialog" id="confirm-dialog">
+  <h3 id="cf-title"></h3>
+  <p id="cf-msg"></p>
+  <div class="dialog-actions">
+    <button class="btn btn-ghost" id="cf-cancel">Cancel</button>
+    <button class="btn btn-danger" id="cf-ok">Confirm</button>
+  </div>
+</dialog>
+
+<script src="scripts.js"></script>
 </body>
 </html>
