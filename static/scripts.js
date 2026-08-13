@@ -15,12 +15,15 @@ let currentFrequency = 15;
 let saveInProgress = false;
 let pollingTimer = null;
 let scheduledNextFetch = null;
+let hasConnectedOnce = false;
 
 window.HEXJSON_CACHE = [];
 let datepickers = {
     startDate: null,
     endDate: null
 };
+
+const RING_CIRCUMFERENCE = 2 * Math.PI * 16;
 
 // =============================================
 // AIR-DATEPICKER
@@ -230,31 +233,40 @@ function updateProfileStats() {
 }
 
 async function fetchLiveDataAndRender() {
-    try {
-        const res = await fetch('/api/live-data');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
-        const data = await res.json();
-        
-        if (!data || !data.price_Pulsechain) {
-            console.warn("Live data missing key fields", data);
-        } else {
-            updateLiveDataUI(data);
-        }
-    } catch (e) {
-        console.error("Live data fetch failed", e);
-        try {
-            const publicRes = await fetch('https://hexdailystats.com/livedata');
-            if (publicRes.ok) {
-                const publicData = await publicRes.json();
-                updateLiveDataUI(publicData);
-            }
-        } catch(fbErr) {
-            console.error("Public fallback also failed", fbErr);
-        }
-    } finally {
-        scheduledNextFetch = setTimeout(fetchLiveDataAndRender, currentFrequency * 60 * 1000);
+  if (!hasConnectedOnce) setConnectionStatus('connecting');
+
+  try {
+    const res = await fetch('/api/live-data');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data || !data.price_Pulsechain) {
+      console.warn("Live data missing key fields", data);
+    } else {
+      updateLiveDataUI(data);
     }
+    hasConnectedOnce = true;
+    setConnectionStatus('online');
+  } catch (e) {
+    console.error("Live data fetch failed", e);
+    try {
+      const publicRes = await fetch('https://hexdailystats.com/livedata');
+      if (publicRes.ok) {
+        const publicData = await publicRes.json();
+        updateLiveDataUI(publicData);
+        hasConnectedOnce = true;
+        setConnectionStatus('online');
+      } else {
+        setConnectionStatus('offline');
+      }
+    } catch (fbErr) {
+      console.error("Public fallback also failed", fbErr);
+      setConnectionStatus('offline');
+    }
+  } finally {
+    nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
+    updateCountdown();
+    scheduledNextFetch = setTimeout(fetchLiveDataAndRender, currentFrequency * 60 * 1000);
+  }
 }
 
 function updateLiveDataUI(data) {
@@ -274,19 +286,52 @@ function updateLiveDataUI(data) {
 }
 
 function updateCountdown() {
-    const ms = Math.max(0, nextRefreshTime - Date.now());
-    const s = Math.floor(ms / 1000);
-    document.getElementById('countdown').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+  const totalMs = currentFrequency * 60 * 1000;
+  const ms = Math.max(0, nextRefreshTime - Date.now());
+  const s = Math.floor(ms / 1000);
+  const el = document.getElementById('countdown');
+  if (el) el.textContent = `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  const ring = document.getElementById('ring-progress');
+  if (ring) {
+    const fraction = totalMs > 0 ? ms / totalMs : 0;
+    ring.style.strokeDashoffset = (RING_CIRCUMFERENCE * (1 - fraction)).toFixed(2);
+    ring.classList.toggle('urgent', ms > 0 && ms <= 10000);
+  }
 }
 
 function setupLiveDataInterval(freq) {
-    currentFrequency = freq || 15; 
-    nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-    updateCountdown();
-    if (countdownIntervalId) clearInterval(countdownIntervalId);
-    countdownIntervalId = setInterval(updateCountdown, 1000);
-    if (scheduledNextFetch) clearTimeout(scheduledNextFetch);
-    fetchLiveDataAndRender();
+  currentFrequency = freq || 15;
+  nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
+  const sub = document.getElementById('timer-sub');
+  if (sub) sub.textContent = `every ${currentFrequency} min`;
+  updateCountdown();
+  if (countdownIntervalId) clearInterval(countdownIntervalId);
+  countdownIntervalId = setInterval(updateCountdown, 1000);
+  if (scheduledNextFetch) clearTimeout(scheduledNextFetch);
+  fetchLiveDataAndRender();
+}
+
+function setConnectionStatus(status) {
+  const pill = document.getElementById('connection-status');
+  const label = document.getElementById('connection-label');
+  if (!pill || !label) return;
+  if (pill.dataset.status === status) return;
+  pill.dataset.status = status;
+  label.textContent = status === 'online' ? 'Live' : status === 'offline' ? 'Offline' : 'Connecting…';
+}
+
+function initTickerToggle() {
+  const btn = document.getElementById('ticker-toggle');
+  const wrap = document.getElementById('live-ticker-wrap');
+  if (!btn || !wrap) return;
+  const collapsed = localStorage.getItem('hex-ticker-collapsed') === '1';
+  wrap.classList.toggle('collapsed', collapsed);
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.addEventListener('click', () => {
+    const nowCollapsed = wrap.classList.toggle('collapsed');
+    btn.setAttribute('aria-expanded', String(!nowCollapsed));
+    localStorage.setItem('hex-ticker-collapsed', nowCollapsed ? '1' : '0');
+  });
 }
 
 // =============================================
@@ -725,6 +770,7 @@ function saveHistoricalStartDay() {
 // INIT
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
+    initTickerToggle();
     if (typeof AirDatepicker !== 'undefined') {
         initAirDatepickers();
     } else {
