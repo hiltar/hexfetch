@@ -302,8 +302,6 @@ function updateCountdown() {
 function setupLiveDataInterval(freq) {
   currentFrequency = freq || 15;
   nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
-  const sub = document.getElementById('timer-sub');
-  if (sub) sub.textContent = `every ${currentFrequency} min`;
   updateCountdown();
   if (countdownIntervalId) clearInterval(countdownIntervalId);
   countdownIntervalId = setInterval(updateCountdown, 1000);
