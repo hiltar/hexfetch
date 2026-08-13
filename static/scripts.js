@@ -15,6 +15,7 @@ let currentFrequency = 15;
 let saveInProgress = false;
 let pollingTimer = null;
 let scheduledNextFetch = null;
+let hasConnectedOnce = false;
 
 window.HEXJSON_CACHE = [];
 let datepickers = {
@@ -232,7 +233,8 @@ function updateProfileStats() {
 }
 
 async function fetchLiveDataAndRender() {
-  setConnectionStatus('connecting');
+  if (!hasConnectedOnce) setConnectionStatus('connecting');
+
   try {
     const res = await fetch('/api/live-data');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -242,6 +244,7 @@ async function fetchLiveDataAndRender() {
     } else {
       updateLiveDataUI(data);
     }
+    hasConnectedOnce = true;
     setConnectionStatus('online');
   } catch (e) {
     console.error("Live data fetch failed", e);
@@ -250,6 +253,7 @@ async function fetchLiveDataAndRender() {
       if (publicRes.ok) {
         const publicData = await publicRes.json();
         updateLiveDataUI(publicData);
+        hasConnectedOnce = true;
         setConnectionStatus('online');
       } else {
         setConnectionStatus('offline');
@@ -311,6 +315,7 @@ function setConnectionStatus(status) {
   const pill = document.getElementById('connection-status');
   const label = document.getElementById('connection-label');
   if (!pill || !label) return;
+  if (pill.dataset.status === status) return;
   pill.dataset.status = status;
   label.textContent = status === 'online' ? 'Live' : status === 'offline' ? 'Offline' : 'Connecting…';
 }
