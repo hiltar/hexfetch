@@ -18,7 +18,7 @@
 body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh; }
 .container { max-width: 1320px; margin: 0 auto; padding: 0 1.5rem; }
 
-/* ============ Header (v2) ============ */
+/* ============ Header ============ */
 .app-header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -26,22 +26,29 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
   top: 0;
   z-index: 50;
 }
-.header-top {
+
+/* Header-only container: wider than the page so the ticker fits on one row */
+.container-wide { max-width: 1640px; }
+
+.header-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 0;
+  gap: 0.5rem 1rem;
+  padding: 0.55rem 0;
 }
-.brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 0.6rem; flex: none; }
 .logo { height: 32px; width: auto; }
 .app-title { font-weight: 700; font-size: 1.25rem; white-space: nowrap; }
+
+/* Right-hand cluster: connection status + refresh ring */
+.header-side { display: flex; align-items: center; gap: 0.75rem; flex: none; margin-left: auto; }
 
 /* Connection status pill */
 .connection-status {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  margin-left: auto;
   padding: 0.3rem 0.75rem;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -76,8 +83,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
 }
 @keyframes statusBlink { 50% { opacity: 0.35; } }
 
-/* Countdown ring timer */
-.refresh-timer { display: flex; align-items: center; gap: 0.6rem; }
+/* Countdown ring timer (ring only — no text) */
+.refresh-timer { display: flex; align-items: center; }
 .timer-ring { position: relative; width: 48px; height: 48px; flex: none; }
 .timer-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
 .ring-bg { fill: none; stroke: var(--surface-hover); stroke-width: 3.5; }
@@ -98,22 +105,45 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
   font-size: 0.65rem; font-weight: 700; color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
-.timer-meta { display: flex; flex-direction: column; line-height: 1.25; }
-.timer-label { font-size: 0.78rem; font-weight: 600; }
-.timer-sub { font-size: 0.7rem; color: var(--text-muted); }
 
-/* ============ Live Data Ticker ============ */
-.live-ticker-wrap { border-top: 1px solid var(--border); }
-.ticker-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0 0.4rem; }
+/* ============ Live data ticker ============ */
+/* flex-basis 620px: if the row can't give the ticker ~620px, it drops to its own line */
+.live-ticker-wrap { flex: 1 0 620px; min-width: 0; }
+.ticker-head { display: none; } /* mobile only */
+.live-ticker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+
+.ticker-item {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.6rem;
+  display: flex; flex-direction: column; gap: 0.1rem;
+  flex: none; min-width: 0;
+  transition: border-color 0.2s;
+}
+.ticker-item:hover { border-color: var(--primary); }
+.ticker-label {
+  font-size: 0.58rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-muted); white-space: nowrap;
+}
+.ticker-value {
+  font-size: 0.88rem; font-weight: 700; color: var(--text); /* same color for every value */
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ticker-updated {
+  margin-left: auto;
+  font-size: 0.75rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  flex: none;
+}
+
+/* Mobile-only ticker head elements */
 .ticker-title {
   display: inline-flex; align-items: center; gap: 0.5rem;
   font-size: 0.72rem; font-weight: 700; letter-spacing: 1px;
-  text-transform: uppercase; color: var(--text-muted);
-  white-space: nowrap;
+  text-transform: uppercase; color: var(--text-muted); white-space: nowrap;
 }
 .live-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex: none; animation: statusBlink 2s infinite; }
-#last-updated { margin-left: auto; font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
-
 .ticker-toggle {
   display: none;
   align-items: center; justify-content: center;
@@ -127,35 +157,6 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
 }
 .ticker-toggle:hover { color: var(--text); border-color: var(--primary); }
 .ticker-toggle .chevron { transition: transform 0.25s; }
-.live-ticker-wrap.collapsed .ticker-toggle .chevron { transform: rotate(180deg); }
-.live-ticker-wrap.collapsed .live-ticker { display: none; }
-
-.live-ticker {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.6rem;
-  padding-bottom: 0.9rem;
-}
-.ticker-item {
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.55rem 0.75rem;
-  display: flex; flex-direction: column; gap: 0.2rem;
-  min-width: 0;
-  transition: border-color 0.2s, transform 0.2s;
-}
-.ticker-item:hover { border-color: var(--primary); transform: translateY(-1px); }
-.ticker-label {
-  font-size: 0.66rem; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.6px; color: var(--text-muted); white-space: nowrap;
-}
-.ticker-value {
-  font-size: 1rem; font-weight: 700; color: var(--text);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.ticker-item--price .ticker-value { color: var(--primary); }
 
 /* Tab nav container alignment */
 .tab-nav .container { display: flex; }
@@ -568,33 +569,34 @@ canvas { width: 100% !important; height: 100% !important; }
 }
 
 /* ============ Responsive ============ */
-@media (max-width: 1100px) {
-  .live-ticker { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
 @media (max-width: 640px) {
-  .header-top { flex-wrap: wrap; justify-content: center; row-gap: 0.45rem; }
-  .connection-status { margin-left: 0; }
-  .timer-meta { display: none; } /* ring only on small screens */
+  .header-bar { justify-content: center; row-gap: 0.4rem; }
+  .brand { order: 1; }
+  .header-side { order: 2; margin-left: 0; }
+  .live-ticker-wrap { order: 3; flex-basis: 100%; }
 
-  .tab-btn { padding: 0.7rem 0.9rem; font-size: 0.9rem; }
-  .profile-grid { grid-template-columns: 1fr; }
-  .chart-container { height: 300px; }
-  .modal { width: 95%; max-width: 95vw; }
-
-  /* Mobile live data: swipeable snap strip + collapsible */
+  .ticker-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
   .ticker-toggle { display: inline-flex; }
   .live-ticker {
-    display: flex;
+    flex-wrap: nowrap;
     overflow-x: auto;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
     gap: 0.5rem;
-    padding-bottom: 0.8rem;
+    padding-bottom: 0.6rem;
     scrollbar-width: none;
     -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
             mask-image: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
   }
   .live-ticker::-webkit-scrollbar { display: none; }
-  .ticker-item { flex: 0 0 auto; width: 44%; min-width: 128px; scroll-snap-align: start; }
+  .ticker-item { min-width: 110px; padding: 0.4rem 0.65rem; scroll-snap-align: start; }
+  .ticker-updated { margin-left: 0; display: flex; align-items: center; padding: 0 0.25rem; scroll-snap-align: start; }
+
+  .live-ticker-wrap.collapsed .live-ticker { display: none; }
+  .live-ticker-wrap.collapsed .ticker-toggle .chevron { transform: rotate(180deg); }
+
+  .tab-btn { padding: 0.7rem 0.9rem; font-size: 0.9rem; }
+  .profile-grid { grid-template-columns: 1fr; }
+  .chart-container { height: 300px; }
+  .modal { width: 95%; max-width: 95vw; }
 }
