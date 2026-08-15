@@ -1182,7 +1182,7 @@ async fn test_rpc(client: &Client, url: &str) -> bool {
 
     match client.post(url).json(&call_req).send().await {
         Ok(resp) => match resp.json::<Value>().await {
-            Ok(json) => json.get("error").map_or(true, |e| e.is_null()) && json.get("result").is_some(),
+            Ok(json) => json.get("error").is_none_or(|e| e.is_null()) && json.get("result").is_some(),
             Err(_) => false,
         },
         Err(_) => false,
