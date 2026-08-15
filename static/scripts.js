@@ -259,9 +259,8 @@ function getUtcMidnightMs(date) {
 }
 
 function getLatestHexDay() {
-    if (!Array.isArray(window.HEXJSON_CACHE) || window.HEXJSON_CACHE.length === 0) {
-        return 0;
-    }
+    return cachedLatestHexDay;
+}
 
     return window.HEXJSON_CACHE.reduce((max, entry) => {
         const day = Number(entry.currentDay) || 0;
@@ -705,6 +704,7 @@ async function initialLoad() {
         ]);
 
         window.HEXJSON_CACHE = Array.isArray(hexData) ? hexData : [];
+        cachedLatestHexDay = window.HEXJSON_CACHE.reduce((max, entry) => Math.max(max, Number(entry.currentDay) || 0), 0);
         window.MINERS_CACHE = Array.isArray(miners) ? miners : [];
 
         if (window.HEXJSON_CACHE.length === 0) {
@@ -922,77 +922,81 @@ function renderChartsWithData(data) {
     if (!window.Chart || !Array.isArray(data) || data.length === 0) return;
 
     const sorted = [...data].sort((a, b) => a.currentDay - b.currentDay);
-
     const priceData = sorted.filter(e => e.currentDay >= historicalStartDay);
+    
+    // DOWNSAMPLE to 500 points max for rendering speed
+    const chartPriceData = downsampleData(priceData, 500);
+    const chartSortedData = downsampleData(sorted, 500);
+
     const latest = sorted[sorted.length - 1] || {};
 
     const priceEl = document.getElementById('price-value');
-    if (priceEl) {
-        priceEl.textContent = latest.pricePulseX
-            ? `$${Number(latest.pricePulseX).toFixed(5)}`
-            : '$0.0000';
-    }
-
+    if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(5)}` : '$0.0000';
     const tshareEl = document.getElementById('tshare-rate-value');
-    if (tshareEl) {
-        tshareEl.textContent = latest.tshareRateHEX
-            ? `${formatWithCommas(Number(latest.tshareRateHEX).toFixed(0))} HEX`
-            : '0 HEX';
-    }
-
+    if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX.toFixed(0))} HEX` : '0 HEX';
     const payoutEl = document.getElementById('payout-per-tshare-value');
-    if (payoutEl) {
-        payoutEl.textContent = latest.payoutPerTshareHEX
-            ? `${formatWithCommas(Number(latest.payoutPerTshareHEX).toFixed(2))} HEX`
-            : '0.000 HEX';
-    }
-
+    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(2))} HEX` : '0.000 HEX';
     const dailyEl = document.getElementById('daily-payout-value');
-    if (dailyEl) {
-        dailyEl.textContent = latest.dailyPayoutHEX
-            ? `${formatWithCommas(Number(latest.dailyPayoutHEX).toFixed(0))} HEX`
-            : '0 HEX';
-    }
+    if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX.toFixed(0))} HEX` : '0 HEX';
 
     const configs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
-        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: chartPriceData },
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: chartSortedData },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: chartSortedData },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: chartSortedData }
     ];
 
     configs.forEach(c => {
         if (!Array.isArray(c.data)) return;
-
+        
         const labels = c.data.map(e => e.currentDay);
-        const values = c.data.map(e => Number.isFinite(e[c.field]) ? e[c.field] : 0);
+        const values = c.data.map(e => e[c.field]);
 
-        if (chartInstances[c.id]) {
-            chartInstances[c.id].data.labels = labels;
-            chartInstances[c.id].data.datasets[0].data = values;
-            chartInstances[c.id].options = baseLineOptions();
-            chartInstances[c.id].update('none');
-        } else {
-            chartInstances[c.id] = new Chart(
-                document.getElementById(c.id).getContext('2d'),
-                {
-                    type: 'line',
-                    data: {
-                        labels,
-                        datasets: [{
-                            label: c.label,
-                            data: values,
-                            borderColor: c.border,
-                            fill: false,
-                            pointRadius: 0,
-                            pointHoverRadius: 5,
-                            tension: 0.25,
-                            spanGaps: true
-                        }]
-                    },
-                    options: baseLineOptions()
-                }
-            );
+        if (chartInstances[c.id]) { 
+            chartInstances[c.id].data.labels = labels; 
+            chartInstances[c.id].data.datasets[0].data = values; 
+            chartInstances[c.id].update('none'); 
+        } else { 
+            chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), { 
+                type: 'line', 
+                data: {
+                    labels: labels, 
+                    datasets: [{ 
+                        label: c.label, 
+                        data: values,
+                        borderColor: c.border, 
+                        fill: false, 
+                        pointRadius: 0, 
+                        pointHoverRadius: 5, 
+                        tension: 0 // CRITICAL FIX: Straight lines are 10x faster to calculate than curves
+                    }] 
+                }, 
+                options: { 
+                    animation: false,
+                    parsing: false, // CRITICAL FIX: Skips internal Chart.js parsing overhead
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    interaction: { intersect: false, mode: 'index' }, 
+                    scales: { 
+                        x: { 
+                            ticks: { 
+                                color: '#9ca3af',
+                                maxTicksLimit: 10,
+                                callback: function(val) {
+                                    const day = Number(this.getLabelForValue(val));
+                                    return (Number.isFinite(day) && day > 0) ? formatHexDayLabel(day) : val;
+                                }
+                            }, 
+                            grid: { color: '#374151' } 
+                        }, 
+                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } 
+                    }, 
+                    plugins: { 
+                        legend: { display: false }, 
+                        tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } 
+                    } 
+                } 
+            }); 
         }
     });
 }
@@ -1007,9 +1011,10 @@ function renderPortfolioHistoryChartWithData(rawData) {
     if (sorted.length === 0) return;
 
     const minerRanges = getMinerDayRanges();
-    const useDynamicMinerHistory = minerRanges.length > 0 && getLatestHexDay() > 0;
+    const useDynamicMinerHistory = minerRanges.length > 0 && cachedLatestHexDay > 0;
 
-    const portfolio = sorted.map(e => {
+    // Calculate full portfolio data first
+    const fullPortfolio = sorted.map(e => {
         const tSharesForDay = useDynamicMinerHistory
             ? activeTSharesOnDay(e.currentDay, minerRanges)
             : userTotalTShares;
@@ -1017,44 +1022,37 @@ function renderPortfolioHistoryChartWithData(rawData) {
         const tshareRate = Number(e.tshareRateHEX) || 0;
         const price = Number(e.pricePulseX) || 0;
 
-        const minerHex = tSharesForDay * tshareRate;
-        const minerUsd = minerHex * price;
-        const liquidUsd = userLiquidHEX * price;
-
         return {
             day: e.currentDay,
-            value: minerUsd + liquidUsd
+            value: (tSharesForDay * tshareRate * price) + (userLiquidHEX * price)
         };
     });
 
-    const start = portfolio[0].value;
-    const curr = portfolio[portfolio.length - 1].value;
-    const ath = Math.max(...portfolio.map(d => d.value));
+    // DOWNSAMPLE for the chart rendering
+    const portfolio = downsampleData(fullPortfolio, 500);
+
+    const start = fullPortfolio[0].value;
+    const curr = fullPortfolio[fullPortfolio.length - 1].value;
+    const ath = Math.max(...fullPortfolio.map(d => d.value));
 
     const growth = curr - start;
     const pct = start > 0 ? (growth / start) * 100 : 0;
 
     const startLbl = document.getElementById('hist-start-day-label');
     if (startLbl) startLbl.textContent = historicalStartDay;
-
     const startVal = document.getElementById('hist-start-value');
     if (startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
-
     const currVal = document.getElementById('hist-current-value');
     if (currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
-
     const athVal = document.getElementById('hist-ath');
     if (athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
-
+    
     const gEl = document.getElementById('hist-growth');
-
     if (gEl) {
         gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}`;
         gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)';
     }
-
     const pEl = document.getElementById('hist-growth-pct');
-
     if (pEl) {
         pEl.textContent = `${growth >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
         pEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)';
@@ -1062,20 +1060,12 @@ function renderPortfolioHistoryChartWithData(rawData) {
 
     const labels = portfolio.map(d => d.day);
     const values = portfolio.map(d => d.value);
-
     const canvas = document.getElementById('historicalValueChart');
     if (!canvas) return;
-
-    const options = baseLineOptions(
-        'Date',
-        'Portfolio Value (USD)',
-        v => '$' + formatWithCommas(Math.round(v))
-    );
 
     if (chartInstances.historicalValueChart) {
         chartInstances.historicalValueChart.data.labels = labels;
         chartInstances.historicalValueChart.data.datasets[0].data = values;
-        chartInstances.historicalValueChart.options = options;
         chartInstances.historicalValueChart.update('none');
     } else {
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
@@ -1088,22 +1078,47 @@ function renderPortfolioHistoryChartWithData(rawData) {
                     borderColor: '#00b7eb',
                     backgroundColor: 'rgba(0,183,235,0.15)',
                     borderWidth: 3,
-                    tension: 0.25,
+                    tension: 0, // CRITICAL FIX
                     fill: true,
                     pointRadius: 0,
-                    pointHoverRadius: 5,
-                    spanGaps: true
+                    pointHoverRadius: 5
                 }]
             },
-            options
+            options: {
+                animation: false,
+                parsing: false, // CRITICAL FIX
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Date', color: '#9ca3af' },
+                        ticks: { 
+                            color: '#9ca3af', 
+                            maxTicksLimit: 10,
+                            callback: function(val) {
+                                const day = Number(this.getLabelForValue(val));
+                                return (Number.isFinite(day) && day > 0) ? formatHexDayLabel(day) : val;
+                            }
+                        },
+                        grid: { color: '#374151' }
+                    },
+                    y: {
+                        title: { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' },
+                        ticks: { 
+                            color: '#9ca3af', 
+                            callback: v => '$' + formatWithCommas(Math.round(v)) 
+                        },
+                        grid: { color: '#374151' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' }
+                }
+            }
         });
     }
-
-    requestAnimationFrame(() => {
-        if (chartInstances.historicalValueChart) {
-            chartInstances.historicalValueChart.resize();
-        }
-    });
 }
 
 // =============================================
