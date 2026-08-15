@@ -195,7 +195,6 @@ struct AppState {
     config: RwLock<Config>,
     config_tx: broadcast::Sender<()>,
     active_rpc_idx: RwLock<usize>,
-    started_at: Instant::now(),
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
 }
@@ -1487,7 +1486,6 @@ async fn main() {
         config: RwLock::new(initial_config),
         config_tx,
         active_rpc_idx: RwLock::new(0),
-        started_at: Instant::now(),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
     });
