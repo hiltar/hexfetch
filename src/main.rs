@@ -57,15 +57,19 @@ fn f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.filter(|v| v.is_finite()).unwrap_or(0.0))
+    let opt: Option<f64> = Option::deserialize(deserializer)?;
+
+    Ok(match opt {
+        Some(v) if v.is_finite() => v,
+        _ => 0.0,
+    })
 }
 
 fn u64_or_default<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let opt = Option::deserialize(deserializer)?;
+    let opt: Option<u64> = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or(0))
 }
 
