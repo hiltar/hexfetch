@@ -45,6 +45,8 @@ const BACKFILL_SAVE_INTERVAL: usize = 1000;
 const BACKFILL_CONCURRENCY: usize = 4;
 const DAILY_INITIAL_DELAY_SECS: u64 = 120;
 
+type DailyDataResult = Result<(f64, f64), String>;
+
 #[derive(RustEmbed)]
 #[folder = "static/"]
 struct Assets;
@@ -777,7 +779,7 @@ async fn backfill_hex_json(
 
     // 5. Fetch in bounded-concurrency chunks
     for chunk in missing_days.chunks(BACKFILL_SAVE_INTERVAL) {
-        let results: Vec<(u64, Result<(f64, f64), String>)> =
+        let results: Vec<(u64, DailyDataResult)> =
             stream::iter(chunk.iter().copied())
                 .map(|day| async move {
                     let result = read_daily_data(client, state, day).await;
@@ -824,13 +826,13 @@ async fn backfill_hex_json(
                 Err(e) => {
                     chunk_errors += 1;
 
-                    if chunk_errors <= 3 || chunk_errors % 20 == 0 {
+                    if chunk_errors <= 3 || chunk_errors.is_multiple_of(20) {
                         warn!("Backfill: error reading day {}: {}", day, e);
                     }
                 }
             }
 
-            if fetched % 100 == 0 || fetched == total_missing {
+            if fetched.is_multiple_of(100) || fetched == total_missing {
                 info!(
                     "Backfill progress: {}/{} days ({:.1}%)",
                     fetched,
@@ -846,7 +848,7 @@ async fn backfill_hex_json(
         }
 
         // Intermediate save, but not excessively often.
-        if fetched % BACKFILL_SAVE_INTERVAL == 0 || fetched == total_missing {
+        if fetched.is_multiple_of(BACKFILL_SAVE_INTERVAL) || fetched == total_missing {
             let mut partial: Vec<HexJsonEntry> = merged.values().cloned().collect();
             partial.sort_by_key(|e| e.current_day);
             save_hex_json_to_file(&partial).await;
@@ -1161,7 +1163,7 @@ async fn test_rpc(client: &Client, url: &str) -> bool {
 
     let basic_ok = match client.post(url).json(&block_req).send().await {
         Ok(resp) => match resp.json::<Value>().await {
-            Ok(json) => json.get("error").map_or(true, |e| e.is_null()) && json.get("result").is_some(),
+            Ok(json) => json.get("error").is_none_or(|e| e.is_null()) && json.get("result").is_some(),
             Err(_) => false,
         },
         Err(_) => false,
@@ -1273,8 +1275,8 @@ async fn handle_hex_json(
 
     let filtered: Vec<HexJsonEntry> = data
         .iter()
-        .filter(|e| query.from.map_or(true, |from| e.current_day >= from))
-        .filter(|e| query.to.map_or(true, |to| e.current_day <= to))
+        .filter(|e| query.from.is_none_or(|from| e.current_day >= from))
+        .filter(|e| query.to.is_none_or(|to| e.current_day <= to))
         .take(limit)
         .cloned()
         .collect();
