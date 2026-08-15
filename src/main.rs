@@ -24,44 +24,22 @@ use tracing::{error, info, warn};
 // =============================================
 
 const DATA_DIR: &str = "/opt/hexfetch";
-
 const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechain.com",
     "https://rpc-pulsechain.g4mm4.io",
     "https://pulsechain-rpc.publicnode.com",
     "https://rpc.pulsechainrpc.com",
 ];
-
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-
-const DEXSCREENER_URL: &str =
-    "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-
-/// HEXDailyStats – used during backfill for historical T-Share rates/prices.
+const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const HEXDAILYSTATS_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
-
-/// globals() selector: keccak256("globals()")[0..4]
 const GLOBALS_SELECTOR: &str = "0xc3124525";
-
-/// dailyData(uint256) selector: keccak256("dailyData(uint256)")[0..4]
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
-
-/// 1 HEX = 10^8 hearts
 const HEARTS_PER_HEX: f64 = 1e8;
-
-/// T-Share precision factor used in payout calculation
 const TSHARE_UNIT: f64 = 10000.0;
-
-/// Delay between RPC calls during backfill to avoid rate-limiting.
 const BACKFILL_DELAY_MS: u64 = 60;
-
-/// Reduced intermediate save frequency.
 const BACKFILL_SAVE_INTERVAL: usize = 1000;
-
-/// Concurrent backfill requests. Keep conservative for public RPCs.
 const BACKFILL_CONCURRENCY: usize = 6;
-
-/// Wait after UTC midnight before trying to record the previous day.
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
 
 #[derive(RustEmbed)]
@@ -241,10 +219,6 @@ fn calc_payout_per_tshare(payout_hearts: f64, shares: f64) -> f64 {
     if shares <= 0.0 || !shares.is_finite() || !payout_hearts.is_finite() {
         return 0.0;
     }
-
-    // NOTE:
-    // This preserves your original formula because item 2.1 was not selected.
-    // If you later decide to change unit conversion, centralize it here.
     (payout_hearts / shares) * TSHARE_UNIT
 }
 
@@ -755,9 +729,6 @@ async fn backfill_hex_json(
     }
 
     let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill(client).await;
-
-    // Always fetch a current fallback price. This fixes missing days even when
-    // HEXDailyStats returns partial data.
     let current_price = match fetch_price_dexscreener(client).await {
         Ok(p) => {
             info!("Using DEXScreener current price as fallback: ${:.8}", p);
