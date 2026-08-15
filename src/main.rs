@@ -195,6 +195,7 @@ struct AppState {
     config: RwLock<Config>,
     config_tx: broadcast::Sender<()>,
     active_rpc_idx: RwLock<usize>,
+    started_at: Instant::now(),
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
 }
