@@ -357,20 +357,20 @@ impl std::fmt::LowerHex for U256 {
 // UTC TIME CALCULATION
 // =============================================
 
-fn get_duration_until_next_0am_utc() -> std::time::Duration {
+fn get_duration_until_next_1am_utc() -> std::time::Duration {
     let now = Utc::now();
 
-    let today_0am = now
+    let today_1am = now
         .date_naive()
-        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        .and_time(NaiveTime::from_hms_opt(1, 0, 0).unwrap());
 
-    let mut next_0am = today_0am.and_utc();
+    let mut next_1am = today_1am.and_utc();
 
-    if next_0am <= now {
-        next_0am = next_0am.checked_add_days(Days::new(1)).unwrap();
+    if next_1am <= now {
+        next_1am = next_1am.checked_add_days(Days::new(1)).unwrap();
     }
 
-    (next_0am - now)
+    (next_1am - now)
         .to_std()
         .unwrap_or(std::time::Duration::from_secs(60))
 }
@@ -1092,10 +1092,10 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
     }
 
     loop {
-        let sleep_duration = get_duration_until_next_0am_utc();
+        let sleep_duration = get_duration_until_next_1am_utc();
 
         info!(
-            "HEXJSON updater sleeping for {:?} until next 0 AM UTC recording...",
+            "HEXJSON updater sleeping for {:?} until next 1 AM UTC recording...",
             sleep_duration
         );
 
