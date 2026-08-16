@@ -14,6 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::compression::CompressionLayer;
@@ -22,8 +24,6 @@ use tracing::{error, info, warn};
 // =============================================
 // CONFIGURATION & CONSTANTS
 // =============================================
-
-const DATA_DIR: &str = "./";
 
 const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechain.com",
@@ -405,16 +405,26 @@ fn get_duration_until_next_1am_utc() -> std::time::Duration {
 // FILE PATHS / PERSISTENCE
 // =============================================
 
-fn hexjson_file_path() -> String {
-    format!("{}/hexjson.json", DATA_DIR)
+fn get_data_dir() -> &'static Path {
+    static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DATA_DIR.get_or_init(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe_path| exe_path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."))
+    })
 }
 
-fn config_file_path() -> String {
-    format!("{}/config.json", DATA_DIR)
+fn hexjson_file_path() -> PathBuf {
+    get_data_dir().join("hexjson.json")
 }
 
-fn miners_file_path() -> String {
-    format!("{}/miners.json", DATA_DIR)
+fn config_file_path() -> PathBuf {
+    get_data_dir().join("config.json")
+}
+
+fn miners_file_path() -> PathBuf {
+    get_data_dir().join("miners.json")
 }
 
 async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
@@ -423,7 +433,7 @@ async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
     match serde_json::to_string(data) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
-                error!("Failed to save hexjson to {}: {}", path, e);
+                error!("Failed to save hexjson to {}: {}", path.display(), e);
             }
         }
         Err(e) => error!("Failed to serialize hexjson: {}", e),
@@ -457,7 +467,7 @@ async fn save_config_to_file(config: &Config) {
     match serde_json::to_string_pretty(config) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
-                error!("Failed to save config to {}: {}", path, e);
+                error!("Failed to save config to {}: {}", path.display(), e);
             }
         }
         Err(e) => error!("Failed to serialize config: {}", e),
@@ -470,7 +480,7 @@ async fn save_miners_to_file(miners: &[Miner]) {
     match serde_json::to_string_pretty(miners) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
-                error!("Failed to save miners to {}: {}", path, e);
+                error!("Failed to save miners to {}: {}", path.display(), e);
             }
         }
         Err(e) => error!("Failed to serialize miners: {}", e),
@@ -1451,7 +1461,7 @@ async fn main() {
         )
         .init();
 
-    tokio::fs::create_dir_all(DATA_DIR)
+    tokio::fs::create_dir_all(get_data_dir())
         .await
         .expect("Failed to create data dir");
 
