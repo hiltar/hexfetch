@@ -10,43 +10,53 @@ permissions:
   contents: write
 
 jobs:
-  # =========================================================
-  # ESP32-S3 firmware (ESP-IDF + Xtensa Rust toolchain)
-  # =========================================================
   build-esp32:
     name: Build (xtensa-esp32s3-espidf)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      # Baked in at compile time via option_env!. Use repo secrets for real
-      # credentials; placeholders keep CI green when secrets are absent.
       HEX_WIFI_SSID: ${{ secrets.ESP_WIFI_SSID || 'hexfetch-ci' }}
       HEX_WIFI_PASS: ${{ secrets.ESP_WIFI_PASS || 'hexfetch-ci' }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # Installs the Xtensa "esp" toolchain (via espup) + ldproxy, with caching.
-      - name: Install ESP Rust toolchain
-        uses: esp-rs/xtensa-toolchain@v1
-        with:
-          ldproxy: true
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: esp32
 
+      - name: Install espup + ldproxy
+        run: cargo install --locked espup ldproxy
+
+      - name: Cache Xtensa toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/esp*
+            ~/.espup
+          key: xtensa-esp32s3-v1
+
+      - name: Install Xtensa toolchain
+        run: espup install --targets esp32s3
+
       - name: Install espflash
-        run: cargo install espflash --locked
+        run: cargo install --locked espflash
 
       - name: Build firmware
         working-directory: esp32
-        run: cargo build --release
+        run: |
+          . "${{ github.workspace }}/export-esp.sh"
+          cargo build --release
 
       - name: Merge full flash image
         working-directory: esp32
-        run: cargo espflash merge-bin --release --output ${{ github.workspace }}/hexfetch-esp32.bin
+        run: |
+          . "${{ github.workspace }}/export-esp.sh"
+          cargo espflash merge-bin --release --output "${{ github.workspace }}/hexfetch-esp32.bin"
 
       - name: Generate Checksum
         if: github.event_name == 'release'
