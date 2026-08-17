@@ -1,3 +1,3 @@
 fn main() {
-    embuild::sysenv::SysenvContext::default().inject();
+    embuild::espidf::SysenvContext::default().inject();
 }
