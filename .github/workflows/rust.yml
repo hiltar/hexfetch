@@ -2,7 +2,7 @@ name: hexfetch
 
 on:
   push:
-    branches: [rust]
+    branches: [esp32]
   release:
     types: [created]
 
@@ -10,51 +10,61 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build (${{ matrix.target }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            output: hexfetch
-          - target: aarch64-unknown-linux-musl
-            output: hexfetch-arm
+  # =========================================================
+  # ESP32-S3 firmware (ESP-IDF + Xtensa Rust toolchain)
+  # =========================================================
+  build-esp32:
+    name: Build (xtensa-esp32s3-espidf)
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Baked in at compile time via option_env!. Use repo secrets for real
+      # credentials; placeholders keep CI green when secrets are absent.
+      HEX_WIFI_SSID: ${{ secrets.ESP_WIFI_SSID || 'hexfetch-ci' }}
+      HEX_WIFI_PASS: ${{ secrets.ESP_WIFI_PASS || 'hexfetch-ci' }}
 
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+
+      # Installs the Xtensa "esp" toolchain (via espup) + ldproxy, with caching.
+      - name: Install ESP Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1
         with:
-          targets: ${{ matrix.target }}
-          
+          ldproxy: true
+
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
-        
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v1
         with:
-          version: 0.13.0
-          
-      - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@cargo-zigbuild
-        
-      - name: Build
-        run: |
-          cargo zigbuild --release --target ${{ matrix.target }}
-          mv target/${{ matrix.target }}/release/hexfetch-rs ${{ matrix.output }}
-          
+          workspaces: esp32
+
+      - name: Install espflash
+        uses: taiki-e/install-action@espflash
+
+      - name: Build firmware
+        working-directory: esp32
+        run: cargo build --release
+
+      - name: Merge full flash image
+        working-directory: esp32
+        run: cargo espflash merge-bin --release --output ${{ github.workspace }}/hexfetch-esp32.bin
+
       - name: Generate Checksum
         if: github.event_name == 'release'
-        run: sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
-        
+        run: sha256sum hexfetch-esp32.bin > hexfetch-esp32.bin.sha256
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexfetch-esp32
+          path: |
+            hexfetch-esp32.bin
+            esp32/target/xtensa-esp32s3-espidf/release/hexfetch-esp32
+
       - name: Upload to GitHub Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ matrix.output }}
-            ${{ matrix.output }}.sha256
+            hexfetch-esp32.bin
+            hexfetch-esp32.bin.sha256
           draft: true
