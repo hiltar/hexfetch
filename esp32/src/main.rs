@@ -3,7 +3,7 @@ use embedded_svc::http::Method;
 use embedded_svc::io::{Read as ERead, Write as EWrite};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::client::{Configuration as ClientConfig, EspHttpConnection as ClientConnection};
-use esp_idf_svc::http::server::{Configuration as ServerConfig, EspHttpServer, EspHttpConnection as ServerConnection};
+use esp_idf_svc::http::server::{Configuration as ServerConfig, EspHttpServer};
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::sntp::EspSntp;
 use esp_idf_svc::sys::{ESP_FAIL, EspError};
@@ -313,7 +313,7 @@ fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
         Ok(f) => match serde_json::from_reader::<_, Vec<HexJsonEntry>>(std::io::BufReader::with_capacity(4096, f)) {
             Ok(data) => { info!("Loaded {} hexjson entries from file", data.len()); data }
             Err(e) => { warn!("Failed to parse hexjson file: {}. Starting fresh.", e); Vec::new() }
-8        },
+        },
         Err(_) => { info!("No hexjson file found. Will build from RPC + external sources."); Vec::new() }
     }
 }
@@ -731,7 +731,7 @@ fn query_param<'a>(uri: &'a str, key: &str) -> Option<&'a str> {
 
 fn handle_live_data(
     state: &Arc<AppState>,
-    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
 ) -> HResult {
     let data = state.live_data.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
@@ -743,7 +743,7 @@ fn handle_live_data(
 
 fn handle_miners(
     state: &Arc<AppState>,
-    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
 ) -> HResult {
     let data = state.miners.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
@@ -755,7 +755,7 @@ fn handle_miners(
 
 fn handle_hex_json(
     state: &Arc<AppState>,
-    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
 ) -> HResult {
     let uri = req.uri().to_string();
     let from = query_param(&uri, "from").and_then(|v| v.parse::<u64>().ok());
@@ -797,7 +797,7 @@ fn handle_hex_json(
 
 fn handle_get_config(
     state: &Arc<AppState>,
-    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
 ) -> HResult {
     let data = state.config.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json")]).map_err(|_| esp_fail())?;
@@ -877,7 +877,7 @@ fn handle_delete_miner(
 }
 
 fn serve_asset(
-    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
     path: &'static str,
 ) -> HResult {
     let file = Assets::get(path).ok_or_else(|| esp_fail())?;
