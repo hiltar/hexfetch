@@ -19,7 +19,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-type HttpRequest<'a> = esp_idf_svc::http::server::Request<&'a mut ServerConnection<'a>>;
 type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
 
@@ -314,7 +313,7 @@ fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
         Ok(f) => match serde_json::from_reader::<_, Vec<HexJsonEntry>>(std::io::BufReader::with_capacity(4096, f)) {
             Ok(data) => { info!("Loaded {} hexjson entries from file", data.len()); data }
             Err(e) => { warn!("Failed to parse hexjson file: {}. Starting fresh.", e); Vec::new() }
-        },
+8        },
         Err(_) => { info!("No hexjson file found. Will build from RPC + external sources."); Vec::new() }
     }
 }
@@ -730,7 +729,10 @@ fn query_param<'a>(uri: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|kv| { let mut it = kv.splitn(2, '='); (it.next()? == key).then(|| it.next().unwrap_or("")) })
 }
 
-fn handle_live_data(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_live_data(
+    state: &Arc<AppState>,
+    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let data = state.live_data.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
         .map_err(|_| esp_fail())?;
@@ -739,7 +741,10 @@ fn handle_live_data(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn handle_miners(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_miners(
+    state: &Arc<AppState>,
+    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let data = state.miners.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
         .map_err(|_| esp_fail())?;
@@ -748,7 +753,10 @@ fn handle_miners(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn handle_hex_json(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_hex_json(
+    state: &Arc<AppState>,
+    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let uri = req.uri().to_string();
     let from = query_param(&uri, "from").and_then(|v| v.parse::<u64>().ok());
     let limit = query_param(&uri, "limit").and_then(|v| v.parse::<usize>().ok());
@@ -787,7 +795,10 @@ fn handle_hex_json(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn handle_get_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_get_config(
+    state: &Arc<AppState>,
+    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let data = state.config.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json")]).map_err(|_| esp_fail())?;
     let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
@@ -795,7 +806,9 @@ fn handle_get_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn read_body(mut req: HttpRequest) -> Result<Vec<u8>, String> {
+fn read_body(
+    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     let mut buf = [0u8; 512];
     loop {
@@ -807,7 +820,10 @@ fn read_body(mut req: HttpRequest) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
-fn handle_post_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_post_config(
+    state: &Arc<AppState>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let new_config: Config = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let new_config = sanitize_config(new_config);
@@ -817,7 +833,10 @@ fn handle_post_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn handle_add_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_add_miner(
+    state: &Arc<AppState>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let r: AddMinerRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let (Some(start), Some(end)) = (parse_date(&r.start_date), parse_date(&r.end_date)) else { return Err(esp_fail()); };
@@ -830,7 +849,10 @@ fn handle_add_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn handle_end_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_end_miner(
+    state: &Arc<AppState>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let mut miners = state.miners.write().unwrap();
@@ -840,7 +862,10 @@ fn handle_end_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn handle_delete_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
+fn handle_delete_miner(
+    state: &Arc<AppState>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let mut miners = state.miners.write().unwrap();
@@ -851,7 +876,10 @@ fn handle_delete_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     Ok(())
 }
 
-fn serve_asset(req: HttpRequest, path: &'static str) -> HResult {
+fn serve_asset(
+    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+    path: &'static str,
+) -> HResult {
     let file = Assets::get(path).ok_or_else(|| esp_fail())?;
     let mime = get_mime_type(path);
     let mut resp = req.into_response(200, None, &[
@@ -948,16 +976,49 @@ fn main() {
     let server_conf = ServerConfig { stack_size: 10 * 1024, max_uri_handlers: 32, ..Default::default() };
     let mut server = EspHttpServer::new(&server_conf).expect("http server");
 
-    server.fn_handler("/api/live-data", Method::Get, move |req| handle_live_data(&state, req)).expect("route");
-    server.fn_handler("/api/miners", Method::Get, move |req| handle_miners(&state, req)).expect("route");
-    server.fn_handler("/api/hexjson", Method::Get, move |req| handle_hex_json(&state, req)).expect("route");
-    server.fn_handler("/api/config", Method::Get, move |req| handle_get_config(&state, req)).expect("route");
-    server.fn_handler("/api/config", Method::Post, move |req| handle_post_config(&state, req)).expect("route");
-    server.fn_handler("/api/add-miner", Method::Post, move |req| handle_add_miner(&state, req)).expect("route");
-    server.fn_handler("/api/end-miner", Method::Post, move |req| handle_end_miner(&state, req)).expect("route");
-    server.fn_handler("/api/delete-miner", Method::Post, move |req| handle_delete_miner(&state, req)).expect("route");
+    // Clone `state` for each closure to avoid "use of moved value" errors
+    server.fn_handler("/api/live-data", Method::Get, {
+        let s = state.clone();
+        move |req| handle_live_data(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/miners", Method::Get, {
+        let s = state.clone();
+        move |req| handle_miners(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/hexjson", Method::Get, {
+        let s = state.clone();
+        move |req| handle_hex_json(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/config", Method::Get, {
+        let s = state.clone();
+        move |req| handle_get_config(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/config", Method::Post, {
+        let s = state.clone();
+        move |req| handle_post_config(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/add-miner", Method::Post, {
+        let s = state.clone();
+        move |req| handle_add_miner(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/end-miner", Method::Post, {
+        let s = state.clone();
+        move |req| handle_end_miner(&s, req)
+    }).expect("route");
+
+    server.fn_handler("/api/delete-miner", Method::Post, {
+        let s = state.clone();
+        move |req| handle_delete_miner(&s, req)
+    }).expect("route");
 
     server.fn_handler("/", Method::Get, |req| serve_asset(req, "index.html")).expect("route");
+    
     for name in Assets::iter() {
         let path: &'static str = Box::leak(name.into_owned().into_boxed_str());
         let route = format!("/{}", path);
