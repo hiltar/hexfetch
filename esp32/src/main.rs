@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-type HttpRequest<'a> = esp_idf_svc::http::server::Request<ServerConnection<'a>>;
+type HttpRequest<'a> = esp_idf_svc::http::server::Request<&'a mut ServerConnection<'a>>;
 type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
 
@@ -364,14 +364,12 @@ fn http_request(
     ).map_err(|e| format!("request to {} failed: {}", url, e))?;
 
     if let Some(body) = post_body {
-        // Use embedded_svc::io::Write::write_all
         EWrite::write_all(&mut req, body).map_err(|e| e.to_string())?;
     }
     
     let mut resp = req.submit().map_err(|e| e.to_string())?;
     let status = resp.status();
     
-    // Read response body using embedded_svc::io::Read loop
     let mut body = Vec::new();
     let mut buf = [0u8; 1024];
     loop {
@@ -736,7 +734,6 @@ fn handle_live_data(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.live_data.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
         .map_err(|_| esp_fail())?;
-    // Serialize to Vec<u8> first, then write using embedded_svc::io::Write
     let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
     EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     Ok(())
@@ -801,12 +798,11 @@ fn handle_get_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
 fn read_body(mut req: HttpRequest) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     let mut buf = [0u8; 512];
-    // Read request body using embedded_svc::io::Read loop
     loop {
         let n = ERead::read(&mut req, &mut buf).map_err(|e| e.to_string())?;
         if n == 0 { break; }
         body.extend_from_slice(&buf[..n]);
-        if body.len() > 8192 { break; } // Limit body size
+        if body.len() > 8192 { break; }
     }
     Ok(body)
 }
