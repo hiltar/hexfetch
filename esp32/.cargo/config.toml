@@ -2,7 +2,7 @@
 target = "xtensa-esp32s3-espidf"
 
 [target.xtensa-esp32s3-espidf]
-linker = "xtensa-esp32s3-elf-gcc"
+linker = "ldproxy"
 rustflags = ["-C", "link-arg=-nostartfiles"]
 
 [unstable]
