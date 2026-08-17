@@ -1,3 +1,6 @@
 fn main() {
-    embuild::espidf::SysenvContext::default().inject();
+    embuild::build::CargoArgs::from_comma_separated_list()
+        .unwrap()
+        .build()
+        .unwrap();
 }
