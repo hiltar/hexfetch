@@ -38,7 +38,7 @@ jobs:
           workspaces: esp32
 
       - name: Install espflash
-        uses: taiki-e/install-action@espflash
+        run: cargo install espflash --locked
 
       - name: Build firmware
         working-directory: esp32
