@@ -1,12 +1,12 @@
 use chrono::{Datelike, Days, NaiveTime, Utc};
-use embedded_svc::http::client::Client as HttpClientTrait;
+use embedded_svc::http::client::Client as _;
 use embedded_svc::http::Method;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::client::{Configuration as ClientConfig, EspHttpConnection as ClientConnection};
 use esp_idf_svc::http::server::{Configuration as ServerConfig, EspHttpServer, EspHttpConnection as ServerConnection};
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::sntp::EspSntp;
-use esp_idf_svc::sys::ESP_FAIL;
+use esp_idf_svc::sys::{ESP_FAIL, EspError};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
@@ -20,9 +20,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-type HttpRequest<'a> = esp_idf_svc::http::server::Request<'a, ServerConnection<'a>>;
-type HResult = Result<(), esp_idf_svc::sys::EspError>;
+type HttpRequest<'a> = esp_idf_svc::http::server::Request<ServerConnection<'a>>;
+type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
+
+// Helper to cleanly return ESP_FAIL from handlers
+fn esp_fail() -> EspError {
+    EspError::from(ESP_FAIL).unwrap()
+}
 
 // =============================================
 // CONFIGURATION & CONSTANTS
@@ -307,7 +312,7 @@ fn save_hex_json_to_file(data: &[HexJsonEntry]) {
 fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
     let path = hexjson_file_path();
     match fs::File::open(&path) {
-        Ok(f) => match serde_json::from_reader(BufReader::with_capacity(4096, f)) {
+        Ok(f) => match serde_json::from_reader::<_, Vec<HexJsonEntry>>(BufReader::with_capacity(4096, f)) {
             Ok(data) => { info!("Loaded {} hexjson entries from file", data.len()); data }
             Err(e) => { warn!("Failed to parse hexjson file: {}. Starting fresh.", e); Vec::new() }
         },
@@ -347,14 +352,19 @@ fn http_request(
     post_body: Option<&[u8]>,
     url: &str,
 ) -> Result<(u16, Vec<u8>), String> {
+    let headers: &[(&str, &str)] = if post_body.is_some() {
+        &[("Content-Type", "application/json")]
+    } else {
+        &[]
+    };
+    
     let mut req = client.request(
         if post_body.is_some() { Method::Post } else { Method::Get },
         url,
-        &[]
+        headers
     ).map_err(|e| format!("request to {} failed: {}", url, e))?;
 
     if let Some(body) = post_body {
-        req.header("Content-Type", "application/json").map_err(|e| e.to_string())?;
         req.write_all(body).map_err(|e| e.to_string())?;
     }
     
@@ -539,7 +549,7 @@ fn backfill_hex_json(
                     current_day: day, tshare_rate_hex: tshare, daily_payout_hex, payout_per_tshare_hex: payout_per_tshare, price_pulse_x: price,
                 });
             }
-            Err(e) => {
+            Err(_) => {
                 consecutive_errors += 1;
                 if consecutive_errors >= 50 { break; }
             }
@@ -718,16 +728,16 @@ fn query_param<'a>(uri: &'a str, key: &str) -> Option<&'a str> {
 fn handle_live_data(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.live_data.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
-        .map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+        .map_err(|_| esp_fail())?;
+    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_fail())?;
     Ok(())
 }
 
 fn handle_miners(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.miners.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
-        .map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+        .map_err(|_| esp_fail())?;
+    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_fail())?;
     Ok(())
 }
 
@@ -750,28 +760,28 @@ fn handle_hex_json(state: &Arc<AppState>, req: HttpRequest) -> HResult {
         if inm == etag || inm.trim_matches('"') == etag.trim_matches('"') {
             let etag_str = etag.as_str();
             req.into_response(304, None, &[("ETag", etag_str), ("Cache-Control", "no-cache")])
-                .map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+                .map_err(|_| esp_fail())?;
             return Ok(());
         }
     }
 
     let mut resp = req.into_response(200, None, &[
         ("Content-Type", "application/json"), ("Cache-Control", "no-cache"), ("ETag", etag.as_str()),
-    ]).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    ]).map_err(|_| esp_fail())?;
 
     if full_request {
-        serde_json::to_writer(&mut resp, &*data).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+        serde_json::to_writer(&mut resp, &*data).map_err(|_| esp_fail())?;
     } else {
         let filtered: Vec<HexJsonEntry> = data.iter().filter(|e| e.current_day >= from.unwrap_or(0)).take(limit.unwrap_or(usize::MAX)).cloned().collect();
-        serde_json::to_writer(&mut resp, &filtered).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+        serde_json::to_writer(&mut resp, &filtered).map_err(|_| esp_fail())?;
     }
     Ok(())
 }
 
 fn handle_get_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.config.read().unwrap().clone();
-    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json")]).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json")]).map_err(|_| esp_fail())?;
+    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_fail())?;
     Ok(())
 }
 
@@ -782,8 +792,8 @@ fn read_body(mut req: HttpRequest) -> Result<Vec<u8>, String> {
 }
 
 fn handle_post_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
-    let body = read_body(req).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    let new_config: Config = serde_json::from_slice(&body).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    let body = read_body(req).map_err(|_| esp_fail())?;
+    let new_config: Config = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let new_config = sanitize_config(new_config);
     *state.config.write().unwrap() = new_config.clone();
     state.config_event.notify();
@@ -792,10 +802,10 @@ fn handle_post_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
 }
 
 fn handle_add_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
-    let body = read_body(req).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    let r: AddMinerRequest = serde_json::from_slice(&body).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    let (Some(start), Some(end)) = (parse_date(&r.start_date), parse_date(&r.end_date)) else { return Err(esp_idf_svc::sys::EspError::from(ESP_FAIL)); };
-    if end < start || r.t_shares <= 0.0 { return Err(esp_idf_svc::sys::EspError::from(ESP_FAIL)); }
+    let body = read_body(req).map_err(|_| esp_fail())?;
+    let r: AddMinerRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
+    let (Some(start), Some(end)) = (parse_date(&r.start_date), parse_date(&r.end_date)) else { return Err(esp_fail()); };
+    if end < start || r.t_shares <= 0.0 { return Err(esp_fail()); }
     let id = state.next_miner_id.fetch_add(1, Ordering::SeqCst) as u64;
     let miner = Miner { id: Some(id), start_date: r.start_date, end_date: r.end_date, t_shares: r.t_shares, status: None };
     let mut miners = state.miners.write().unwrap();
@@ -805,33 +815,33 @@ fn handle_add_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
 }
 
 fn handle_end_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
-    let body = read_body(req).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    let body = read_body(req).map_err(|_| esp_fail())?;
+    let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let mut miners = state.miners.write().unwrap();
-    let Some(miner) = miners.iter_mut().find(|m| m.id == Some(r.id)) else { return Err(esp_idf_svc::sys::EspError::from(ESP_FAIL)); };
+    let Some(miner) = miners.iter_mut().find(|m| m.id == Some(r.id)) else { return Err(esp_fail()); };
     miner.status = Some("completed".to_string());
     save_miners_to_file(&miners);
     Ok(())
 }
 
 fn handle_delete_miner(state: &Arc<AppState>, req: HttpRequest) -> HResult {
-    let body = read_body(req).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    let body = read_body(req).map_err(|_| esp_fail())?;
+    let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let mut miners = state.miners.write().unwrap();
     let before = miners.len();
     miners.retain(|m| m.id != Some(r.id));
-    if miners.len() == before { return Err(esp_idf_svc::sys::EspError::from(ESP_FAIL)); }
+    if miners.len() == before { return Err(esp_fail()); }
     save_miners_to_file(&miners);
     Ok(())
 }
 
 fn serve_asset(req: HttpRequest, path: &'static str) -> HResult {
-    let file = Assets::get(path).ok_or_else(|| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    let file = Assets::get(path).ok_or_else(|| esp_fail())?;
     let mime = get_mime_type(path);
     let mut resp = req.into_response(200, None, &[
         ("Content-Type", mime), ("Cache-Control", "public, max-age=3600"),
-    ]).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
-    std::io::Write::write_all(&mut resp, file.data.as_ref()).map_err(|_| esp_idf_svc::sys::EspError::from(ESP_FAIL))?;
+    ]).map_err(|_| esp_fail())?;
+    std::io::Write::write_all(&mut resp, file.data.as_ref()).map_err(|_| esp_fail())?;
     Ok(())
 }
 
