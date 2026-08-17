@@ -1,51 +1,23 @@
 [package]
-name = "hexfetch-rs"
-version = "0.3.0"
+name = "hexfetch-esp32"
+version = "0.4.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = [
-    "rt-multi-thread",
-    "macros",
-    "time",
-    "sync",
-    "fs",
-    "net",
-    "signal"
-] }
+esp-idf-svc = { version = "0.51", features = ["std", "alloc", "binstart"] }
+embedded-svc = { version = "0.28", default-features = false, features = ["std"] }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+rust-embed = { version = "8", features = ["debug-embed"] }
 
-axum = { version = "0.7", default-features = false, features = [
-    "http1",
-    "json",
-    "tokio",
-    "query"
-] }
-
-tower-http = { version = "0.6", features = [
-    "compression-gzip"
-] }
-
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-    "gzip"
-] }
-
-chrono = { version = "0.4", default-features = false, features = [
-    "clock"
-] }
-
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
-rust-embed = "8.12"
-futures = "0.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+[build-dependencies]
+embuild = "0.33"
 
 [profile.release]
-opt-level = 3
-lto = "thin"
+opt-level = "s"
+lto = true
 codegen-units = 1
-strip = true
 panic = "abort"
 debug = false
