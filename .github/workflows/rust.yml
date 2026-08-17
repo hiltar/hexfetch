@@ -43,20 +43,32 @@ jobs:
       - name: Install Xtensa toolchain
         run: espup install --targets esp32s3
 
+      - name: Export Xtensa environment
+        run: |
+          set -e
+          if [ -f "$HOME/export-esp.sh" ]; then
+            . "$HOME/export-esp.sh"
+          elif [ -f "${{ github.workspace }}/export-esp.sh" ]; then
+            . "${{ github.workspace }}/export-esp.sh"
+          else
+            echo "::error::export-esp.sh not found"
+            exit 1
+          fi
+          {
+            echo "PATH=$PATH"
+            echo "LIBCLANG_PATH=$LIBCLANG_PATH"
+          } >> "$GITHUB_ENV"
+
       - name: Install espflash
         run: cargo install --locked espflash
 
       - name: Build firmware
         working-directory: esp32
-        run: |
-          . "${{ github.workspace }}/export-esp.sh"
-          cargo build --release
+        run: cargo build --release
 
       - name: Merge full flash image
         working-directory: esp32
-        run: |
-          . "${{ github.workspace }}/export-esp.sh"
-          cargo espflash merge-bin --release --output "${{ github.workspace }}/hexfetch-esp32.bin"
+        run: cargo espflash merge-bin --release --output "${{ github.workspace }}/hexfetch-esp32.bin"
 
       - name: Generate Checksum
         if: github.event_name == 'release'
