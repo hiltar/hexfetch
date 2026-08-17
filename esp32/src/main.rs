@@ -1,6 +1,6 @@
 use chrono::{Datelike, Days, NaiveTime, Utc};
-use embedded_svc::http::client::Client as _;
 use embedded_svc::http::Method;
+use embedded_svc::io::{Read as ERead, Write as EWrite};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::client::{Configuration as ClientConfig, EspHttpConnection as ClientConnection};
 use esp_idf_svc::http::server::{Configuration as ServerConfig, EspHttpServer, EspHttpConnection as ServerConnection};
@@ -15,7 +15,6 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -302,7 +301,7 @@ fn save_hex_json_to_file(data: &[HexJsonEntry]) {
     let path = hexjson_file_path();
     match fs::File::create(&path) {
         Ok(f) => {
-            let w = BufWriter::with_capacity(4096, f);
+            let w = std::io::BufWriter::with_capacity(4096, f);
             if let Err(e) = serde_json::to_writer(w, data) { error!("Failed to serialize hexjson: {}", e); }
         }
         Err(e) => error!("Failed to save hexjson to {}: {}", path, e),
@@ -312,7 +311,7 @@ fn save_hex_json_to_file(data: &[HexJsonEntry]) {
 fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
     let path = hexjson_file_path();
     match fs::File::open(&path) {
-        Ok(f) => match serde_json::from_reader::<_, Vec<HexJsonEntry>>(BufReader::with_capacity(4096, f)) {
+        Ok(f) => match serde_json::from_reader::<_, Vec<HexJsonEntry>>(std::io::BufReader::with_capacity(4096, f)) {
             Ok(data) => { info!("Loaded {} hexjson entries from file", data.len()); data }
             Err(e) => { warn!("Failed to parse hexjson file: {}. Starting fresh.", e); Vec::new() }
         },
@@ -365,16 +364,24 @@ fn http_request(
     ).map_err(|e| format!("request to {} failed: {}", url, e))?;
 
     if let Some(body) = post_body {
-        req.write_all(body).map_err(|e| e.to_string())?;
+        // Use embedded_svc::io::Write::write_all
+        EWrite::write_all(&mut req, body).map_err(|e| e.to_string())?;
     }
     
     let mut resp = req.submit().map_err(|e| e.to_string())?;
     let status = resp.status();
-    let mut buf = Vec::new();
-    resp.take(MAX_HTTP_RESPONSE_BYTES as u64)
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("read: {}", e))?;
-    Ok((status as u16, buf))
+    
+    // Read response body using embedded_svc::io::Read loop
+    let mut body = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = ERead::read(&mut resp, &mut buf).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        body.extend_from_slice(&buf[..n]);
+        if body.len() >= MAX_HTTP_RESPONSE_BYTES { break; }
+    }
+    
+    Ok((status as u16, body))
 }
 
 // =============================================
@@ -471,7 +478,7 @@ fn fetch_hexdailystats_backfill(client: &mut HttpClient) -> (HashMap<u64, f64>, 
         Err(e) => { warn!("HEXDailyStats unreachable: {}", e); return (HashMap::new(), HashMap::new()); }
     };
     if !(200..300).contains(&status) { return (HashMap::new(), HashMap::new()); }
-    let entries: Vec<HexJsonEntry> = match serde_json::from_reader(BufReader::with_capacity(4096, &body[..])) {
+    let entries: Vec<HexJsonEntry> = match serde_json::from_reader(std::io::BufReader::with_capacity(4096, &body[..])) {
         Ok(e) => e,
         Err(e) => { warn!("HEXDailyStats JSON parse failed: {}", e); return (HashMap::new(), HashMap::new()); }
     };
@@ -729,7 +736,9 @@ fn handle_live_data(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.live_data.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
         .map_err(|_| esp_fail())?;
-    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_fail())?;
+    // Serialize to Vec<u8> first, then write using embedded_svc::io::Write
+    let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
+    EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     Ok(())
 }
 
@@ -737,7 +746,8 @@ fn handle_miners(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.miners.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
         .map_err(|_| esp_fail())?;
-    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_fail())?;
+    let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
+    EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     Ok(())
 }
 
@@ -770,10 +780,12 @@ fn handle_hex_json(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     ]).map_err(|_| esp_fail())?;
 
     if full_request {
-        serde_json::to_writer(&mut resp, &*data).map_err(|_| esp_fail())?;
+        let json_bytes = serde_json::to_vec(&*data).map_err(|_| esp_fail())?;
+        EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     } else {
         let filtered: Vec<HexJsonEntry> = data.iter().filter(|e| e.current_day >= from.unwrap_or(0)).take(limit.unwrap_or(usize::MAX)).cloned().collect();
-        serde_json::to_writer(&mut resp, &filtered).map_err(|_| esp_fail())?;
+        let json_bytes = serde_json::to_vec(&filtered).map_err(|_| esp_fail())?;
+        EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     }
     Ok(())
 }
@@ -781,13 +793,21 @@ fn handle_hex_json(state: &Arc<AppState>, req: HttpRequest) -> HResult {
 fn handle_get_config(state: &Arc<AppState>, req: HttpRequest) -> HResult {
     let data = state.config.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json")]).map_err(|_| esp_fail())?;
-    serde_json::to_writer(&mut resp, &data).map_err(|_| esp_fail())?;
+    let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
+    EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     Ok(())
 }
 
 fn read_body(mut req: HttpRequest) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
-    std::io::Read::read_to_end(&mut req, &mut body).map_err(|e| e.to_string())?;
+    let mut buf = [0u8; 512];
+    // Read request body using embedded_svc::io::Read loop
+    loop {
+        let n = ERead::read(&mut req, &mut buf).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        body.extend_from_slice(&buf[..n]);
+        if body.len() > 8192 { break; } // Limit body size
+    }
     Ok(body)
 }
 
@@ -841,7 +861,7 @@ fn serve_asset(req: HttpRequest, path: &'static str) -> HResult {
     let mut resp = req.into_response(200, None, &[
         ("Content-Type", mime), ("Cache-Control", "public, max-age=3600"),
     ]).map_err(|_| esp_fail())?;
-    std::io::Write::write_all(&mut resp, file.data.as_ref()).map_err(|_| esp_fail())?;
+    EWrite::write_all(&mut resp, file.data.as_ref()).map_err(|_| esp_fail())?;
     Ok(())
 }
 
