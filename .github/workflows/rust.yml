@@ -59,16 +59,28 @@ jobs:
             echo "LIBCLANG_PATH=$LIBCLANG_PATH"
           } >> "$GITHUB_ENV"
 
-      - name: Install espflash
-        run: cargo install --locked espflash
-
       - name: Build firmware
         working-directory: esp32
         run: cargo build --release
-
-      - name: Merge full flash image
+        
+      - name: Merge full flash image (esptool)
         working-directory: esp32
-        run: cargo espflash merge-bin --release --output "${{ github.workspace }}/hexfetch-esp32.bin"
+        run: |
+          python3 -m pip install -q esptool
+          FA="$(find target -name flasher_args.json | head -n1)"
+          echo "Using flasher_args: $FA"
+          python3 - "$FA" "${{ github.workspace }}/hexfetch-esp32.bin" <<'EOF'
+          import json, os, subprocess, sys
+          fa_path, out = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+          base = os.path.dirname(fa_path)
+          files = json.load(open(fa_path))["flash_files"]
+          cmd = [sys.executable, "-m", "esptool", "--chip", "esp32s3",
+                 "merge_bin", "--output", out]
+          for off in sorted(files, key=lambda o: int(o, 16)):
+              cmd += [off, os.path.join(base, files[off])]
+          print(" ".join(cmd))
+          subprocess.run(cmd, check=True)
+          EOF
 
       - name: Generate Checksum
         if: github.event_name == 'release'
