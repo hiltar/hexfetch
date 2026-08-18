@@ -18,6 +18,8 @@ use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
+use log::Log as _;
+use std::collections::VecDeque;
 
 type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
@@ -57,6 +59,30 @@ const MAX_HTTP_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 #[derive(RustEmbed)]
 #[folder = "static/"]
 struct Assets;
+
+// =============================================
+// Logging
+// =============================================
+const LOG_RING_CAPACITY: usize = 100;
+const LOG_LINE_MAX: usize = 128;
+static LOG_RING: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+struct RingLogger;
+impl log::Log for RingLogger {
+    fn enabled(&self, m: &log::Metadata) -> bool { m.level() <= log::Level::Info }
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) { return; }
+        let ts = unsafe { esp_idf_svc::sys::esp_log_timestamp() }; // ms since boot
+        let line: String = format!("[{:>8} ms] {:5} {}", ts, record.level(), record.args())
+            .chars().take(LOG_LINE_MAX).collect();
+        if let Ok(mut g) = LOG_RING.lock() {
+            g.push_back(line);
+            while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
+        }
+        esp_idf_svc::log::EspLogger.log(record);
+    }
+    fn flush(&self) {}
+}
+static RING_LOGGER: RingLogger = RingLogger;
 
 // =============================================
 // CUSTOM DESERIALIZERS
@@ -261,6 +287,47 @@ impl std::ops::Sub<u64> for U256 {
         }
         Self(limbs)
     }
+}
+
+// =============================================
+// CUSTOM U256
+// =============================================
+fn handle_logs(
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
+    let text = {
+        let g = LOG_RING.lock().unwrap();
+        let mut s = String::with_capacity(g.len() * (LOG_LINE_MAX + 1));
+        for l in g.iter() { s.push_str(l); s.push('\n'); }
+        s
+    };
+    let mut resp = req.into_response(200, None, &[
+        ("Content-Type", "text/plain; charset=utf-8"),
+        ("Cache-Control", "no-cache"),
+    ]).map_err(|_| esp_fail())?;
+    EWrite::write_all(&mut resp, text.as_bytes()).map_err(|_| esp_fail())?;
+    Ok(())
+}
+
+fn handle_status(
+    state: &Arc<AppState>,
+    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
+) -> HResult {
+    let json = serde_json::json!({
+        "uptimeSecs": unsafe { esp_idf_svc::sys::esp_log_timestamp() } / 1000,
+        "freeHeap": unsafe { esp_idf_svc::sys::esp_get_free_heap_size() },
+        "minFreeHeap": unsafe { esp_idf_svc::sys::esp_get_minimum_free_heap_size() },
+        "freePsram": unsafe { esp_idf_svc::sys::heap_caps_get_free_size(1 << 15) },
+        "resetReason": unsafe { esp_idf_svc::sys::esp_reset_reason() } as i32,
+        "hexJsonEntries": state.hex_json.read().unwrap().len(),
+        "activeRpc": *state.active_rpc_idx.lock().unwrap(),
+    });
+    let mut resp = req.into_response(200, None, &[
+        ("Content-Type", "application/json"), ("Cache-Control", "no-cache"),
+    ]).map_err(|_| esp_fail())?;
+    let bytes = serde_json::to_vec(&json).map_err(|_| esp_fail())?;
+    EWrite::write_all(&mut resp, &bytes).map_err(|_| esp_fail())?;
+    Ok(())
 }
 
 // =============================================
@@ -931,7 +998,8 @@ fn wait_for_time_sync() {
 // MAIN
 // =============================================
 fn main() {
-    EspLogger::initialize_default();
+    log::set_logger(&RING_LOGGER).expect("logger");
+    log::set_max_level(log::LevelFilter::Info);
     info!("⬢ HEX Stats (ESP32) booting ⬢");
 
     mount_spiffs();
@@ -975,6 +1043,12 @@ fn main() {
 
     let server_conf = ServerConfig { stack_size: 10 * 1024, max_uri_handlers: 32, ..Default::default() };
     let mut server = EspHttpServer::new(&server_conf).expect("http server");
+
+    server.fn_handler("/api/logs", Method::Get, |req| handle_logs(req)).expect("route");
+    server.fn_handler("/api/status", Method::Get, {
+        let s = state.clone();
+        move |req| handle_status(&s, req)
+    }).expect("route");
 
     // Clone `state` for each closure to avoid "use of moved value" errors
     server.fn_handler("/api/live-data", Method::Get, {
