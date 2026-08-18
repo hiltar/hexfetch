@@ -77,7 +77,7 @@ impl log::Log for RingLogger {
             g.push_back(line);
             while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
         }
-        esp_idf_svc::log::EspLogger.log(record);
+        esp_idf_svc::log::EspLogger::log(record);
     }
     fn flush(&self) {}
 }
