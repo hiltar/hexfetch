@@ -4,7 +4,6 @@ use embedded_svc::io::{Read as ERead, Write as EWrite};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::client::{Configuration as ClientConfig, EspHttpConnection as ClientConnection};
 use esp_idf_svc::http::server::{Configuration as ServerConfig, EspHttpServer};
-use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::sntp::EspSntp;
 use esp_idf_svc::sys::{ESP_FAIL, EspError};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
