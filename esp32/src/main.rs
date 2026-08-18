@@ -19,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use log::Log as _;
 use std::collections::VecDeque;
+use std::sync::Mutex;
 
 type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
@@ -66,8 +67,11 @@ const LOG_RING_CAPACITY: usize = 100;
 const LOG_LINE_MAX: usize = 128;
 static LOG_RING: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 struct RingLogger;
+
 impl log::Log for RingLogger {
-    fn enabled(&self, m: &log::Metadata) -> bool { m.level() <= log::Level::Info }
+    fn enabled(&self, m: &log::Metadata) -> bool { 
+        m.level() <= log::Level::Info 
+    }
     fn log(&self, record: &log::Record) {
         if !self.enabled(record.metadata()) { return; }
         let ts = unsafe { esp_idf_svc::sys::esp_log_timestamp() }; // ms since boot
@@ -77,10 +81,12 @@ impl log::Log for RingLogger {
             g.push_back(line);
             while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
         }
-        esp_idf_svc::log::EspLogger::log(record);
+        esp_idf_svc::log::EspLogger.log(record);
     }
+    
     fn flush(&self) {}
 }
+
 static RING_LOGGER: RingLogger = RingLogger;
 
 // =============================================
