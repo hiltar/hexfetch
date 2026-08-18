@@ -836,7 +836,6 @@ fn handle_hex_json(
     let from = query_param(&uri, "from").and_then(|v| v.parse::<u64>().ok());
     let limit = query_param(&uri, "limit").and_then(|v| v.parse::<usize>().ok());
 
-    // OPTIMIZATION: Borrow the guard instead of cloning the Arc
     let data_guard = state.hex_json.read().unwrap();
     let version = state.hex_json_version.load(Ordering::Relaxed);
     let full_request = from.is_none() && limit.is_none();
@@ -861,7 +860,7 @@ fn handle_hex_json(
     ]).map_err(|_| esp_fail())?;
 
     if full_request {
-        let json_bytes = serde_json::to_vec(&*data_guard).map_err(|_| esp_fail())?;
+        let json_bytes = serde_json::to_vec(&**data_guard).map_err(|_| esp_fail())?;
         EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     } else {
         let filtered: Vec<HexJsonEntry> = data_guard.iter()
