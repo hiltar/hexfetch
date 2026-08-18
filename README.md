@@ -52,7 +52,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 . "$HOME/.cargo/env"
 
 # ESP-specific tools
-cargo install --locked espup ldproxy espflash
+cargo +stable install --locked espup ldproxy espflash
 
 # Xtensa Rust toolchain ("esp" channel) + GCC + libclang
 espup install --targets esp32s3
