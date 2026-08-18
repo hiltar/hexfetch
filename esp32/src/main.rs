@@ -12,14 +12,11 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use log::{error, info, warn};
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use log::Log as _;
-use std::collections::VecDeque;
-use std::sync::Mutex;
 
 type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
@@ -65,23 +62,28 @@ struct Assets;
 // =============================================
 const LOG_RING_CAPACITY: usize = 100;
 const LOG_LINE_MAX: usize = 128;
+
 static LOG_RING: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+
 struct RingLogger;
 
 impl log::Log for RingLogger {
     fn enabled(&self, m: &log::Metadata) -> bool { 
         m.level() <= log::Level::Info 
     }
+    
     fn log(&self, record: &log::Record) {
         if !self.enabled(record.metadata()) { return; }
+        
         let ts = unsafe { esp_idf_svc::sys::esp_log_timestamp() }; // ms since boot
         let line: String = format!("[{:>8} ms] {:5} {}", ts, record.level(), record.args())
             .chars().take(LOG_LINE_MAX).collect();
+            
         if let Ok(mut g) = LOG_RING.lock() {
             g.push_back(line);
             while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
         }
-        esp_idf_svc::log::EspLogger.log(record);
+        esp_idf_svc::log::EspLogger::default().log(record);
     }
     
     fn flush(&self) {}
