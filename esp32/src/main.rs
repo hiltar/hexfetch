@@ -83,7 +83,7 @@ impl log::Log for RingLogger {
             g.push_back(line);
             while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
         }
-        esp_idf_svc::log::EspLogger::default().log(record);
+        // log::Log::log(&esp_idf_svc::log::EspLogger, record);
     }
     
     fn flush(&self) {}
@@ -297,7 +297,7 @@ impl std::ops::Sub<u64> for U256 {
 }
 
 // =============================================
-// CUSTOM U256
+// HTTP HANDLERS: LOGS & STATUS
 // =============================================
 fn handle_logs(
     req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
@@ -356,7 +356,7 @@ fn mount_spiffs() {
         base_path: b"/spiffs\0".as_ptr() as *const _,
         partition_label: b"storage\0".as_ptr() as *const _,
         max_files: 4,
-        format_if_mount_failed: false,
+        format_if_mount_failed: true, // FIXED: Auto-format on first boot to prevent panic
     };
     let ret = unsafe { esp_idf_svc::sys::esp_vfs_spiffs_register(&conf) };
     if ret != 0 { panic!("SPIFFS mount failed: {ret:#x}"); }
@@ -597,7 +597,8 @@ fn backfill_hex_json(
     let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill(client);
     let current_price = fetch_price_dexscreener(client).unwrap_or(0.0);
 
-    let mut by_day: HashMap<u64, HexJsonEntry> = HashMap::new();
+    // OPTIMIZATION: Pre-allocate HashMap capacity to avoid reallocations
+    let mut by_day: HashMap<u64, HexJsonEntry> = HashMap::with_capacity(existing_data.len() + 2000);
     for entry in existing_data { by_day.insert(entry.current_day, entry.clone()); }
 
     let missing_days: Vec<u64> = (1..day_count).filter(|day| !by_day.contains_key(day)).collect();
@@ -835,13 +836,14 @@ fn handle_hex_json(
     let from = query_param(&uri, "from").and_then(|v| v.parse::<u64>().ok());
     let limit = query_param(&uri, "limit").and_then(|v| v.parse::<usize>().ok());
 
-    let data = state.hex_json.read().unwrap().clone();
+    // OPTIMIZATION: Borrow the guard instead of cloning the Arc
+    let data_guard = state.hex_json.read().unwrap();
     let version = state.hex_json_version.load(Ordering::Relaxed);
     let full_request = from.is_none() && limit.is_none();
     let etag = if full_request {
-        format!("\"hexjson-full-{}-{}\"", data.len(), version)
+        format!("\"hexjson-full-{}-{}\"", data_guard.len(), version)
     } else {
-        format!("\"hexjson-filter-{}-{}-{}-{}\"", from.unwrap_or(0), limit.unwrap_or(usize::MAX), data.len(), version)
+        format!("\"hexjson-filter-{}-{}-{}-{}\"", from.unwrap_or(0), limit.unwrap_or(usize::MAX), data_guard.len(), version)
     };
 
     let if_none_match = req.header("If-None-Match").map(|s| s.to_string());
@@ -859,10 +861,14 @@ fn handle_hex_json(
     ]).map_err(|_| esp_fail())?;
 
     if full_request {
-        let json_bytes = serde_json::to_vec(&*data).map_err(|_| esp_fail())?;
+        let json_bytes = serde_json::to_vec(&*data_guard).map_err(|_| esp_fail())?;
         EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     } else {
-        let filtered: Vec<HexJsonEntry> = data.iter().filter(|e| e.current_day >= from.unwrap_or(0)).take(limit.unwrap_or(usize::MAX)).cloned().collect();
+        let filtered: Vec<HexJsonEntry> = data_guard.iter()
+            .filter(|e| e.current_day >= from.unwrap_or(0))
+            .take(limit.unwrap_or(usize::MAX))
+            .cloned()
+            .collect();
         let json_bytes = serde_json::to_vec(&filtered).map_err(|_| esp_fail())?;
         EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     }
@@ -889,7 +895,10 @@ fn read_body(
         let n = ERead::read(&mut req, &mut buf).map_err(|e| e.to_string())?;
         if n == 0 { break; }
         body.extend_from_slice(&buf[..n]);
-        if body.len() > 8192 { break; }
+        // FIX: Return an error instead of silently truncating or allowing unbounded growth
+        if body.len() > 8192 {
+            return Err("Request body too large".to_string());
+        }
     }
     Ok(body)
 }
@@ -1057,7 +1066,6 @@ fn main() {
         move |req| handle_status(&s, req)
     }).expect("route");
 
-    // Clone `state` for each closure to avoid "use of moved value" errors
     server.fn_handler("/api/live-data", Method::Get, {
         let s = state.clone();
         move |req| handle_live_data(&s, req)
