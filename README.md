@@ -66,7 +66,7 @@ export HEX_WIFI_SSID="YourSSID"
 export HEX_WIFI_PASS="YourPassword"
 
 # Build in esp32 directory
-cargo build
+cargo build --release
 
 # Flash into ESP32-S3
 sudo usermod -aG dialout $USER && newgrp dialout # IF PERMISSION DENIED
