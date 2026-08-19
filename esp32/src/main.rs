@@ -47,10 +47,10 @@ const DAILY_DATA_SELECTOR: &str = "0x90de6871";
 const HEARTS_PER_HEX: f64 = 1e8;
 const TSHARE_UNIT: f64 = 10000.0;
 const BACKFILL_DELAY_MS: u64 = 100;
-const BACKFILL_SAVE_INTERVAL: usize = 200;
+const BACKFILL_SAVE_INTERVAL: usize = 1000;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
 const ENABLE_HDS_BACKFILL: bool = true;
-const MAX_HTTP_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_HTTP_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -65,9 +65,7 @@ static LOG_RING: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
 struct RingLogger;
 impl log::Log for RingLogger {
-    fn enabled(&self, m: &log::Metadata) -> bool {
-        m.level() <= log::Level::Info
-    }
+    fn enabled(&self, m: &log::Metadata) -> bool { m.level() <= log::Level::Info }
     fn log(&self, record: &log::Record) {
         if !self.enabled(record.metadata()) { return; }
         let ts = unsafe { esp_idf_svc::sys::esp_log_timestamp() };
@@ -78,11 +76,8 @@ impl log::Log for RingLogger {
             while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
         }
         let level: u32 = match record.level() {
-            log::Level::Error => 1,
-            log::Level::Warn => 2,
-            log::Level::Info => 3,
-            log::Level::Debug => 4,
-            log::Level::Trace => 5,
+            log::Level::Error => 1, log::Level::Warn => 2, log::Level::Info => 3,
+            log::Level::Debug => 4, log::Level::Trace => 5,
         };
         let msg = format!("{}\0", record.args());
         let target = format!("{}\0", record.target());
@@ -101,13 +96,11 @@ static RING_LOGGER: RingLogger = RingLogger;
 // =============================================
 // CUSTOM DESERIALIZERS
 // =============================================
-fn f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where D: Deserializer<'de> {
+fn f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error> where D: Deserializer<'de> {
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or(0.0))
 }
-fn u64_or_default<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where D: Deserializer<'de> {
+fn u64_or_default<'de, D>(deserializer: D) -> Result<u64, D::Error> where D: Deserializer<'de> {
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or(0))
 }
@@ -117,16 +110,11 @@ where D: Deserializer<'de> {
 // =============================================
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct HexJsonEntry {
-    #[serde(rename = "currentDay", default, deserialize_with = "u64_or_default")]
-    pub current_day: u64,
-    #[serde(rename = "tshareRateHEX", default, deserialize_with = "f64_or_default")]
-    pub tshare_rate_hex: f64,
-    #[serde(rename = "dailyPayoutHEX", default, deserialize_with = "f64_or_default")]
-    pub daily_payout_hex: f64,
-    #[serde(rename = "payoutPerTshareHEX", default, deserialize_with = "f64_or_default")]
-    pub payout_per_tshare_hex: f64,
-    #[serde(rename = "pricePulseX", default, deserialize_with = "f64_or_default")]
-    pub price_pulse_x: f64,
+    #[serde(rename = "currentDay", default, deserialize_with = "u64_or_default")] pub current_day: u64,
+    #[serde(rename = "tshareRateHEX", default, deserialize_with = "f64_or_default")] pub tshare_rate_hex: f64,
+    #[serde(rename = "dailyPayoutHEX", default, deserialize_with = "f64_or_default")] pub daily_payout_hex: f64,
+    #[serde(rename = "payoutPerTshareHEX", default, deserialize_with = "f64_or_default")] pub payout_per_tshare_hex: f64,
+    #[serde(rename = "pricePulseX", default, deserialize_with = "f64_or_default")] pub price_pulse_x: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -171,10 +159,7 @@ pub struct Config {
 #[derive(Default)]
 struct EventFlag { pair: Mutex<bool>, cond: Condvar }
 impl EventFlag {
-    fn notify(&self) {
-        *self.pair.lock().unwrap() = true;
-        self.cond.notify_all();
-    }
+    fn notify(&self) { *self.pair.lock().unwrap() = true; self.cond.notify_all(); }
     fn wait_timeout(&self, dur: Duration) -> bool {
         let mut g = self.pair.lock().unwrap();
         let deadline = Instant::now() + dur;
@@ -184,9 +169,7 @@ impl EventFlag {
             let (ng, _) = self.cond.wait_timeout(g, deadline - now).unwrap();
             g = ng;
         }
-        let fired = *g;
-        *g = false;
-        fired
+        let fired = *g; *g = false; fired
     }
 }
 
@@ -205,7 +188,6 @@ struct AppState {
 // HELPERS
 // =============================================
 fn is_multiple_of(n: usize, divisor: usize) -> bool { divisor != 0 && n % divisor == 0 }
-
 fn sanitize_config(config: Config) -> Config {
     Config {
         live_data_frequency: config.live_data_frequency.clamp(1, 24 * 60),
@@ -213,43 +195,30 @@ fn sanitize_config(config: Config) -> Config {
         historical_start_day: config.historical_start_day.max(1),
     }
 }
-
 fn normalize_miners(mut miners: Vec<Miner>) -> (Vec<Miner>, u64) {
     let mut next_id = miners.iter().filter_map(|m| m.id).max().unwrap_or(0) + 1;
-    for miner in miners.iter_mut() {
-        if miner.id.is_none() { miner.id = Some(next_id); next_id += 1; }
-    }
+    for miner in miners.iter_mut() { if miner.id.is_none() { miner.id = Some(next_id); next_id += 1; } }
     (miners, next_id)
 }
-
 fn calc_payout_per_tshare(payout_hearts: f64, shares: f64) -> f64 {
     if shares <= 0.0 || !shares.is_finite() || !payout_hearts.is_finite() { return 0.0; }
     (payout_hearts / shares) * TSHARE_UNIT
 }
-
 fn is_valid_daily_entry(entry: &HexJsonEntry) -> bool {
     entry.daily_payout_hex > 0.0 || entry.payout_per_tshare_hex > 0.0 || entry.tshare_rate_hex > 0.0
 }
-
 fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
     let date = chrono::NaiveDate::parse_from_str(s, "%d-%m-%Y").ok()?;
     let (y, m, d) = (date.year(), date.month(), date.day());
     if !(2000..=2100).contains(&y) { return None; }
     Some((y, m, d))
 }
-
 fn get_mime_type(path: &str) -> &'static str {
     match path.rsplit('.').next() {
-        Some("html") => "text/html; charset=utf-8",
-        Some("js") => "application/javascript",
-        Some("css") => "text/css",
-        Some("json") => "application/json",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("svg") => "image/svg+xml",
-        Some("ico") => "image/x-icon",
-        Some("woff2") => "font/woff2",
-        Some("webp") => "image/webp",
+        Some("html") => "text/html; charset=utf-8", Some("js") => "application/javascript",
+        Some("css") => "text/css", Some("json") => "application/json", Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg", Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon", Some("woff2") => "font/woff2", Some("webp") => "image/webp",
         _ => "application/octet-stream",
     }
 }
@@ -268,10 +237,8 @@ impl U256 {
         let mut limb_idx = 0; let mut shift = 0;
         for c in s.chars().rev() {
             let val = match c {
-                '0'..='9' => c as u64 - '0' as u64,
-                'a'..='f' => c as u64 - 'a' as u64 + 10,
-                'A'..='F' => c as u64 - 'A' as u64 + 10,
-                _ => continue,
+                '0'..='9' => c as u64 - '0' as u64, 'a'..='f' => c as u64 - 'a' as u64 + 10,
+                'A'..='F' => c as u64 - 'A' as u64 + 10, _ => continue,
             };
             if limb_idx < 4 { limbs[limb_idx] |= val << shift; }
             shift += 4;
@@ -306,27 +273,19 @@ impl std::ops::Sub<u64> for U256 {
 // =============================================
 // HTTP HANDLERS: LOGS & STATUS
 // =============================================
-fn handle_logs(
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_logs(req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let text = {
         let g = LOG_RING.lock().unwrap();
         let mut s = String::with_capacity(g.len() * (LOG_LINE_MAX + 1));
         for l in g.iter() { s.push_str(l); s.push('\n'); }
         s
     };
-    let mut resp = req.into_response(200, None, &[
-        ("Content-Type", "text/plain; charset=utf-8"),
-        ("Cache-Control", "no-cache"),
-    ]).map_err(|_| esp_fail())?;
+    let mut resp = req.into_response(200, None, &[("Content-Type", "text/plain; charset=utf-8"), ("Cache-Control", "no-cache")]).map_err(|_| esp_fail())?;
     EWrite::write_all(&mut resp, text.as_bytes()).map_err(|_| esp_fail())?;
     Ok(())
 }
 
-fn handle_status(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_status(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let json = serde_json::json!({
         "uptimeSecs": unsafe { esp_idf_svc::sys::esp_log_timestamp() } / 1000,
         "freeHeap": unsafe { esp_idf_svc::sys::esp_get_free_heap_size() },
@@ -336,16 +295,14 @@ fn handle_status(
         "hexJsonEntries": state.hex_json.read().unwrap().len(),
         "activeRpc": *state.active_rpc_idx.lock().unwrap(),
     });
-    let mut resp = req.into_response(200, None, &[
-        ("Content-Type", "application/json"), ("Cache-Control", "no-cache"),
-    ]).map_err(|_| esp_fail())?;
+    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")]).map_err(|_| esp_fail())?;
     let bytes = serde_json::to_vec(&json).map_err(|_| esp_fail())?;
     EWrite::write_all(&mut resp, &bytes).map_err(|_| esp_fail())?;
     Ok(())
 }
 
 // =============================================
-// UTC TIME CALCULATION
+// UTC TIME, SPIFFS, PERSISTENCE
 // =============================================
 fn get_duration_until_next_1am_utc() -> Duration {
     let now = Utc::now();
@@ -355,9 +312,6 @@ fn get_duration_until_next_1am_utc() -> Duration {
     (next_1am - now).to_std().unwrap_or(Duration::from_secs(60))
 }
 
-// =============================================
-// SPIFFS MOUNT
-// =============================================
 fn mount_spiffs() {
     let conf = esp_idf_svc::sys::esp_vfs_spiffs_conf_t {
         base_path: b"/spiffs\0".as_ptr() as *const _,
@@ -370,9 +324,6 @@ fn mount_spiffs() {
     info!("SPIFFS mounted at /spiffs");
 }
 
-// =============================================
-// PERSISTENCE
-// =============================================
 fn hexjson_file_path() -> String { format!("{}/hexjson.json", DATA_DIR) }
 fn config_file_path() -> String { format!("{}/config.json", DATA_DIR) }
 fn miners_file_path() -> String { format!("{}/miners.json", DATA_DIR) }
@@ -412,8 +363,15 @@ fn save_miners_to_file(miners: &[Miner]) {
 }
 
 // =============================================
-// HTTPS CLIENT
+// HTTPS CLIENT & STREAMING READER
 // =============================================
+struct EspStdReader<'a, T> { inner: &'a mut T }
+impl<'a, T: embedded_svc::io::Read> std::io::Read for EspStdReader<'a, T> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "ESP read error"))
+    }
+}
+
 fn http_request(
     method: embedded_svc::http::Method,
     url: &str,
@@ -455,11 +413,14 @@ fn http_request(
         if body.len() >= MAX_HTTP_RESPONSE_BYTES { break; }
     }
     
+    // Explicitly drop to ensure the socket is cleanly released
+    drop(resp);
+    
     Ok((status as u16, body))
 }
 
 // =============================================
-// RPC LOGIC
+// RPC & DATA FETCHING
 // =============================================
 fn call_rpc(
     state: &Arc<AppState>,
@@ -468,7 +429,6 @@ fn call_rpc(
 ) -> Result<String, String> {
     let req_body = serde_json::json!({ "jsonrpc": "2.0", "method": method, "params": params, "id": 1 });
     let body_bytes = serde_json::to_vec(&req_body).map_err(|e| e.to_string())?;
-
     let start_idx = *state.active_rpc_idx.lock().unwrap();
     let mut last_err = String::new();
     for i in 0..RPC_ENDPOINTS.len() {
@@ -476,26 +436,14 @@ fn call_rpc(
         let url = RPC_ENDPOINTS[idx];
         match http_request(embedded_svc::http::Method::Post, url, Some(&body_bytes)) {
             Ok((status, body)) => {
-                if !(200..300).contains(&status) { 
-                    last_err = format!("HTTP {} on {}", status, url); 
-                    continue; 
-                }
+                if !(200..300).contains(&status) { last_err = format!("HTTP {} on {}", status, url); continue; }
                 match serde_json::from_slice::<serde_json::Value>(&body) {
                     Ok(json) => {
-                        if let Some(err) = json.get("error") {
-                            last_err = format!("RPC error on {}: {}", url, err["message"].as_str().unwrap_or("unknown"));
-                            continue;
-                        }
-                        if idx != start_idx {
-                            info!("Successfully connected to fallback RPC: {} (index {})", url, idx);
-                            *state.active_rpc_idx.lock().unwrap() = idx;
-                        }
+                        if let Some(err) = json.get("error") { last_err = format!("RPC error on {}: {}", url, err["message"].as_str().unwrap_or("unknown")); continue; }
+                        if idx != start_idx { info!("Successfully connected to fallback RPC: {} (index {})", url, idx); *state.active_rpc_idx.lock().unwrap() = idx; }
                         return Ok(json["result"].as_str().unwrap_or("").to_string());
                     }
-                    Err(e) => { 
-                        last_err = format!("JSON parse error on {}: {}", url, e); 
-                        continue; 
-                    }
+                    Err(e) => { last_err = format!("JSON parse error on {}: {}", url, e); continue; }
                 }
             }
             Err(e) => { last_err = e; continue; }
@@ -504,9 +452,6 @@ fn call_rpc(
     Err(format!("All RPC endpoints failed. Last error: {}", last_err))
 }
 
-// =============================================
-// ON-CHAIN DATA READING
-// =============================================
 fn read_globals(state: &Arc<AppState>) -> Result<(f64, u64, f64), String> {
     let params = serde_json::json!([{ "to": HEX_CONTRACT, "data": GLOBALS_SELECTOR }, "latest"]);
     let hex_result = call_rpc(state, "eth_call", params)?;
@@ -532,19 +477,12 @@ fn read_daily_data(state: &Arc<AppState>, day: u64) -> Result<(f64, f64), String
     Ok((day_payout.to_f64(), day_shares.to_f64()))
 }
 
-// =============================================
-// EXTERNAL DATA SOURCES
-// =============================================
 fn fetch_price_dexscreener() -> Result<f64, String> {
     let (status, body) = http_request(embedded_svc::http::Method::Get, DEXSCREENER_URL, None)?;
     if !(200..300).contains(&status) { return Err(format!("DEXScreener HTTP {}", status)); }
     let resp: serde_json::Value = serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
-    let price = resp.get("pairs")
-        .and_then(|p| p.as_array())
-        .and_then(|p| p.first())
-        .and_then(|pair| pair.get("priceUsd"))
-        .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok())))
-        .unwrap_or(0.0);
+    let price = resp.get("pairs").and_then(|p| p.as_array()).and_then(|p| p.first()).and_then(|pair| pair.get("priceUsd"))
+        .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0.0);
     if price <= 0.0 || !price.is_finite() { return Err("DEXScreener returned zero or invalid price".to_string()); }
     Ok(price)
 }
@@ -552,15 +490,45 @@ fn fetch_price_dexscreener() -> Result<f64, String> {
 fn fetch_hexdailystats_backfill() -> (HashMap<u64, f64>, HashMap<u64, f64>) {
     if !ENABLE_HDS_BACKFILL { return (HashMap::new(), HashMap::new()); }
     info!("Attempting historical fetch from HEXDailyStats...");
-    let (status, body) = match http_request(embedded_svc::http::Method::Get, HEXDAILYSTATS_URL, None) {
+    
+    let cfg = ClientConfig {
+        buffer_size: Some(4096), buffer_size_tx: Some(2048),
+        timeout: Some(Duration::from_secs(30)),
+        crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+        ..Default::default()
+    };
+    let conn = match ClientConnection::new(&cfg) {
+        Ok(c) => c,
+        Err(e) => { warn!("HEXDailyStats client failed: {}", e); return (HashMap::new(), HashMap::new()); }
+    };
+    let mut client = HttpClient::wrap(conn);
+
+    let headers: &[(&str, &str)] = &[("Accept", "application/json"), ("User-Agent", "hexfetch-esp32/1.0")];
+    let req = match client.request(embedded_svc::http::Method::Get, HEXDAILYSTATS_URL, headers) {
         Ok(r) => r,
-        Err(e) => { warn!("HEXDailyStats unreachable: {}", e); return (HashMap::new(), HashMap::new()); }
+        Err(e) => { warn!("HEXDailyStats request failed: {}", e); return (HashMap::new(), HashMap::new()); }
     };
-    if !(200..300).contains(&status) { return (HashMap::new(), HashMap::new()); }
-    let entries: Vec<HexJsonEntry> = match serde_json::from_reader(std::io::BufReader::with_capacity(4096, &body[..])) {
+    
+    let mut resp = match req.submit() {
+        Ok(r) => r,
+        Err(e) => { warn!("HEXDailyStats submit failed: {}", e); return (HashMap::new(), HashMap::new()); }
+    };
+
+    let status = resp.status();
+    if !(200..300).contains(&status) { 
+        warn!("HEXDailyStats HTTP {}", status); 
+        drop(resp); 
+        return (HashMap::new(), HashMap::new()); 
+    }
+
+    let mut esp_reader = EspStdReader { inner: &mut resp };
+    let buf_reader = std::io::BufReader::with_capacity(4096, &mut esp_reader);
+    let entries: Vec<HexJsonEntry> = match serde_json::from_reader(buf_reader) {
         Ok(e) => e,
-        Err(e) => { warn!("HEXDailyStats JSON parse failed: {}", e); return (HashMap::new(), HashMap::new()); }
+        Err(e) => { warn!("HEXDailyStats JSON parse failed: {}", e); drop(resp); return (HashMap::new(), HashMap::new()); }
     };
+    drop(resp);
+
     let mut tshare_map: HashMap<u64, f64> = HashMap::with_capacity(entries.len());
     let mut price_map: HashMap<u64, f64> = HashMap::with_capacity(entries.len());
     for entry in &entries {
@@ -571,7 +539,7 @@ fn fetch_hexdailystats_backfill() -> (HashMap<u64, f64>, HashMap<u64, f64>) {
 }
 
 // =============================================
-// DAILY ENTRY STORAGE
+// BACKFILL & DAILY RECORDING
 // =============================================
 fn store_daily_entry(state: &Arc<AppState>, entry: HexJsonEntry) -> bool {
     let mut hex_json = state.hex_json.write().unwrap();
@@ -587,9 +555,6 @@ fn store_daily_entry(state: &Arc<AppState>, entry: HexJsonEntry) -> bool {
     true
 }
 
-// =============================================
-// BACKFILL
-// =============================================
 fn backfill_hex_json(
     state: &Arc<AppState>,
     existing_data: &[HexJsonEntry],
@@ -630,14 +595,9 @@ fn backfill_hex_json(
                 let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
                 let price = hds_prices.get(&day).copied().filter(|p| p.is_finite() && *p > 0.0).unwrap_or(current_price);
                 let tshare = hds_tshares.get(&day).copied().filter(|t| t.is_finite() && *t > 0.0).unwrap_or(current_tshare_rate);
-                by_day.insert(day, HexJsonEntry {
-                    current_day: day, tshare_rate_hex: tshare, daily_payout_hex, payout_per_tshare_hex: payout_per_tshare, price_pulse_x: price,
-                });
+                by_day.insert(day, HexJsonEntry { current_day: day, tshare_rate_hex: tshare, daily_payout_hex, payout_per_tshare_hex: payout_per_tshare, price_pulse_x: price });
             }
-            Err(_) => {
-                consecutive_errors += 1;
-                if consecutive_errors >= 50 { break; }
-            }
+            Err(_) => { consecutive_errors += 1; if consecutive_errors >= 50 { break; } }
         }
         fetched += 1;
         if is_multiple_of(fetched, 100) { info!("Backfill progress: {}/{} days", fetched, total_to_fetch); }
@@ -653,9 +613,6 @@ fn backfill_hex_json(
     result
 }
 
-// =============================================
-// DAILY RECORDING / LIVE DATA
-// =============================================
 fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
     let (tshare_rate, day_count, _) = read_globals(state)?;
     if day_count == 0 { return Err("dailyDataCount is 0".to_string()); }
@@ -664,19 +621,15 @@ fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
     let price = fetch_price_dexscreener().unwrap_or_else(|_| state.live_data.read().unwrap().price_pulsechain);
-    Ok(HexJsonEntry {
-        current_day: target_day, tshare_rate_hex: tshare_rate, daily_payout_hex, payout_per_tshare_hex: payout_per_tshare, price_pulse_x: price,
-    })
+    Ok(HexJsonEntry { current_day: target_day, tshare_rate_hex: tshare_rate, daily_payout_hex, payout_per_tshare_hex: payout_per_tshare, price_pulse_x: price })
 }
 
 fn fetch_live_data(state: &Arc<AppState>) -> Result<LiveData, String> {
     let (status, body) = http_request(embedded_svc::http::Method::Get, DEXSCREENER_URL, None)?;
     if !(200..300).contains(&status) { return Err(format!("DEXScreener HTTP {}", status)); }
     let dex_resp: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
-    let price = dex_resp.get("pairs")
-        .and_then(|p| p.as_array()).and_then(|p| p.first()).and_then(|pair| pair.get("priceUsd"))
-        .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok())))
-        .unwrap_or(0.0);
+    let price = dex_resp.get("pairs").and_then(|p| p.as_array()).and_then(|p| p.first()).and_then(|pair| pair.get("priceUsd"))
+        .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0.0);
 
     let gas_price_hex = call_rpc(state, "eth_gasPrice", serde_json::json!([]))?;
     let beat = U256::from_hex(&gas_price_hex).to_f64() / 1e9;
@@ -688,10 +641,7 @@ fn fetch_live_data(state: &Arc<AppState>) -> Result<LiveData, String> {
             payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
         }
     }
-    Ok(LiveData {
-        price_pulsechain: price, tshare_price_pulsechain: tshare_rate * price, tshare_rate_hex_pulsechain: tshare_rate,
-        penalties_hex_pulsechain: penalties, payout_per_tshare_pulsechain: payout_per_tshare, beat,
-    })
+    Ok(LiveData { price_pulsechain: price, tshare_price_pulsechain: tshare_rate * price, tshare_rate_hex_pulsechain: tshare_rate, penalties_hex_pulsechain: penalties, payout_per_tshare_pulsechain: payout_per_tshare, beat })
 }
 
 fn fetch_live_data_with_retry(state: &Arc<AppState>) -> Result<LiveData, String> {
@@ -764,19 +714,14 @@ fn test_rpc(url: &str) -> bool {
     let block_req = serde_json::json!({ "jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1 });
     let body = serde_json::to_vec(&block_req).unwrap_or_default();
     let basic_ok = match http_request(embedded_svc::http::Method::Post, url, Some(&body)) {
-        Ok((s, b)) if (200..300).contains(&s) => serde_json::from_slice::<serde_json::Value>(&b)
-            .map(|j| j.get("error").is_none() && j.get("result").is_some()).unwrap_or(false),
+        Ok((s, b)) if (200..300).contains(&s) => serde_json::from_slice::<serde_json::Value>(&b).map(|j| j.get("error").is_none() && j.get("result").is_some()).unwrap_or(false),
         _ => false,
     };
     if !basic_ok { return false; }
-    let call_req = serde_json::json!({
-        "jsonrpc": "2.0", "method": "eth_call",
-        "params": [{ "to": HEX_CONTRACT, "data": GLOBALS_SELECTOR }, "latest"], "id": 2
-    });
+    let call_req = serde_json::json!({ "jsonrpc": "2.0", "method": "eth_call", "params": [{ "to": HEX_CONTRACT, "data": GLOBALS_SELECTOR }, "latest"], "id": 2 });
     let body = serde_json::to_vec(&call_req).unwrap_or_default();
     match http_request(embedded_svc::http::Method::Post, url, Some(&body)) {
-        Ok((s, b)) if (200..300).contains(&s) => serde_json::from_slice::<serde_json::Value>(&b)
-            .map(|j| j.get("error").is_none() && j.get("result").is_some()).unwrap_or(false),
+        Ok((s, b)) if (200..300).contains(&s) => serde_json::from_slice::<serde_json::Value>(&b).map(|j| j.get("error").is_none() && j.get("result").is_some()).unwrap_or(false),
         _ => false,
     }
 }
@@ -785,9 +730,7 @@ fn rpc_health_checker(state: Arc<AppState>) {
     loop {
         std::thread::sleep(Duration::from_secs(24 * 60 * 60));
         let current_idx = *state.active_rpc_idx.lock().unwrap();
-        if current_idx != 0 && test_rpc(RPC_ENDPOINTS[0]) {
-            *state.active_rpc_idx.lock().unwrap() = 0;
-        }
+        if current_idx != 0 && test_rpc(RPC_ENDPOINTS[0]) { *state.active_rpc_idx.lock().unwrap() = 0; }
     }
 }
 
@@ -803,84 +746,57 @@ fn heap_monitor() {
 // HTTP SERVER HANDLERS
 // =============================================
 fn query_param<'a>(uri: &'a str, key: &str) -> Option<&'a str> {
-    uri.split('?').nth(1)?.split('&')
-        .find_map(|kv| { let mut it = kv.splitn(2, '='); (it.next()? == key).then(|| it.next().unwrap_or("")) })
+    uri.split('?').nth(1)?.split('&').find_map(|kv| { let mut it = kv.splitn(2, '='); (it.next()? == key).then(|| it.next().unwrap_or("")) })
 }
 
-fn handle_live_data(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_live_data(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let data = state.live_data.read().unwrap().clone();
-    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
-        .map_err(|_| esp_fail())?;
+    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")]).map_err(|_| esp_fail())?;
     let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
     EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     Ok(())
 }
 
-fn handle_miners(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_miners(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let data = state.miners.read().unwrap().clone();
-    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")])
-        .map_err(|_| esp_fail())?;
+    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache")]).map_err(|_| esp_fail())?;
     let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
     EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     Ok(())
 }
 
-fn handle_hex_json(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_hex_json(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let uri = req.uri().to_string();
     let from = query_param(&uri, "from").and_then(|v| v.parse::<u64>().ok());
     let limit = query_param(&uri, "limit").and_then(|v| v.parse::<usize>().ok());
-
     let data_guard = state.hex_json.read().unwrap();
     let version = state.hex_json_version.load(Ordering::Relaxed);
     let full_request = from.is_none() && limit.is_none();
-    let etag = if full_request {
-        format!("\"hexjson-full-{}-{}\"", data_guard.len(), version)
-    } else {
-        format!("\"hexjson-filter-{}-{}-{}-{}\"", from.unwrap_or(0), limit.unwrap_or(usize::MAX), data_guard.len(), version)
-    };
+    let etag = if full_request { format!("\"hexjson-full-{}-{}\"", data_guard.len(), version) } 
+    else { format!("\"hexjson-filter-{}-{}-{}-{}\"", from.unwrap_or(0), limit.unwrap_or(usize::MAX), data_guard.len(), version) };
 
     let if_none_match = req.header("If-None-Match").map(|s| s.to_string());
     if let Some(inm) = if_none_match {
         if inm == etag || inm.trim_matches('"') == etag.trim_matches('"') {
             let etag_str = etag.as_str();
-            req.into_response(304, None, &[("ETag", etag_str), ("Cache-Control", "no-cache")])
-                .map_err(|_| esp_fail())?;
+            req.into_response(304, None, &[("ETag", etag_str), ("Cache-Control", "no-cache")]).map_err(|_| esp_fail())?;
             return Ok(());
         }
     }
 
-    let mut resp = req.into_response(200, None, &[
-        ("Content-Type", "application/json"), ("Cache-Control", "no-cache"), ("ETag", etag.as_str()),
-    ]).map_err(|_| esp_fail())?;
-
+    let mut resp = req.into_response(200, None, &[("Content-Type", "application/json"), ("Cache-Control", "no-cache"), ("ETag", etag.as_str())]).map_err(|_| esp_fail())?;
     if full_request {
         let json_bytes = serde_json::to_vec(&**data_guard).map_err(|_| esp_fail())?;
         EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     } else {
-        let filtered: Vec<HexJsonEntry> = data_guard.iter()
-            .filter(|e| e.current_day >= from.unwrap_or(0))
-            .take(limit.unwrap_or(usize::MAX))
-            .cloned()
-            .collect();
+        let filtered: Vec<HexJsonEntry> = data_guard.iter().filter(|e| e.current_day >= from.unwrap_or(0)).take(limit.unwrap_or(usize::MAX)).cloned().collect();
         let json_bytes = serde_json::to_vec(&filtered).map_err(|_| esp_fail())?;
         EWrite::write_all(&mut resp, &json_bytes).map_err(|_| esp_fail())?;
     }
     Ok(())
 }
 
-fn handle_get_config(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_get_config(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let data = state.config.read().unwrap().clone();
     let mut resp = req.into_response(200, None, &[("Content-Type", "application/json")]).map_err(|_| esp_fail())?;
     let json_bytes = serde_json::to_vec(&data).map_err(|_| esp_fail())?;
@@ -888,9 +804,7 @@ fn handle_get_config(
     Ok(())
 }
 
-fn read_body(
-    mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> Result<Vec<u8>, String> {
+fn read_body(mut req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     let mut buf = [0u8; 512];
     loop {
@@ -902,10 +816,7 @@ fn read_body(
     Ok(body)
 }
 
-fn handle_post_config(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_post_config(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let new_config: Config = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let new_config = sanitize_config(new_config);
@@ -915,10 +826,7 @@ fn handle_post_config(
     Ok(())
 }
 
-fn handle_add_miner(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_add_miner(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let r: AddMinerRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let (Some(start), Some(end)) = (parse_date(&r.start_date), parse_date(&r.end_date)) else { return Err(esp_fail()); };
@@ -931,10 +839,7 @@ fn handle_add_miner(
     Ok(())
 }
 
-fn handle_end_miner(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_end_miner(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let mut miners = state.miners.write().unwrap();
@@ -944,10 +849,7 @@ fn handle_end_miner(
     Ok(())
 }
 
-fn handle_delete_miner(
-    state: &Arc<AppState>,
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-) -> HResult {
+fn handle_delete_miner(state: &Arc<AppState>, req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> HResult {
     let body = read_body(req).map_err(|_| esp_fail())?;
     let r: MinerIdRequest = serde_json::from_slice(&body).map_err(|_| esp_fail())?;
     let mut miners = state.miners.write().unwrap();
@@ -958,15 +860,10 @@ fn handle_delete_miner(
     Ok(())
 }
 
-fn serve_asset(
-    req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>,
-    path: &'static str,
-) -> HResult {
+fn serve_asset(req: esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>, path: &'static str) -> HResult {
     let file = Assets::get(path).ok_or_else(|| esp_fail())?;
     let mime = get_mime_type(path);
-    let mut resp = req.into_response(200, None, &[
-        ("Content-Type", mime), ("Cache-Control", "public, max-age=3600"),
-    ]).map_err(|_| esp_fail())?;
+    let mut resp = req.into_response(200, None, &[("Content-Type", mime), ("Cache-Control", "public, max-age=3600")]).map_err(|_| esp_fail())?;
     EWrite::write_all(&mut resp, file.data.as_ref()).map_err(|_| esp_fail())?;
     Ok(())
 }
@@ -992,29 +889,12 @@ fn connect_wifi() -> Result<(), String> {
 
     for attempt in 1..=5 {
         info!("WiFi connection attempt {}/5...", attempt);
-        if let Err(e) = wifi.start() {
-            warn!("WiFi start failed: {}", e);
-            std::thread::sleep(Duration::from_secs(2));
-            continue;
-        }
+        if let Err(e) = wifi.start() { warn!("WiFi start failed: {}", e); std::thread::sleep(Duration::from_secs(2)); continue; }
         info!("WiFi started, connecting to {}...", WIFI_SSID);
-        if let Err(e) = wifi.connect() {
-            warn!("WiFi connect failed: {}", e);
-            let _ = wifi.stop();
-            std::thread::sleep(Duration::from_secs(2));
-            continue;
-        }
+        if let Err(e) = wifi.connect() { warn!("WiFi connect failed: {}", e); let _ = wifi.stop(); std::thread::sleep(Duration::from_secs(2)); continue; }
         match wifi.wait_netif_up() {
-            Ok(_) => {
-                info!("WiFi connected, IP assigned.");
-                std::mem::forget(wifi); 
-                return Ok(());
-            }
-            Err(e) => {
-                warn!("WiFi wait_netif_up failed (timeout?): {}", e);
-                let _ = wifi.stop();
-                std::thread::sleep(Duration::from_secs(2));
-            }
+            Ok(_) => { info!("WiFi connected, IP assigned."); std::mem::forget(wifi); return Ok(()); }
+            Err(e) => { warn!("WiFi wait_netif_up failed (timeout?): {}", e); let _ = wifi.stop(); std::thread::sleep(Duration::from_secs(2)); }
         }
     }
     Err("WiFi failed to connect after 5 attempts".to_string())
@@ -1022,10 +902,7 @@ fn connect_wifi() -> Result<(), String> {
 
 fn wait_for_time_sync() {
     for _ in 0..120 {
-        if Utc::now().timestamp() > 1_700_000_000 {
-            info!("SNTP time synced: {}", Utc::now());
-            return;
-        }
+        if Utc::now().timestamp() > 1_700_000_000 { info!("SNTP time synced: {}", Utc::now()); return; }
         std::thread::sleep(Duration::from_millis(500));
     }
     warn!("Time not synced after 60 s; continuing anyway.");
@@ -1082,42 +959,15 @@ fn main() {
     let mut server = EspHttpServer::new(&server_conf).expect("http server");
 
     server.fn_handler("/api/logs", Method::Get, |req| handle_logs(req)).expect("route");
-    server.fn_handler("/api/status", Method::Get, {
-        let s = state.clone();
-        move |req| handle_status(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/live-data", Method::Get, {
-        let s = state.clone();
-        move |req| handle_live_data(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/miners", Method::Get, {
-        let s = state.clone();
-        move |req| handle_miners(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/hexjson", Method::Get, {
-        let s = state.clone();
-        move |req| handle_hex_json(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/config", Method::Get, {
-        let s = state.clone();
-        move |req| handle_get_config(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/config", Method::Post, {
-        let s = state.clone();
-        move |req| handle_post_config(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/add-miner", Method::Post, {
-        let s = state.clone();
-        move |req| handle_add_miner(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/end-miner", Method::Post, {
-        let s = state.clone();
-        move |req| handle_end_miner(&s, req)
-    }).expect("route");
-    server.fn_handler("/api/delete-miner", Method::Post, {
-        let s = state.clone();
-        move |req| handle_delete_miner(&s, req)
-    }).expect("route");
+    server.fn_handler("/api/status", Method::Get, { let s = state.clone(); move |req| handle_status(&s, req) }).expect("route");
+    server.fn_handler("/api/live-data", Method::Get, { let s = state.clone(); move |req| handle_live_data(&s, req) }).expect("route");
+    server.fn_handler("/api/miners", Method::Get, { let s = state.clone(); move |req| handle_miners(&s, req) }).expect("route");
+    server.fn_handler("/api/hexjson", Method::Get, { let s = state.clone(); move |req| handle_hex_json(&s, req) }).expect("route");
+    server.fn_handler("/api/config", Method::Get, { let s = state.clone(); move |req| handle_get_config(&s, req) }).expect("route");
+    server.fn_handler("/api/config", Method::Post, { let s = state.clone(); move |req| handle_post_config(&s, req) }).expect("route");
+    server.fn_handler("/api/add-miner", Method::Post, { let s = state.clone(); move |req| handle_add_miner(&s, req) }).expect("route");
+    server.fn_handler("/api/end-miner", Method::Post, { let s = state.clone(); move |req| handle_end_miner(&s, req) }).expect("route");
+    server.fn_handler("/api/delete-miner", Method::Post, { let s = state.clone(); move |req| handle_delete_miner(&s, req) }).expect("route");
 
     server.fn_handler("/", Method::Get, |req| serve_asset(req, "index.html")).expect("route");
     for name in Assets::iter() {
