@@ -21,7 +21,6 @@ use std::time::{Duration, Instant};
 type HResult = Result<(), EspError>;
 type HttpClient = embedded_svc::http::client::Client<ClientConnection>;
 
-// Helper to cleanly return ESP_FAIL from handlers
 fn esp_fail() -> EspError {
     EspError::from(ESP_FAIL).unwrap()
 }
@@ -47,11 +46,11 @@ const DAILY_DATA_SELECTOR: &str = "0x90de6871";
 
 const HEARTS_PER_HEX: f64 = 1e8;
 const TSHARE_UNIT: f64 = 10000.0;
-const BACKFILL_DELAY_MS: u64 = 60;
-const BACKFILL_SAVE_INTERVAL: usize = 1000;
+const BACKFILL_DELAY_MS: u64 = 100;
+const BACKFILL_SAVE_INTERVAL: usize = 200;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
 const ENABLE_HDS_BACKFILL: bool = true;
-const MAX_HTTP_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_HTTP_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -62,33 +61,41 @@ struct Assets;
 // =============================================
 const LOG_RING_CAPACITY: usize = 100;
 const LOG_LINE_MAX: usize = 128;
-
 static LOG_RING: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
 struct RingLogger;
-
 impl log::Log for RingLogger {
-    fn enabled(&self, m: &log::Metadata) -> bool { 
-        m.level() <= log::Level::Info 
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Info
     }
-    
     fn log(&self, record: &log::Record) {
         if !self.enabled(record.metadata()) { return; }
-        
-        let ts = unsafe { esp_idf_svc::sys::esp_log_timestamp() }; // ms since boot
+        let ts = unsafe { esp_idf_svc::sys::esp_log_timestamp() };
         let line: String = format!("[{:>8} ms] {:5} {}", ts, record.level(), record.args())
             .chars().take(LOG_LINE_MAX).collect();
-            
         if let Ok(mut g) = LOG_RING.lock() {
             g.push_back(line);
             while g.len() > LOG_RING_CAPACITY { g.pop_front(); }
         }
-        // log::Log::log(&esp_idf_svc::log::EspLogger, record);
+        let level: u32 = match record.level() {
+            log::Level::Error => 1,
+            log::Level::Warn => 2,
+            log::Level::Info => 3,
+            log::Level::Debug => 4,
+            log::Level::Trace => 5,
+        };
+        let msg = format!("{}\0", record.args());
+        let target = format!("{}\0", record.target());
+        unsafe {
+            esp_idf_svc::sys::esp_log_write(
+                level,
+                target.as_ptr() as *const std::os::raw::c_char,
+                msg.as_ptr() as *const std::os::raw::c_char,
+            );
+        }
     }
-    
     fn flush(&self) {}
 }
-
 static RING_LOGGER: RingLogger = RingLogger;
 
 // =============================================
@@ -356,7 +363,7 @@ fn mount_spiffs() {
         base_path: b"/spiffs\0".as_ptr() as *const _,
         partition_label: b"storage\0".as_ptr() as *const _,
         max_files: 4,
-        format_if_mount_failed: true, // FIXED: Auto-format on first boot to prevent panic
+        format_if_mount_failed: true,
     };
     let ret = unsafe { esp_idf_svc::sys::esp_vfs_spiffs_register(&conf) };
     if ret != 0 { panic!("SPIFFS mount failed: {ret:#x}"); }
@@ -407,34 +414,30 @@ fn save_miners_to_file(miners: &[Miner]) {
 // =============================================
 // HTTPS CLIENT
 // =============================================
-fn make_client() -> Result<HttpClient, String> {
+fn http_request(
+    method: embedded_svc::http::Method,
+    url: &str,
+    post_body: Option<&[u8]>,
+) -> Result<(u16, Vec<u8>), String> {
     let cfg = ClientConfig {
-        buffer_size: Some(2048),
+        buffer_size: Some(4096),
         buffer_size_tx: Some(2048),
-        timeout: Some(Duration::from_secs(20)),
+        timeout: Some(Duration::from_secs(30)),
         crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
         ..Default::default()
     };
+    
     let conn = ClientConnection::new(&cfg).map_err(|e| format!("client: {}", e))?;
-    Ok(HttpClient::wrap(conn))
-}
+    let mut client = HttpClient::wrap(conn);
 
-fn http_request(
-    client: &mut HttpClient,
-    post_body: Option<&[u8]>,
-    url: &str,
-) -> Result<(u16, Vec<u8>), String> {
     let headers: &[(&str, &str)] = if post_body.is_some() {
-        &[("Content-Type", "application/json")]
+        &[("Content-Type", "application/json"), ("Accept", "application/json"), ("User-Agent", "hexfetch-esp32/1.0")]
     } else {
-        &[]
+        &[("Accept", "application/json"), ("User-Agent", "hexfetch-esp32/1.0")]
     };
     
-    let mut req = client.request(
-        if post_body.is_some() { Method::Post } else { Method::Get },
-        url,
-        headers
-    ).map_err(|e| format!("request to {} failed: {}", url, e))?;
+    let mut req = client.request(method, url, headers)
+        .map_err(|e| format!("request to {} failed: {}", url, e))?;
 
     if let Some(body) = post_body {
         EWrite::write_all(&mut req, body).map_err(|e| e.to_string())?;
@@ -459,7 +462,6 @@ fn http_request(
 // RPC LOGIC
 // =============================================
 fn call_rpc(
-    client: &mut HttpClient,
     state: &Arc<AppState>,
     method: &str,
     params: serde_json::Value,
@@ -472,9 +474,12 @@ fn call_rpc(
     for i in 0..RPC_ENDPOINTS.len() {
         let idx = (start_idx + i) % RPC_ENDPOINTS.len();
         let url = RPC_ENDPOINTS[idx];
-        match http_request(client, Some(&body_bytes), url) {
+        match http_request(embedded_svc::http::Method::Post, url, Some(&body_bytes)) {
             Ok((status, body)) => {
-                if !(200..300).contains(&status) { last_err = format!("HTTP {} on {}", status, url); continue; }
+                if !(200..300).contains(&status) { 
+                    last_err = format!("HTTP {} on {}", status, url); 
+                    continue; 
+                }
                 match serde_json::from_slice::<serde_json::Value>(&body) {
                     Ok(json) => {
                         if let Some(err) = json.get("error") {
@@ -487,7 +492,10 @@ fn call_rpc(
                         }
                         return Ok(json["result"].as_str().unwrap_or("").to_string());
                     }
-                    Err(e) => { last_err = format!("JSON parse error on {}: {}", url, e); continue; }
+                    Err(e) => { 
+                        last_err = format!("JSON parse error on {}: {}", url, e); 
+                        continue; 
+                    }
                 }
             }
             Err(e) => { last_err = e; continue; }
@@ -499,9 +507,9 @@ fn call_rpc(
 // =============================================
 // ON-CHAIN DATA READING
 // =============================================
-fn read_globals(client: &mut HttpClient, state: &Arc<AppState>) -> Result<(f64, u64, f64), String> {
+fn read_globals(state: &Arc<AppState>) -> Result<(f64, u64, f64), String> {
     let params = serde_json::json!([{ "to": HEX_CONTRACT, "data": GLOBALS_SELECTOR }, "latest"]);
-    let hex_result = call_rpc(client, state, "eth_call", params)?;
+    let hex_result = call_rpc(state, "eth_call", params)?;
     let g_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
     if g_str.len() < 320 { return Err(format!("globals() too short ({} chars)", g_str.len())); }
     let share_rate_raw = U256::from_hex(&g_str[128..192]);
@@ -513,10 +521,10 @@ fn read_globals(client: &mut HttpClient, state: &Arc<AppState>) -> Result<(f64, 
     Ok((tshare_rate, day_count, penalties))
 }
 
-fn read_daily_data(client: &mut HttpClient, state: &Arc<AppState>, day: u64) -> Result<(f64, f64), String> {
+fn read_daily_data(state: &Arc<AppState>, day: u64) -> Result<(f64, f64), String> {
     let call_data = format!("{}{:064x}", DAILY_DATA_SELECTOR, day);
     let params = serde_json::json!([{ "to": HEX_CONTRACT, "data": call_data }, "latest"]);
-    let hex_result = call_rpc(client, state, "eth_call", params)?;
+    let hex_result = call_rpc(state, "eth_call", params)?;
     let d_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
     if d_str.len() < 128 { return Err(format!("dailyData({}) too short ({} chars)", day, d_str.len())); }
     let day_payout = U256::from_hex(&d_str[0..64]);
@@ -527,8 +535,8 @@ fn read_daily_data(client: &mut HttpClient, state: &Arc<AppState>, day: u64) -> 
 // =============================================
 // EXTERNAL DATA SOURCES
 // =============================================
-fn fetch_price_dexscreener(client: &mut HttpClient) -> Result<f64, String> {
-    let (status, body) = http_request(client, None, DEXSCREENER_URL)?;
+fn fetch_price_dexscreener() -> Result<f64, String> {
+    let (status, body) = http_request(embedded_svc::http::Method::Get, DEXSCREENER_URL, None)?;
     if !(200..300).contains(&status) { return Err(format!("DEXScreener HTTP {}", status)); }
     let resp: serde_json::Value = serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
     let price = resp.get("pairs")
@@ -541,10 +549,10 @@ fn fetch_price_dexscreener(client: &mut HttpClient) -> Result<f64, String> {
     Ok(price)
 }
 
-fn fetch_hexdailystats_backfill(client: &mut HttpClient) -> (HashMap<u64, f64>, HashMap<u64, f64>) {
+fn fetch_hexdailystats_backfill() -> (HashMap<u64, f64>, HashMap<u64, f64>) {
     if !ENABLE_HDS_BACKFILL { return (HashMap::new(), HashMap::new()); }
     info!("Attempting historical fetch from HEXDailyStats...");
-    let (status, body) = match http_request(client, None, HEXDAILYSTATS_URL) {
+    let (status, body) = match http_request(embedded_svc::http::Method::Get, HEXDAILYSTATS_URL, None) {
         Ok(r) => r,
         Err(e) => { warn!("HEXDailyStats unreachable: {}", e); return (HashMap::new(), HashMap::new()); }
     };
@@ -583,21 +591,19 @@ fn store_daily_entry(state: &Arc<AppState>, entry: HexJsonEntry) -> bool {
 // BACKFILL
 // =============================================
 fn backfill_hex_json(
-    client: &mut HttpClient,
     state: &Arc<AppState>,
     existing_data: &[HexJsonEntry],
 ) -> Vec<HexJsonEntry> {
     info!("Starting HEXJSON backfill...");
-    let (current_tshare_rate, day_count, _penalties) = match read_globals(client, state) {
+    let (current_tshare_rate, day_count, _penalties) = match read_globals(state) {
         Ok(v) => v,
         Err(e) => { error!("Backfill failed: cannot read globals(): {}", e); return existing_data.to_vec(); }
     };
     if day_count == 0 { return existing_data.to_vec(); }
 
-    let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill(client);
-    let current_price = fetch_price_dexscreener(client).unwrap_or(0.0);
+    let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill();
+    let current_price = fetch_price_dexscreener().unwrap_or(0.0);
 
-    // OPTIMIZATION: Pre-allocate HashMap capacity to avoid reallocations
     let mut by_day: HashMap<u64, HexJsonEntry> = HashMap::with_capacity(existing_data.len() + 2000);
     for entry in existing_data { by_day.insert(entry.current_day, entry.clone()); }
 
@@ -615,7 +621,7 @@ fn backfill_hex_json(
     let mut consecutive_errors = 0u32;
 
     for day in missing_days {
-        let result = read_daily_data(client, state, day);
+        let result = read_daily_data(state, day);
         if BACKFILL_DELAY_MS > 0 { std::thread::sleep(Duration::from_millis(BACKFILL_DELAY_MS)); }
         match result {
             Ok((payout_hearts, shares)) => {
@@ -650,21 +656,21 @@ fn backfill_hex_json(
 // =============================================
 // DAILY RECORDING / LIVE DATA
 // =============================================
-fn record_daily_entry(client: &mut HttpClient, state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
-    let (tshare_rate, day_count, _) = read_globals(client, state)?;
+fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
+    let (tshare_rate, day_count, _) = read_globals(state)?;
     if day_count == 0 { return Err("dailyDataCount is 0".to_string()); }
     let target_day = day_count - 1;
-    let (payout_hearts, shares) = read_daily_data(client, state, target_day)?;
+    let (payout_hearts, shares) = read_daily_data(state, target_day)?;
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
-    let price = fetch_price_dexscreener(client).unwrap_or_else(|_| state.live_data.read().unwrap().price_pulsechain);
+    let price = fetch_price_dexscreener().unwrap_or_else(|_| state.live_data.read().unwrap().price_pulsechain);
     Ok(HexJsonEntry {
         current_day: target_day, tshare_rate_hex: tshare_rate, daily_payout_hex, payout_per_tshare_hex: payout_per_tshare, price_pulse_x: price,
     })
 }
 
-fn fetch_live_data(client: &mut HttpClient, state: &Arc<AppState>) -> Result<LiveData, String> {
-    let (status, body) = http_request(client, None, DEXSCREENER_URL)?;
+fn fetch_live_data(state: &Arc<AppState>) -> Result<LiveData, String> {
+    let (status, body) = http_request(embedded_svc::http::Method::Get, DEXSCREENER_URL, None)?;
     if !(200..300).contains(&status) { return Err(format!("DEXScreener HTTP {}", status)); }
     let dex_resp: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     let price = dex_resp.get("pairs")
@@ -672,13 +678,13 @@ fn fetch_live_data(client: &mut HttpClient, state: &Arc<AppState>) -> Result<Liv
         .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or(0.0);
 
-    let gas_price_hex = call_rpc(client, state, "eth_gasPrice", serde_json::json!([]))?;
+    let gas_price_hex = call_rpc(state, "eth_gasPrice", serde_json::json!([]))?;
     let beat = U256::from_hex(&gas_price_hex).to_f64() / 1e9;
-    let (tshare_rate, daily_data_count, penalties) = read_globals(client, state)?;
+    let (tshare_rate, daily_data_count, penalties) = read_globals(state)?;
 
     let mut payout_per_tshare = 0.0;
     if daily_data_count > 0 {
-        if let Ok((payout_hearts, shares)) = read_daily_data(client, state, daily_data_count - 1) {
+        if let Ok((payout_hearts, shares)) = read_daily_data(state, daily_data_count - 1) {
             payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
         }
     }
@@ -688,11 +694,11 @@ fn fetch_live_data(client: &mut HttpClient, state: &Arc<AppState>) -> Result<Liv
     })
 }
 
-fn fetch_live_data_with_retry(client: &mut HttpClient, state: &Arc<AppState>) -> Result<LiveData, String> {
+fn fetch_live_data_with_retry(state: &Arc<AppState>) -> Result<LiveData, String> {
     let mut delay = Duration::from_secs(1);
     let start = Instant::now();
     loop {
-        match fetch_live_data(client, state) {
+        match fetch_live_data(state) {
             Ok(data) => return Ok(data),
             Err(e) => {
                 if start.elapsed() > Duration::from_secs(2 * 60) { return Err(e); }
@@ -707,28 +713,26 @@ fn fetch_live_data_with_retry(client: &mut HttpClient, state: &Arc<AppState>) ->
 // BACKGROUND TASKS
 // =============================================
 fn live_data_updater(state: Arc<AppState>) {
-    let mut client = make_client().unwrap();
-    if let Ok(data) = fetch_live_data_with_retry(&mut client, &state) { *state.live_data.write().unwrap() = data; }
+    if let Ok(data) = fetch_live_data_with_retry(&state) { *state.live_data.write().unwrap() = data; }
     loop {
         let freq = sanitize_config(state.config.read().unwrap().clone()).live_data_frequency;
         state.config_event.wait_timeout(Duration::from_secs(freq * 60));
-        if let Ok(data) = fetch_live_data_with_retry(&mut client, &state) { *state.live_data.write().unwrap() = data; }
+        if let Ok(data) = fetch_live_data_with_retry(&state) { *state.live_data.write().unwrap() = data; }
     }
 }
 
 fn hex_json_updater(state: Arc<AppState>) {
-    let mut client = make_client().unwrap();
     let file_data = load_hex_json_from_file();
     let initial_data = if file_data.is_empty() {
-        let backfilled = backfill_hex_json(&mut client, &state, &[]);
+        let backfilled = backfill_hex_json(&state, &[]);
         save_hex_json_to_file(&backfilled);
         backfilled
     } else {
-        match read_globals(&mut client, &state) {
+        match read_globals(&state) {
             Ok((_, day_count, _)) => {
                 let known_days: HashSet<u64> = file_data.iter().map(|e| e.current_day).collect();
                 if (1..day_count).any(|day| !known_days.contains(&day)) {
-                    let updated = backfill_hex_json(&mut client, &state, &file_data);
+                    let updated = backfill_hex_json(&state, &file_data);
                     save_hex_json_to_file(&updated);
                     updated
                 } else { file_data }
@@ -747,7 +751,7 @@ fn hex_json_updater(state: Arc<AppState>) {
         std::thread::sleep(Duration::from_secs(DAILY_RECORD_SETTLE_DELAY_SECS));
         let mut delay = Duration::from_secs(5);
         for _ in 0..10 {
-            if let Ok(entry) = record_daily_entry(&mut client, &state) {
+            if let Ok(entry) = record_daily_entry(&state) {
                 if is_valid_daily_entry(&entry) { store_daily_entry(&state, entry); break; }
             }
             std::thread::sleep(delay);
@@ -756,10 +760,10 @@ fn hex_json_updater(state: Arc<AppState>) {
     }
 }
 
-fn test_rpc(client: &mut HttpClient, url: &str) -> bool {
+fn test_rpc(url: &str) -> bool {
     let block_req = serde_json::json!({ "jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1 });
     let body = serde_json::to_vec(&block_req).unwrap_or_default();
-    let basic_ok = match http_request(client, Some(&body), url) {
+    let basic_ok = match http_request(embedded_svc::http::Method::Post, url, Some(&body)) {
         Ok((s, b)) if (200..300).contains(&s) => serde_json::from_slice::<serde_json::Value>(&b)
             .map(|j| j.get("error").is_none() && j.get("result").is_some()).unwrap_or(false),
         _ => false,
@@ -770,7 +774,7 @@ fn test_rpc(client: &mut HttpClient, url: &str) -> bool {
         "params": [{ "to": HEX_CONTRACT, "data": GLOBALS_SELECTOR }, "latest"], "id": 2
     });
     let body = serde_json::to_vec(&call_req).unwrap_or_default();
-    match http_request(client, Some(&body), url) {
+    match http_request(embedded_svc::http::Method::Post, url, Some(&body)) {
         Ok((s, b)) if (200..300).contains(&s) => serde_json::from_slice::<serde_json::Value>(&b)
             .map(|j| j.get("error").is_none() && j.get("result").is_some()).unwrap_or(false),
         _ => false,
@@ -778,11 +782,10 @@ fn test_rpc(client: &mut HttpClient, url: &str) -> bool {
 }
 
 fn rpc_health_checker(state: Arc<AppState>) {
-    let mut client = make_client().unwrap();
     loop {
         std::thread::sleep(Duration::from_secs(24 * 60 * 60));
         let current_idx = *state.active_rpc_idx.lock().unwrap();
-        if current_idx != 0 && test_rpc(&mut client, RPC_ENDPOINTS[0]) {
+        if current_idx != 0 && test_rpc(RPC_ENDPOINTS[0]) {
             *state.active_rpc_idx.lock().unwrap() = 0;
         }
     }
@@ -894,10 +897,7 @@ fn read_body(
         let n = ERead::read(&mut req, &mut buf).map_err(|e| e.to_string())?;
         if n == 0 { break; }
         body.extend_from_slice(&buf[..n]);
-        // FIX: Return an error instead of silently truncating or allowing unbounded growth
-        if body.len() > 8192 {
-            return Err("Request body too large".to_string());
-        }
+        if body.len() > 8192 { return Err("Request body too large".to_string()); }
     }
     Ok(body)
 }
@@ -990,12 +990,34 @@ fn connect_wifi() -> Result<(), String> {
     client_conf.password = WIFI_PASS.try_into().map_err(|_| "pass too long".to_string())?;
     wifi.set_configuration(&WifiConfig::Client(client_conf)).map_err(|e| e.to_string())?;
 
-    wifi.start().map_err(|e| e.to_string())?;
-    info!("WiFi started, connecting to {}...", WIFI_SSID);
-    wifi.connect().map_err(|e| e.to_string())?;
-    wifi.wait_netif_up().map_err(|e| e.to_string())?;
-    info!("WiFi connected, IP assigned.");
-    Ok(())
+    for attempt in 1..=5 {
+        info!("WiFi connection attempt {}/5...", attempt);
+        if let Err(e) = wifi.start() {
+            warn!("WiFi start failed: {}", e);
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+        info!("WiFi started, connecting to {}...", WIFI_SSID);
+        if let Err(e) = wifi.connect() {
+            warn!("WiFi connect failed: {}", e);
+            let _ = wifi.stop();
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+        match wifi.wait_netif_up() {
+            Ok(_) => {
+                info!("WiFi connected, IP assigned.");
+                std::mem::forget(wifi); 
+                return Ok(());
+            }
+            Err(e) => {
+                warn!("WiFi wait_netif_up failed (timeout?): {}", e);
+                let _ = wifi.stop();
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }
+    }
+    Err("WiFi failed to connect after 5 attempts".to_string())
 }
 
 fn wait_for_time_sync() {
@@ -1064,49 +1086,40 @@ fn main() {
         let s = state.clone();
         move |req| handle_status(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/live-data", Method::Get, {
         let s = state.clone();
         move |req| handle_live_data(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/miners", Method::Get, {
         let s = state.clone();
         move |req| handle_miners(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/hexjson", Method::Get, {
         let s = state.clone();
         move |req| handle_hex_json(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/config", Method::Get, {
         let s = state.clone();
         move |req| handle_get_config(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/config", Method::Post, {
         let s = state.clone();
         move |req| handle_post_config(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/add-miner", Method::Post, {
         let s = state.clone();
         move |req| handle_add_miner(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/end-miner", Method::Post, {
         let s = state.clone();
         move |req| handle_end_miner(&s, req)
     }).expect("route");
-
     server.fn_handler("/api/delete-miner", Method::Post, {
         let s = state.clone();
         move |req| handle_delete_miner(&s, req)
     }).expect("route");
 
     server.fn_handler("/", Method::Get, |req| serve_asset(req, "index.html")).expect("route");
-    
     for name in Assets::iter() {
         let path: &'static str = Box::leak(name.into_owned().into_boxed_str());
         let route = format!("/{}", path);
