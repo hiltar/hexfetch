@@ -734,14 +734,6 @@ fn rpc_health_checker(state: Arc<AppState>) {
     }
 }
 
-fn heap_monitor() {
-    loop {
-        std::thread::sleep(Duration::from_secs(300));
-        let free = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() };
-        info!("HEAP: free={} B", free);
-    }
-}
-
 // =============================================
 // HTTP SERVER HANDLERS
 // =============================================
@@ -949,7 +941,6 @@ fn main() {
         ("live-updater", live_data_updater as fn(Arc<AppState>)),
         ("hex-updater", hex_json_updater),
         ("rpc-health", rpc_health_checker),
-        ("heap-mon", heap_monitor_wrap),
     ] {
         let st = state.clone();
         std::thread::Builder::new().name(name.into()).stack_size(16 * 1024).spawn(move || f(st)).expect("thread spawn");
@@ -979,9 +970,4 @@ fn main() {
 
     info!("⬢ HEX Stats server ready on http://hexstats.local:80 ⬢");
     loop { std::thread::sleep(Duration::from_secs(3600)); }
-}
-
-fn heap_monitor_wrap(state: Arc<AppState>) {
-    let _ = state;
-    heap_monitor();
 }
