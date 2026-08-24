@@ -1465,6 +1465,7 @@ async fn main() {
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_secs(5))
         .pool_max_idle_per_host(16)
+        .http2_prior_knowledge()
         .user_agent("hexfetch-rs/0.3")
         .build()
         .unwrap();
