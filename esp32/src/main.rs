@@ -50,6 +50,7 @@ const RPC_ENDPOINTS: &[&str] = &[
 ];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+const GECKOTERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/pulsechain/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const HEXDAILYSTATS_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
 const GLOBALS_SELECTOR: &str = "0xc3124525";
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
@@ -842,24 +843,70 @@ fn batch_read_daily_data(
     Ok(results)
 }
 
-fn fetch_price_dexscreener() -> Result<f64, String> {
+fn fetch_price_geckoterminal() -> Result<f64, String> {
+    let (status, body) = http_request(Method::Get, GECKOTERMINAL_URL, None)?;
+    if !(200..300).contains(&status) {
+        return Err(format!("GeckoTerminal HTTP {}", status));
+    }
+    let resp: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
+
+    let price = resp
+        .get("data")
+        .and_then(|data| data.get("attributes"))
+        .and_then(|attrs| attrs.get("price_usd"))
+        .and_then(|price| price.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("GeckoTerminal returned zero or invalid price".to_string());
+    }
+
+    Ok(price)
+}
+
+fn fetch_price_dexscreener_fallback() -> Result<f64, String> {
     let (status, body) = http_request(Method::Get, DEXSCREENER_URL, None)?;
     if !(200..300).contains(&status) {
         return Err(format!("DEXScreener HTTP {}", status));
     }
     let resp: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
+
     let price = resp
         .get("pairs")
         .and_then(|p| p.as_array())
-        .and_then(|p| p.first())
+        .and_then(|p| {
+            p.iter().find(|pair| {
+                pair.get("chainId")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c == "pulsechain")
+                    .unwrap_or(false)
+            })
+        })
         .and_then(|pair| pair.get("priceUsd"))
         .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or(0.0);
+
     if price <= 0.0 || !price.is_finite() {
         return Err("DEXScreener returned zero or invalid price".to_string());
     }
+
     Ok(price)
+}
+
+fn fetch_price() -> Result<f64, String> {
+    // Try GeckoTerminal first (faster, smaller payload, explicit chain routing)
+    match fetch_price_geckoterminal() {
+        Ok(price) => return Ok(price),
+        Err(e) => {
+            warn!("GeckoTerminal failed: {}. Falling back to DexScreener...", e);
+        }
+    }
+
+    // Fallback to DexScreener
+    fetch_price_dexscreener_fallback()
 }
 
 fn fetch_hexdailystats_backfill() -> (HashMap<u64, f64>, HashMap<u64, f64>) {
@@ -968,7 +1015,10 @@ fn backfill_hex_json(state: &Arc<AppState>, existing_data: &[HexJsonEntry]) -> V
     }
 
     let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill();
-    let current_price = fetch_price_dexscreener().unwrap_or(0.0);
+    let current_price = fetch_price().unwrap_or_else(|e| {
+        warn!("Price fetch failed: {}. Using 0.0.", e);
+        0.0
+    });
     let mut by_day: BTreeMap<u64, HexJsonEntry> = BTreeMap::new();
     for entry in existing_data {
         by_day.insert(entry.current_day, entry.clone());
@@ -1114,8 +1164,10 @@ fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
     let (payout_hearts, shares) = read_daily_data(state, target_day)?;
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
-    let price = fetch_price_dexscreener()
-        .unwrap_or_else(|_| state.live_data.read().unwrap().price_pulsechain);
+    let price = fetch_price().unwrap_or_else(|e| {
+        warn!("Price fetch failed during daily recording: {}. Using last live price fallback.", e);
+        state.live_data.read().unwrap().price_pulsechain
+    });
     Ok(HexJsonEntry {
         current_day: target_day,
         tshare_rate_hex: tshare_rate,
@@ -1126,19 +1178,13 @@ fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
 }
 
 fn fetch_live_data(state: &Arc<AppState>) -> Result<LiveData, String> {
-    let (status, body) = http_request(Method::Get, DEXSCREENER_URL, None)?;
-    if !(200..300).contains(&status) {
-        return Err(format!("DEXScreener HTTP {}", status));
-    }
-    let dex_resp: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| e.to_string())?;
-    let price = dex_resp
-        .get("pairs")
-        .and_then(|p| p.as_array())
-        .and_then(|p| p.first())
-        .and_then(|pair| pair.get("priceUsd"))
-        .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok())))
-        .unwrap_or(0.0);
+    let price = match fetch_price() {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Price fetch failed in live data loop: {}. Using 0.0", e);
+            0.0
+        }
+    };
 
     let gas_price_hex = call_rpc(state, "eth_gasPrice", serde_json::json!([]))?;
     let beat = U256::from_hex(&gas_price_hex).to_f64() / 1e9;
