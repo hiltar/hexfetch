@@ -31,37 +31,17 @@ const RPC_ENDPOINTS: &[&str] = &[
     "https://pulsechain-rpc.publicnode.com",
     "https://rpc.pulsechainrpc.com",
 ];
-
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-
-const DEXSCREENER_URL: &str =
-    "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-
-/// HEXDailyStats – used during backfill for historical T-Share rates/prices.
+const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+const GECKOTERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/pulsechain/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const HEXDAILYSTATS_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
-
-/// globals() selector: keccak256("globals()")[0..4]
 const GLOBALS_SELECTOR: &str = "0xc3124525";
-
-/// dailyData(uint256) selector: keccak256("dailyData(uint256)")[0..4]
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
-
-/// 1 HEX = 10^8 hearts
 const HEARTS_PER_HEX: f64 = 1e8;
-
-/// T-Share precision factor used in payout calculation
 const TSHARE_UNIT: f64 = 10000.0;
-
-/// Delay between RPC calls during backfill to avoid rate-limiting.
 const BACKFILL_DELAY_MS: u64 = 60;
-
-/// Reduced intermediate save frequency.
 const BACKFILL_SAVE_INTERVAL: usize = 1000;
-
-/// Concurrent backfill requests. Keep conservative for public RPCs.
 const BACKFILL_CONCURRENCY: usize = 6;
-
-/// Wait after UTC midnight before trying to record the previous day.
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
 
 #[derive(RustEmbed)]
@@ -622,7 +602,33 @@ async fn read_daily_data(
 // EXTERNAL DATA SOURCES
 // =============================================
 
-async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
+async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
+    let resp: serde_json::Value = client
+        .get(GECKOTERMINAL_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("GeckoTerminal request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("GeckoTerminal JSON parse failed: {}", e))?;
+
+    let price = resp
+        .get("data")
+        .and_then(|data| data.get("attributes"))
+        .and_then(|attrs| attrs.get("price_usd"))
+        .and_then(|price| price.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("GeckoTerminal returned zero or invalid price".to_string());
+    }
+
+    Ok(price)
+}
+
+async fn fetch_price_dexscreener_fallback(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
         .send()
@@ -635,7 +641,15 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     let price = resp
         .get("pairs")
         .and_then(|pairs| pairs.as_array())
-        .and_then(|pairs| pairs.first())
+        .and_then(|pairs| {
+            // CRITICAL FIX: Filter specifically for PulseChain pairs
+            pairs.iter().find(|pair| {
+                pair.get("chainId")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c == "pulsechain")
+                    .unwrap_or(false)
+            })
+        })
         .and_then(|pair| pair.get("priceUsd"))
         .and_then(|price| {
             price
@@ -649,6 +663,19 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     }
 
     Ok(price)
+}
+
+async fn fetch_price(client: &Client) -> Result<f64, String> {
+    // Try GeckoTerminal first (faster, smaller payload, explicit chain routing)
+    match fetch_price_geckoterminal(client).await {
+        Ok(price) => return Ok(price),
+        Err(e) => {
+            warn!("GeckoTerminal failed: {}. Falling back to DexScreener...", e);
+        }
+    }
+
+    // Fallback to DexScreener
+    fetch_price_dexscreener_fallback(client).await
 }
 
 async fn fetch_hexdailystats_backfill(
@@ -768,13 +795,13 @@ async fn backfill_hex_json(
 
     // Always fetch a current fallback price. This fixes missing days even when
     // HEXDailyStats returns partial data.
-    let current_price = match fetch_price_dexscreener(client).await {
+    let current_price = match fetch_price(client).await {
         Ok(p) => {
-            info!("Using DEXScreener current price as fallback: ${:.8}", p);
+            info!("Using current price: ${:.8}", p);
             p
         }
         Err(e) => {
-            warn!("DEXScreener fallback failed: {}. Using 0.0.", e);
+            warn!("Price fetch failed: {}. Using 0.0.", e);
             0.0
         }
     };
@@ -920,12 +947,12 @@ async fn record_daily_entry(
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
 
-    let price = match fetch_price_dexscreener(client).await {
+    let price = match fetch_price(client).await {
         Ok(p) => p,
         Err(e) => {
             let fallback = state.live_data.read().await.price_pulsechain;
             warn!(
-                "DEXScreener price fetch failed during daily recording: {}. Using last live price fallback: {:.8}",
+                "Price fetch failed during daily recording: {}. Using last live price fallback: {:.8}",
                 e, fallback
             );
             fallback
@@ -949,26 +976,13 @@ async fn fetch_live_data(
     client: &Client,
     state: &Arc<AppState>,
 ) -> Result<LiveData, String> {
-    let dex_resp: serde_json::Value = client
-        .get(DEXSCREENER_URL)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let price = dex_resp
-        .get("pairs")
-        .and_then(|pairs| pairs.as_array())
-        .and_then(|pairs| pairs.first())
-        .and_then(|pair| pair.get("priceUsd"))
-        .and_then(|price| {
-            price
-                .as_f64()
-                .or_else(|| price.as_str().and_then(|s| s.parse().ok()))
-        })
-        .unwrap_or(0.0);
+    let price = match fetch_price(client).await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Price fetch failed in live data loop: {}. Using 0.0", e);
+            0.0
+        }
+    };
 
     let gas_price_hex = call_rpc(client, state, "eth_gasPrice", serde_json::json!([])).await?;
     let gas_price_wei = U256::from_hex(&gas_price_hex);
