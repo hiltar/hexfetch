@@ -908,7 +908,6 @@ fn fetch_price() -> Result<f64, String> {
         }
     }
 
-    // Fallback to GeckoTerminal
     fetch_price_geckoterminal()
 }
 
