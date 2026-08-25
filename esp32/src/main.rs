@@ -843,13 +843,48 @@ fn batch_read_daily_data(
     Ok(results)
 }
 
-fn fetch_price_geckoterminal() -> Result<f64, String> {
-    let (status, body) = http_request(Method::Get, GECKOTERMINAL_URL, None)?;
-    if !(200..300).contains(&status) {
-        return Err(format!("GeckoTerminal HTTP {}", status));
+fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
+    let resp: serde_json::Value = client
+        .get(DEXSCREENER_URL)
+        .send()
+        .map_err(|e| format!("DEXScreener request failed: {}", e))?
+        .json()
+        .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
+
+    let price = resp
+        .get("pairs")
+        .and_then(|pairs| pairs.as_array())
+        .and_then(|pairs| {
+            pairs.iter().find(|pair| {
+                pair.get("chainId")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c == "pulsechain")
+                    .unwrap_or(false)
+            })
+        })
+        .and_then(|pair| pair.get("priceUsd"))
+        .and_then(|price| {
+            price
+                .as_f64()
+                .or_else(|| price.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(0.0);
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("DEXScreener returned zero or invalid price".to_string());
     }
-    let resp: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
+
+    Ok(price)
+}
+
+fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
+    let resp: serde_json::Value = client
+        .get(GECKOTERMINAL_URL)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("GeckoTerminal request failed: {}", e))?
+        .json()
+        .map_err(|e| format!("GeckoTerminal JSON parse failed: {}", e))?;
 
     let price = resp
         .get("data")
@@ -866,47 +901,16 @@ fn fetch_price_geckoterminal() -> Result<f64, String> {
     Ok(price)
 }
 
-fn fetch_price_dexscreener_fallback() -> Result<f64, String> {
-    let (status, body) = http_request(Method::Get, DEXSCREENER_URL, None)?;
-    if !(200..300).contains(&status) {
-        return Err(format!("DEXScreener HTTP {}", status));
-    }
-    let resp: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
-
-    let price = resp
-        .get("pairs")
-        .and_then(|p| p.as_array())
-        .and_then(|p| {
-            p.iter().find(|pair| {
-                pair.get("chainId")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c == "pulsechain")
-                    .unwrap_or(false)
-            })
-        })
-        .and_then(|pair| pair.get("priceUsd"))
-        .and_then(|price| price.as_f64().or_else(|| price.as_str().and_then(|s| s.parse().ok())))
-        .unwrap_or(0.0);
-
-    if price <= 0.0 || !price.is_finite() {
-        return Err("DEXScreener returned zero or invalid price".to_string());
-    }
-
-    Ok(price)
-}
-
-fn fetch_price() -> Result<f64, String> {
-    // Try GeckoTerminal first (faster, smaller payload, explicit chain routing)
-    match fetch_price_geckoterminal() {
+fn fetch_price(client: &Client) -> Result<f64, String> {
+    match fetch_price_dexscreener(client) {
         Ok(price) => return Ok(price),
         Err(e) => {
-            warn!("GeckoTerminal failed: {}. Falling back to DexScreener...", e);
+            warn!("DexScreener failed: {}. Falling back to GeckoTerminal...", e);
         }
     }
 
-    // Fallback to DexScreener
-    fetch_price_dexscreener_fallback()
+    // Fallback to GeckoTerminal
+    fetch_price_geckoterminal(client)
 }
 
 fn fetch_hexdailystats_backfill() -> (HashMap<u64, f64>, HashMap<u64, f64>) {
