@@ -587,36 +587,6 @@ async fn read_daily_data(
 // EXTERNAL DATA SOURCES
 // =============================================
 
-// =============================================
-// EXTERNAL DATA SOURCES
-// =============================================
-
-async fn fetch_price_geckoterminal_fallback(client: &Client) -> Result<f64, String> {
-    let resp: serde_json::Value = client
-        .get(GECKOTERMINAL_URL)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| format!("GeckoTerminal request failed: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("GeckoTerminal JSON parse failed: {}", e))?;
-
-    let price = resp
-        .get("data")
-        .and_then(|data| data.get("attributes"))
-        .and_then(|attrs| attrs.get("price_usd"))
-        .and_then(|price| price.as_str())
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(0.0);
-
-    if price <= 0.0 || !price.is_finite() {
-        return Err("GeckoTerminal returned zero or invalid price".to_string());
-    }
-
-    Ok(price)
-}
-
 async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
@@ -653,19 +623,42 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
+async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
+    let resp: serde_json::Value = client
+        .get(GECKOTERMINAL_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("GeckoTerminal request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("GeckoTerminal JSON parse failed: {}", e))?;
+
+    let price = resp
+        .get("data")
+        .and_then(|data| data.get("attributes"))
+        .and_then(|attrs| attrs.get("price_usd"))
+        .and_then(|price| price.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("GeckoTerminal returned zero or invalid price".to_string());
+    }
+
+    Ok(price)
+}
+
 async fn fetch_price(client: &Client) -> Result<f64, String> {
     match fetch_price_dexscreener(client).await {
         Ok(price) => return Ok(price),
         Err(e) => {
-            warn!("DEXScreener failed: {}. Falling back to Geckoterminal...", e);
+            warn!("DexScreener failed: {}. Falling back to GeckoTerminal...", e);
         }
-    match fetch_price_geckoterminal_fallback(client).await {
-        Ok(price) => return Ok(price),
-        Err(e) => {
-            return Err(format!("Both APIs failed. Geckoterminal error: {}", e));
-        }
-    }    
     }
+
+    // Fallback to GeckoTerminal
+    fetch_price_geckoterminal(client).await
 }
 
 async fn fetch_hexdailystats_backfill(
