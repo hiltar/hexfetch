@@ -602,6 +602,42 @@ async fn read_daily_data(
 // EXTERNAL DATA SOURCES
 // =============================================
 
+async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
+    let resp: serde_json::Value = client
+        .get(DEXSCREENER_URL)
+        .send()
+        .await
+        .map_err(|e| format!("DEXScreener request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
+
+    let price = resp
+        .get("pairs")
+        .and_then(|pairs| pairs.as_array())
+        .and_then(|pairs| {
+            pairs.iter().find(|pair| {
+                pair.get("chainId")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c == "pulsechain")
+                    .unwrap_or(false)
+            })
+        })
+        .and_then(|pair| pair.get("priceUsd"))
+        .and_then(|price| {
+            price
+                .as_f64()
+                .or_else(|| price.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(0.0);
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("DEXScreener returned zero or invalid price".to_string());
+    }
+
+    Ok(price)
+}
+
 async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
         .get(GECKOTERMINAL_URL)
@@ -628,54 +664,16 @@ async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
-async fn fetch_price_dexscreener_fallback(client: &Client) -> Result<f64, String> {
-    let resp: serde_json::Value = client
-        .get(DEXSCREENER_URL)
-        .send()
-        .await
-        .map_err(|e| format!("DEXScreener request failed: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
-
-    let price = resp
-        .get("pairs")
-        .and_then(|pairs| pairs.as_array())
-        .and_then(|pairs| {
-            // CRITICAL FIX: Filter specifically for PulseChain pairs
-            pairs.iter().find(|pair| {
-                pair.get("chainId")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c == "pulsechain")
-                    .unwrap_or(false)
-            })
-        })
-        .and_then(|pair| pair.get("priceUsd"))
-        .and_then(|price| {
-            price
-                .as_f64()
-                .or_else(|| price.as_str().and_then(|s| s.parse().ok()))
-        })
-        .unwrap_or(0.0);
-
-    if price <= 0.0 || !price.is_finite() {
-        return Err("DEXScreener returned zero or invalid price".to_string());
-    }
-
-    Ok(price)
-}
-
 async fn fetch_price(client: &Client) -> Result<f64, String> {
-    // Try GeckoTerminal first (faster, smaller payload, explicit chain routing)
-    match fetch_price_geckoterminal(client).await {
+    match fetch_price_dexscreener(client).await {
         Ok(price) => return Ok(price),
         Err(e) => {
-            warn!("GeckoTerminal failed: {}. Falling back to DexScreener...", e);
+            warn!("DexScreener failed: {}. Falling back to GeckoTerminal...", e);
         }
     }
 
-    // Fallback to DexScreener
-    fetch_price_dexscreener_fallback(client).await
+    // Fallback to GeckoTerminal
+    fetch_price_geckoterminal(client).await
 }
 
 async fn fetch_hexdailystats_backfill(
