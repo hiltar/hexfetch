@@ -54,6 +54,8 @@ const GECKOTERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/p
 const HEXDAILYSTATS_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
 const GLOBALS_SELECTOR: &str = "0xc3124525";
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
+const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
+const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
 const HEARTS_PER_HEX: f64 = 1e8;
 const TSHARE_UNIT: f64 = 10000.0;
 const ENABLE_HDS_BACKFILL: bool = true;
@@ -843,6 +845,35 @@ fn batch_read_daily_data(
     Ok(results)
 }
 
+fn fetch_price_rpc(state: &Arc<AppState>) -> Result<f64, String> {
+    let params = serde_json::json!([
+        { "to": USDC_HEX_PAIR, "data": GET_RESERVES_SELECTOR },
+        "latest"
+    ]);
+
+    let hex_result = call_rpc(state, "eth_call", params)?;
+    let r_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
+
+    if r_str.len() < 128 {
+        return Err(format!("getReserves() too short ({} chars)", r_str.len()));
+    }
+
+    let reserve_usdc = U256::from_hex(&r_str[0..64]).to_f64();
+    let reserve_hex = U256::from_hex(&r_str[64..128]).to_f64();
+
+    if reserve_usdc == 0.0 || reserve_hex == 0.0 {
+        return Err("Invalid reserves (zero)".to_string());
+    }
+
+    let price = (reserve_usdc / reserve_hex) * 100.0;
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("RPC returned zero or invalid price".to_string());
+    }
+
+    Ok(price)
+}
+
 fn fetch_price_dexscreener() -> Result<f64, String> {
     let (status, body) = http_request(Method::Get, DEXSCREENER_URL, None)?;
     if !(200..300).contains(&status) {
@@ -900,7 +931,14 @@ fn fetch_price_geckoterminal() -> Result<f64, String> {
     Ok(price)
 }
 
-fn fetch_price() -> Result<f64, String> {
+fn fetch_price(state: &Arc<AppState>) -> Result<f64, String> {
+    match fetch_price_rpc(state) {
+        Ok(price) => return Ok(price),
+        Err(e) => {
+            warn!("RPC price failed: {}. Falling back to DexScreener...", e);
+        }
+    }
+
     match fetch_price_dexscreener() {
         Ok(price) => return Ok(price),
         Err(e) => {
@@ -1017,7 +1055,7 @@ fn backfill_hex_json(state: &Arc<AppState>, existing_data: &[HexJsonEntry]) -> V
     }
 
     let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill();
-    let current_price = fetch_price().unwrap_or_else(|e| {
+    let current_price = fetch_price(state).unwrap_or_else(|e| {
         warn!("Price fetch failed: {}. Using 0.0.", e);
         0.0
     });
@@ -1166,7 +1204,7 @@ fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
     let (payout_hearts, shares) = read_daily_data(state, target_day)?;
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
-    let price = fetch_price().unwrap_or_else(|e| {
+    let price = fetch_price(state).unwrap_or_else(|e| {
         warn!("Price fetch failed during daily recording: {}. Using last live price fallback.", e);
         state.live_data.read().unwrap().price_pulsechain
     });
@@ -1180,7 +1218,7 @@ fn record_daily_entry(state: &Arc<AppState>) -> Result<HexJsonEntry, String> {
 }
 
 fn fetch_live_data(state: &Arc<AppState>) -> Result<LiveData, String> {
-    let price = match fetch_price() {
+    let price = match fetch_price(state) {
         Ok(p) => p,
         Err(e) => {
             warn!("Price fetch failed in live data loop: {}. Using 0.0", e);
