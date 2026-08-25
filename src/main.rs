@@ -591,7 +591,7 @@ async fn read_daily_data(
 // EXTERNAL DATA SOURCES
 // =============================================
 
-async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
+async fn fetch_price_geckoterminal_fallback(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
         .get(GECKOTERMINAL_URL)
         .header("Accept", "application/json")
@@ -617,7 +617,7 @@ async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
-async fn fetch_price_dexscreener_fallback(client: &Client) -> Result<f64, String> {
+async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
         .get(DEXSCREENER_URL)
         .send()
@@ -631,7 +631,6 @@ async fn fetch_price_dexscreener_fallback(client: &Client) -> Result<f64, String
         .get("pairs")
         .and_then(|pairs| pairs.as_array())
         .and_then(|pairs| {
-            // CRITICAL FIX: Filter specifically for PulseChain pairs
             pairs.iter().find(|pair| {
                 pair.get("chainId")
                     .and_then(|c| c.as_str())
@@ -655,20 +654,17 @@ async fn fetch_price_dexscreener_fallback(client: &Client) -> Result<f64, String
 }
 
 async fn fetch_price(client: &Client) -> Result<f64, String> {
-    // Try GeckoTerminal first (faster, smaller payload, explicit chain routing)
-    match fetch_price_geckoterminal(client).await {
+    match fetch_price_dexscreener(client).await {
         Ok(price) => return Ok(price),
         Err(e) => {
-            warn!("GeckoTerminal failed: {}. Falling back to DexScreener...", e);
+            warn!("DEXScreener failed: {}. Falling back to Geckoterminal...", e);
         }
-    }
-
-    // Fallback to DexScreener
-    match fetch_price_dexscreener_fallback(client).await {
+    match fetch_price_geckoterminal_fallback(client).await {
         Ok(price) => return Ok(price),
         Err(e) => {
-            return Err(format!("Both APIs failed. DexScreener error: {}", e));
+            return Err(format!("Both APIs failed. Geckoterminal error: {}", e));
         }
+    }    
     }
 }
 
