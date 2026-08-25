@@ -843,13 +843,13 @@ fn batch_read_daily_data(
     Ok(results)
 }
 
-fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
-    let resp: serde_json::Value = client
-        .get(DEXSCREENER_URL)
-        .send()
-        .map_err(|e| format!("DEXScreener request failed: {}", e))?
-        .json()
-        .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
+fn fetch_price_dexscreener() -> Result<f64, String> {
+    let (status, body) = http_request(Method::Get, DEXSCREENER_URL, None)?;
+    if !(200..300).contains(&status) {
+        return Err(format!("DEXScreener HTTP {}", status));
+    }
+    let resp: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
 
     let price = resp
         .get("pairs")
@@ -877,14 +877,13 @@ fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
-fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
-    let resp: serde_json::Value = client
-        .get(GECKOTERMINAL_URL)
-        .header("Accept", "application/json")
-        .send()
-        .map_err(|e| format!("GeckoTerminal request failed: {}", e))?
-        .json()
-        .map_err(|e| format!("GeckoTerminal JSON parse failed: {}", e))?;
+fn fetch_price_geckoterminal() -> Result<f64, String> {
+    let (status, body) = http_request(Method::Get, GECKOTERMINAL_URL, None)?;
+    if !(200..300).contains(&status) {
+        return Err(format!("GeckoTerminal HTTP {}", status));
+    }
+    let resp: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|e| format!("parse: {}", e))?;
 
     let price = resp
         .get("data")
@@ -901,8 +900,8 @@ fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
-fn fetch_price(client: &Client) -> Result<f64, String> {
-    match fetch_price_dexscreener(client) {
+fn fetch_price() -> Result<f64, String> {
+    match fetch_price_dexscreener() {
         Ok(price) => return Ok(price),
         Err(e) => {
             warn!("DexScreener failed: {}. Falling back to GeckoTerminal...", e);
@@ -910,7 +909,7 @@ fn fetch_price(client: &Client) -> Result<f64, String> {
     }
 
     // Fallback to GeckoTerminal
-    fetch_price_geckoterminal(client)
+    fetch_price_geckoterminal()
 }
 
 fn fetch_hexdailystats_backfill() -> (HashMap<u64, f64>, HashMap<u64, f64>) {
