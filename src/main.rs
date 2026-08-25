@@ -222,9 +222,6 @@ fn calc_payout_per_tshare(payout_hearts: f64, shares: f64) -> f64 {
         return 0.0;
     }
 
-    // NOTE:
-    // This preserves your original formula because item 2.1 was not selected.
-    // If you later decide to change unit conversion, centralize it here.
     (payout_hearts / shares) * TSHARE_UNIT
 }
 
@@ -599,6 +596,41 @@ async fn read_daily_data(
 }
 
 // =============================================
+// RPC PRICE LOGIC
+// =============================================
+const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
+const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
+
+async fn fetch_price_rpc(client: &Client, state: &Arc<AppState>) -> Result<f64, String> {
+    let params = serde_json::json!([
+        { "to": USDC_HEX_PAIR, "data": GET_RESERVES_SELECTOR },
+        "latest"
+    ]);
+
+    let hex_result = call_rpc(client, state, "eth_call", params).await?;
+    let r_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
+
+    if r_str.len() < 128 {
+        return Err(format!("getReserves() too short ({} chars)", r_str.len()));
+    }
+
+    let reserve_usdc = U256::from_hex(&r_str[0..64]).to_f64();
+    let reserve_hex = U256::from_hex(&r_str[64..128]).to_f64();
+
+    if reserve_usdc == 0.0 || reserve_hex == 0.0 {
+        return Err("Invalid reserves (zero)".to_string());
+    }
+
+    let price = (reserve_usdc / reserve_hex) * 100.0;
+
+    if price <= 0.0 || !price.is_finite() {
+        return Err("RPC returned zero or invalid price".to_string());
+    }
+
+    Ok(price)
+}
+
+// =============================================
 // EXTERNAL DATA SOURCES
 // =============================================
 
@@ -664,7 +696,14 @@ async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
     Ok(price)
 }
 
-async fn fetch_price(client: &Client) -> Result<f64, String> {
+async fn fetch_price(client: &Client, state: &Arc<AppState>) -> Result<f64, String> {
+    match fetch_price_rpc(client, state).await {
+        Ok(price) => return Ok(price),
+        Err(e) => {
+            warn!("RPC price fetch failed: {}. Falling back to DexScreener...", e);
+        }
+    }
+
     match fetch_price_dexscreener(client).await {
         Ok(price) => return Ok(price),
         Err(e) => {
@@ -672,7 +711,6 @@ async fn fetch_price(client: &Client) -> Result<f64, String> {
         }
     }
 
-    // Fallback to GeckoTerminal
     fetch_price_geckoterminal(client).await
 }
 
@@ -793,7 +831,7 @@ async fn backfill_hex_json(
 
     // Always fetch a current fallback price. This fixes missing days even when
     // HEXDailyStats returns partial data.
-    let current_price = match fetch_price(client).await {
+    let current_price = match fetch_price(client, state).await {
         Ok(p) => {
             info!("Using current price: ${:.8}", p);
             p
@@ -945,7 +983,7 @@ async fn record_daily_entry(
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
 
-    let price = match fetch_price(client).await {
+    let price = match fetch_price(client, state).await {
         Ok(p) => p,
         Err(e) => {
             let fallback = state.live_data.read().await.price_pulsechain;
@@ -974,7 +1012,7 @@ async fn fetch_live_data(
     client: &Client,
     state: &Arc<AppState>,
 ) -> Result<LiveData, String> {
-    let price = match fetch_price(client).await {
+    let price = match fetch_price(client, state).await {
         Ok(p) => p,
         Err(e) => {
             warn!("Price fetch failed in live data loop: {}. Using 0.0", e);
