@@ -20,6 +20,8 @@ jobs:
             output: hexfetch
           - target: aarch64-unknown-linux-musl
             output: hexfetch-arm
+          - target: armv7-unknown-linux-musleabihf
+            output: hexfetch-armv7
     runs-on: ubuntu-latest
 
     steps:
