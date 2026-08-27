@@ -32,9 +32,15 @@ const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechainrpc.com",
 ];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
+const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
 const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const GECKOTERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/pulsechain/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
-const HEXDAILYSTATS_URL: &str = "https://hexdailystats.com/fulldatapulsechain";
+const DEFAULT_SECONDS_PER_BLOCK: f64 = 2.0;
+const BLOCK_TIME_SAMPLE_BLOCKS: u64 = 100_000;
+const HISTORICAL_QUERY_OFFSET_SECS: u64 = 3700;
+const HISTORICAL_TIMESTAMP_TOLERANCE_SECS: u64 = 30;
+const HEX_DAY_ZERO_UNIX_OVERRIDE: Option<u64> = None;
 const GLOBALS_SELECTOR: &str = "0xc3124525";
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
 const HEARTS_PER_HEX: f64 = 1e8;
@@ -221,7 +227,6 @@ fn calc_payout_per_tshare(payout_hearts: f64, shares: f64) -> f64 {
     if shares <= 0.0 || !shares.is_finite() || !payout_hearts.is_finite() {
         return 0.0;
     }
-
     (payout_hearts / shares) * TSHARE_UNIT
 }
 
@@ -229,6 +234,109 @@ fn is_valid_daily_entry(entry: &HexJsonEntry) -> bool {
     entry.daily_payout_hex > 0.0
         || entry.payout_per_tshare_hex > 0.0
         || entry.tshare_rate_hex > 0.0
+}
+
+fn parse_hex_u64(s: &str) -> u64 {
+    let s = s.trim();
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+
+    if s.is_empty() {
+        return 0;
+    }
+
+    u64::from_str_radix(s, 16).unwrap_or(0)
+}
+
+fn parse_timestamp_from_block(value: &serde_json::Value) -> u64 {
+    value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .map(parse_hex_u64)
+        .unwrap_or(0)
+}
+
+fn block_param(block_number: Option<u64>) -> serde_json::Value {
+    match block_number {
+        Some(block_number) => serde_json::json!(format!("0x{:x}", block_number)),
+        None => serde_json::json!("latest"),
+    }
+}
+
+async fn get_block_number(client: &Client, state: &Arc<AppState>) -> Result<u64, String> {
+    let value = call_rpc_value(client, state, "eth_blockNumber", serde_json::json!([])).await?;
+
+    let s = value
+        .as_str()
+        .ok_or("eth_blockNumber result was not a string")?;
+
+    Ok(parse_hex_u64(s))
+}
+
+async fn get_block_timestamp(
+    client: &Client,
+    state: &Arc<AppState>,
+    block_number: u64,
+) -> Result<u64, String> {
+    let value = call_rpc_value(
+        client,
+        state,
+        "eth_getBlockByNumber",
+        serde_json::json!([format!("0x{:x}", block_number), false]),
+    )
+    .await?;
+
+    if value.is_null() {
+        return Err(format!("Block {} not found", block_number));
+    }
+
+    let timestamp = parse_timestamp_from_block(&value);
+
+    if timestamp == 0 {
+        return Err(format!("Block {} had invalid timestamp", block_number));
+    }
+
+    Ok(timestamp)
+}
+
+fn repair_historical_values(entries: &mut [HexJsonEntry]) {
+    entries.sort_by_key(|e| e.current_day);
+
+    let mut last_tshare = 0.0;
+    let mut last_price = 0.0;
+
+    for entry in entries.iter_mut() {
+        if entry.tshare_rate_hex.is_finite() && entry.tshare_rate_hex > 0.0 {
+            last_tshare = entry.tshare_rate_hex;
+        } else {
+            entry.tshare_rate_hex = last_tshare;
+        }
+
+        if entry.price_pulse_x.is_finite() && entry.price_pulse_x > 0.0 {
+            last_price = entry.price_pulse_x;
+        } else {
+            entry.price_pulse_x = last_price;
+        }
+    }
+
+    let mut next_tshare = 0.0;
+    let mut next_price = 0.0;
+
+    for entry in entries.iter_mut().rev() {
+        if entry.tshare_rate_hex.is_finite() && entry.tshare_rate_hex > 0.0 {
+            next_tshare = entry.tshare_rate_hex;
+        } else if next_tshare > 0.0 {
+            entry.tshare_rate_hex = next_tshare;
+        }
+
+        if entry.price_pulse_x.is_finite() && entry.price_pulse_x > 0.0 {
+            next_price = entry.price_pulse_x;
+        } else if next_price > 0.0 {
+            entry.price_pulse_x = next_price;
+        }
+    }
 }
 
 // =============================================
@@ -468,12 +576,12 @@ async fn save_miners_to_file(miners: &[Miner]) {
 // RPC LOGIC
 // =============================================
 
-async fn call_rpc(
+async fn call_rpc_value(
     client: &Client,
     state: &Arc<AppState>,
     method: &str,
     params: serde_json::Value,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let req_body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -514,7 +622,7 @@ async fn call_rpc(
                             *state.active_rpc_idx.write().await = idx;
                         }
 
-                        return Ok(json["result"].as_str().unwrap_or("").to_string());
+                        return Ok(json.get("result").cloned().unwrap_or(serde_json::Value::Null));
                     }
                     Err(e) => {
                         last_err = format!("JSON parse error on {}: {}", url, e);
@@ -532,18 +640,32 @@ async fn call_rpc(
     Err(format!("All RPC endpoints failed. Last error: {}", last_err))
 }
 
+async fn call_rpc(
+    client: &Client,
+    state: &Arc<AppState>,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<String, String> {
+    let value = call_rpc_value(client, state, method, params).await?;
+
+    value
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "RPC result was not a string".to_string())
+}
+
 // =============================================
 // ON-CHAIN DATA READING
 // =============================================
 
-/// Reads globals() → (tshare_rate_hex, daily_data_count, penalties_hex)
 async fn read_globals(
     client: &Client,
     state: &Arc<AppState>,
+    block_number: Option<u64>,
 ) -> Result<(f64, u64, f64), String> {
     let params = serde_json::json!([
         { "to": HEX_CONTRACT, "data": GLOBALS_SELECTOR },
-        "latest"
+        block_param(block_number)
     ]);
 
     let hex_result = call_rpc(client, state, "eth_call", params).await?;
@@ -569,17 +691,17 @@ async fn read_globals(
     Ok((tshare_rate, day_count, penalties))
 }
 
-/// Reads dailyData(day) → (day_payout_hearts, day_stake_shares)
 async fn read_daily_data(
     client: &Client,
     state: &Arc<AppState>,
     day: u64,
+    block_number: Option<u64>,
 ) -> Result<(f64, f64), String> {
     let call_data = format!("{}{:064x}", DAILY_DATA_SELECTOR, day);
 
     let params = serde_json::json!([
         { "to": HEX_CONTRACT, "data": call_data },
-        "latest"
+        block_param(block_number)
     ]);
 
     let hex_result = call_rpc(client, state, "eth_call", params).await?;
@@ -596,15 +718,218 @@ async fn read_daily_data(
 }
 
 // =============================================
-// RPC PRICE LOGIC
+// RPC BLOCK FINDER
 // =============================================
-const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
-const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
 
-async fn fetch_price_rpc(client: &Client, state: &Arc<AppState>) -> Result<f64, String> {
+#[derive(Clone, Copy)]
+struct BlockFinder {
+    latest_block: u64,
+    latest_timestamp: u64,
+    current_hex_day: u64,
+    current_tshare_rate: f64,
+    seconds_per_block: f64,
+    day_zero_timestamp: u64,
+}
+
+impl BlockFinder {
+    async fn new(client: &Client, state: &Arc<AppState>) -> Result<Self, String> {
+        let (current_tshare_rate, current_hex_day, _) =
+            read_globals(client, state, None).await?;
+
+        let latest_block = get_block_number(client, state).await?;
+        let latest_timestamp = get_block_timestamp(client, state, latest_block).await?;
+
+        let sample_block = latest_block.saturating_sub(BLOCK_TIME_SAMPLE_BLOCKS);
+
+        let sample_timestamp = if sample_block > 0 {
+            get_block_timestamp(client, state, sample_block)
+                .await
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let mut seconds_per_block = DEFAULT_SECONDS_PER_BLOCK;
+
+        if sample_timestamp > 0
+            && latest_block > sample_block
+            && latest_timestamp > sample_timestamp
+        {
+            seconds_per_block = (latest_timestamp - sample_timestamp) as f64
+                / (latest_block - sample_block) as f64;
+        }
+
+        if !seconds_per_block.is_finite() || seconds_per_block <= 0.0 {
+            seconds_per_block = DEFAULT_SECONDS_PER_BLOCK;
+        }
+
+        let current_day_start = latest_timestamp - (latest_timestamp % 86400);
+        let derived_day_zero = current_day_start
+            .saturating_sub(current_hex_day.saturating_mul(86400));
+
+        let mut finder = Self {
+            latest_block,
+            latest_timestamp,
+            current_hex_day,
+            current_tshare_rate,
+            seconds_per_block,
+            day_zero_timestamp: HEX_DAY_ZERO_UNIX_OVERRIDE.unwrap_or(derived_day_zero),
+        };
+
+        finder.calibrate(client, state).await;
+
+        Ok(finder)
+    }
+
+    async fn calibrate(&mut self, client: &Client, state: &Arc<AppState>) {
+        if HEX_DAY_ZERO_UNIX_OVERRIDE.is_some() {
+            return;
+        }
+
+        if self.current_hex_day < 3 {
+            return;
+        }
+
+        let test_day = self.current_hex_day.saturating_sub(2);
+
+        for _ in 0..3 {
+            let target_timestamp = self.target_timestamp_for_day(test_day);
+
+            if target_timestamp >= self.latest_timestamp {
+                break;
+            }
+
+            let block = match self
+                .find_block_for_timestamp(client, state, target_timestamp)
+                .await
+            {
+                Ok(block) => block,
+                Err(_) => break,
+            };
+
+            let (_, count_at_block, _) = match read_globals(client, state, Some(block)).await {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+
+            if count_at_block <= test_day {
+                self.day_zero_timestamp = self.day_zero_timestamp.saturating_add(86400);
+                continue;
+            }
+
+            if count_at_block > test_day.saturating_add(1) {
+                self.day_zero_timestamp = self.day_zero_timestamp.saturating_sub(86400);
+                continue;
+            }
+
+            break;
+        }
+    }
+
+    fn target_timestamp_for_day(&self, day: u64) -> u64 {
+        self.day_zero_timestamp
+            .saturating_add(day.saturating_add(1).saturating_mul(86400))
+            .saturating_add(HISTORICAL_QUERY_OFFSET_SECS)
+    }
+
+    async fn find_block_for_timestamp(
+        &self,
+        client: &Client,
+        state: &Arc<AppState>,
+        target_timestamp: u64,
+    ) -> Result<u64, String> {
+        if target_timestamp >= self.latest_timestamp {
+            return Ok(self.latest_block);
+        }
+
+        if !self.seconds_per_block.is_finite() || self.seconds_per_block <= 0.0 {
+            return Err("Invalid seconds_per_block".to_string());
+        }
+
+        let time_diff = self.latest_timestamp.saturating_sub(target_timestamp);
+        let estimated_block_diff = (time_diff as f64 / self.seconds_per_block) as u64;
+
+        let mut block = self.latest_block.saturating_sub(estimated_block_diff);
+
+        for _ in 0..6 {
+            let timestamp = get_block_timestamp(client, state, block).await?;
+
+            if timestamp < target_timestamp {
+                let delta = target_timestamp - timestamp;
+                let add = ((delta as f64 / self.seconds_per_block).ceil() as u64).max(1);
+                block = block.saturating_add(add);
+            } else if timestamp > target_timestamp + HISTORICAL_TIMESTAMP_TOLERANCE_SECS {
+                if block == 0 {
+                    return Ok(0);
+                }
+
+                let delta = timestamp - target_timestamp;
+                let sub = ((delta as f64 / self.seconds_per_block).ceil() as u64).max(1);
+                block = block.saturating_sub(sub.min(block));
+            } else {
+                return Ok(block);
+            }
+        }
+
+        let mut timestamp = get_block_timestamp(client, state, block).await?;
+        let mut guard = 0u32;
+
+        while timestamp < target_timestamp && guard < 20 {
+            block = block.saturating_add(1);
+            timestamp = get_block_timestamp(client, state, block).await?;
+            guard += 1;
+        }
+
+        Ok(block)
+    }
+
+    async fn find_historical_block_for_day(
+        &self,
+        client: &Client,
+        state: &Arc<AppState>,
+        day: u64,
+    ) -> Result<(u64, f64), String> {
+        if day >= self.current_hex_day {
+            return Err(format!("Day {} is not finalized yet", day));
+        }
+
+        let mut target_timestamp = self.target_timestamp_for_day(day);
+
+        for _ in 0..3 {
+            let block = self
+                .find_block_for_timestamp(client, state, target_timestamp)
+                .await?;
+
+            if let Ok((tshare_rate, day_count_at_block, _)) =
+                read_globals(client, state, Some(block)).await
+            {
+                if day_count_at_block > day {
+                    return Ok((block, tshare_rate));
+                }
+            }
+
+            target_timestamp = target_timestamp.saturating_add(3600);
+        }
+
+        Err(format!(
+            "Could not find settled historical block for day {}",
+            day
+        ))
+    }
+}
+
+// =============================================
+// PRICE FETCH
+// =============================================
+
+async fn fetch_price_rpc_at_block(
+    client: &Client,
+    state: &Arc<AppState>,
+    block_number: Option<u64>,
+) -> Result<f64, String> {
     let params = serde_json::json!([
         { "to": USDC_HEX_PAIR, "data": GET_RESERVES_SELECTOR },
-        "latest"
+        block_param(block_number)
     ]);
 
     let hex_result = call_rpc(client, state, "eth_call", params).await?;
@@ -630,9 +955,9 @@ async fn fetch_price_rpc(client: &Client, state: &Arc<AppState>) -> Result<f64, 
     Ok(price)
 }
 
-// =============================================
-// EXTERNAL DATA SOURCES
-// =============================================
+async fn fetch_price_rpc(client: &Client, state: &Arc<AppState>) -> Result<f64, String> {
+    fetch_price_rpc_at_block(client, state, None).await
+}
 
 async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     let resp: serde_json::Value = client
@@ -714,54 +1039,6 @@ async fn fetch_price(client: &Client, state: &Arc<AppState>) -> Result<f64, Stri
     fetch_price_geckoterminal(client).await
 }
 
-async fn fetch_hexdailystats_backfill(
-    client: &Client,
-) -> (HashMap<u64, f64>, HashMap<u64, f64>) {
-    info!("Attempting historical fetch from HEXDailyStats...");
-
-    let resp = match client.get(HEXDAILYSTATS_URL).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("HEXDailyStats unreachable: {}", e);
-            return (HashMap::new(), HashMap::new());
-        }
-    };
-
-    if !resp.status().is_success() {
-        warn!("HEXDailyStats returned HTTP {}", resp.status());
-        return (HashMap::new(), HashMap::new());
-    }
-
-    let entries: Vec<HexJsonEntry> = match resp.json().await {
-        Ok(e) => e,
-        Err(e) => {
-            warn!("HEXDailyStats JSON parse failed: {}", e);
-            return (HashMap::new(), HashMap::new());
-        }
-    };
-
-    let mut tshare_map: HashMap<u64, f64> = HashMap::with_capacity(entries.len());
-    let mut price_map: HashMap<u64, f64> = HashMap::with_capacity(entries.len());
-
-    for entry in &entries {
-        if entry.tshare_rate_hex > 0.0 && entry.tshare_rate_hex.is_finite() {
-            tshare_map.insert(entry.current_day, entry.tshare_rate_hex);
-        }
-
-        if entry.price_pulse_x > 0.0 && entry.price_pulse_x.is_finite() {
-            price_map.insert(entry.current_day, entry.price_pulse_x);
-        }
-    }
-
-    info!(
-        "HEXDailyStats: loaded {} T-Share rate points, {} price points",
-        tshare_map.len(),
-        price_map.len()
-    );
-
-    (tshare_map, price_map)
-}
-
 // =============================================
 // DAILY ENTRY STORAGE
 // =============================================
@@ -806,16 +1083,28 @@ async fn backfill_hex_json(
     state: &Arc<AppState>,
     existing_data: &[HexJsonEntry],
 ) -> Vec<HexJsonEntry> {
-    info!("Starting HEXJSON backfill...");
+    info!("Starting HEXJSON backfill using RPC archive data...");
 
-    let (current_tshare_rate, day_count, _penalties) =
-        match read_globals(client, state).await {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Backfill failed: cannot read globals(): {}", e);
-                return existing_data.to_vec();
-            }
-        };
+    let finder = match BlockFinder::new(client, state).await {
+        Ok(finder) => finder,
+        Err(e) => {
+            error!("Backfill failed: cannot initialize BlockFinder: {}", e);
+            return existing_data.to_vec();
+        }
+    };
+
+    let day_count = finder.current_hex_day;
+    let current_tshare_rate = finder.current_tshare_rate;
+
+    let start_day = {
+        let config = state.config.read().await.clone();
+        sanitize_config(config).historical_start_day.max(1)
+    };
+
+    info!(
+        "Backfill start day: {}, current day count: {}",
+        start_day, day_count
+    );
 
     info!(
         "globals(): tshareRate={:.1} HEX, dailyDataCount={}",
@@ -827,17 +1116,13 @@ async fn backfill_hex_json(
         return existing_data.to_vec();
     }
 
-    let (hds_tshares, hds_prices) = fetch_hexdailystats_backfill(client).await;
-
-    // Always fetch a current fallback price. This fixes missing days even when
-    // HEXDailyStats returns partial data.
     let current_price = match fetch_price(client, state).await {
         Ok(p) => {
-            info!("Using current price: ${:.8}", p);
+            info!("Using current price as final fallback price: ${:.8}", p);
             p
         }
         Err(e) => {
-            warn!("Price fetch failed: {}. Using 0.0.", e);
+            warn!("Price fetch failed: {}. Using 0.0 as final fallback.", e);
             0.0
         }
     };
@@ -848,13 +1133,13 @@ async fn backfill_hex_json(
         by_day.insert(entry.current_day, entry.clone());
     }
 
-    let missing_days: Vec<u64> = (1..day_count)
+    let missing_days: Vec<u64> = (start_day..day_count)
         .filter(|day| !by_day.contains_key(day))
         .collect();
 
     if missing_days.is_empty() {
         let mut result: Vec<HexJsonEntry> = by_day.into_values().collect();
-        result.sort_by_key(|e| e.current_day);
+        repair_historical_values(&mut result);
         info!("Backfill complete. Total HEXJSON entries: {}", result.len());
         return result;
     }
@@ -875,44 +1160,74 @@ async fn backfill_hex_json(
         .map(|day| {
             let client = client.clone();
             let state = state.clone();
+            let finder = finder;
+            let current_price = current_price;
+            let current_tshare_rate = current_tshare_rate;
 
             async move {
-                let result = read_daily_data(&client, &state, day).await;
+                let outcome: Result<(f64, f64, f64, f64), String> = async {
+                    let (historical_block, tshare_rate) =
+                        match finder
+                            .find_historical_block_for_day(&client, &state, day)
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!(
+                                    "Historical block lookup for day {} failed: {}. \
+                                     Marking tshare/price as missing for repair.",
+                                    day, e
+                                );
+
+                                let (payout_hearts, shares) =
+                                    read_daily_data(&client, &state, day, None).await?;
+
+                                return Ok((
+                                    payout_hearts,
+                                    shares,
+                                    0.0,
+                                    0.0,
+                                ));
+                            }
+                        };
+
+                    let (payout_hearts, shares) =
+                        read_daily_data(&client, &state, day, Some(historical_block)).await?;
+
+                    let price =
+                        match fetch_price_rpc_at_block(&client, &state, Some(historical_block))
+                            .await
+                        {
+                            Ok(p) => p,
+                            Err(_) => 0.0,
+                        };
+
+                    Ok((payout_hearts, shares, tshare_rate, price))
+                }
+                .await;
 
                 if BACKFILL_DELAY_MS > 0 {
                     tokio::time::sleep(Duration::from_millis(BACKFILL_DELAY_MS)).await;
                 }
 
-                (day, result)
+                (day, outcome)
             }
         })
         .buffer_unordered(BACKFILL_CONCURRENCY);
 
-    while let Some((day, result)) = results_stream.next().await {
-        match result {
-            Ok((payout_hearts, shares)) => {
+    while let Some((day, outcome)) = results_stream.next().await {
+        match outcome {
+            Ok((payout_hearts, shares, tshare_rate, price)) => {
                 consecutive_errors = 0;
 
                 let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
                 let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
 
-                let price = hds_prices
-                    .get(&day)
-                    .copied()
-                    .filter(|p| p.is_finite() && *p > 0.0)
-                    .unwrap_or(current_price);
-
-                let tshare = hds_tshares
-                    .get(&day)
-                    .copied()
-                    .filter(|t| t.is_finite() && *t > 0.0)
-                    .unwrap_or(current_tshare_rate);
-
                 by_day.insert(
                     day,
                     HexJsonEntry {
                         current_day: day,
-                        tshare_rate_hex: tshare,
+                        tshare_rate_hex: tshare_rate,
                         daily_payout_hex,
                         payout_per_tshare_hex: payout_per_tshare,
                         price_pulse_x: price,
@@ -949,14 +1264,14 @@ async fn backfill_hex_json(
 
         if is_multiple_of(fetched, BACKFILL_SAVE_INTERVAL) {
             let mut partial: Vec<HexJsonEntry> = by_day.values().cloned().collect();
-            partial.sort_by_key(|e| e.current_day);
+            repair_historical_values(&mut partial);
             save_hex_json_to_file(&partial).await;
             info!("Backfill: intermediate save ({} total entries)", partial.len());
         }
     }
 
     let mut result: Vec<HexJsonEntry> = by_day.into_values().collect();
-    result.sort_by_key(|e| e.current_day);
+    repair_historical_values(&mut result);
 
     info!("Backfill complete. Total HEXJSON entries: {}", result.len());
     result
@@ -970,7 +1285,7 @@ async fn record_daily_entry(
     client: &Client,
     state: &Arc<AppState>,
 ) -> Result<HexJsonEntry, String> {
-    let (tshare_rate, day_count, _) = read_globals(client, state).await?;
+    let (tshare_rate, day_count, _) = read_globals(client, state, None).await?;
 
     if day_count == 0 {
         return Err("dailyDataCount is 0, cannot record".to_string());
@@ -978,7 +1293,7 @@ async fn record_daily_entry(
 
     let target_day = day_count - 1;
 
-    let (payout_hearts, shares) = read_daily_data(client, state, target_day).await?;
+    let (payout_hearts, shares) = read_daily_data(client, state, target_day, None).await?;
 
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
@@ -1024,7 +1339,7 @@ async fn fetch_live_data(
     let gas_price_wei = U256::from_hex(&gas_price_hex);
     let beat = gas_price_wei.to_f64() / 1e9;
 
-    let (tshare_rate, daily_data_count, penalties) = read_globals(client, state).await?;
+    let (tshare_rate, daily_data_count, penalties) = read_globals(client, state, None).await?;
 
     let mut payout_per_tshare = 0.0;
 
@@ -1032,7 +1347,7 @@ async fn fetch_live_data(
         let day_to_query = daily_data_count - 1;
 
         if let Ok((payout_hearts, shares)) =
-            read_daily_data(client, state, day_to_query).await
+            read_daily_data(client, state, day_to_query, None).await
         {
             payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
         }
@@ -1136,12 +1451,12 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
     let file_data = load_hex_json_from_file().await;
 
     let initial_data = if file_data.is_empty() {
-        info!("No persisted HEXJSON data. Building from RPC + external sources...");
+        info!("No persisted HEXJSON data. Building from RPC archive sources...");
         let backfilled = backfill_hex_json(&client, &state, &[]).await;
         save_hex_json_to_file(&backfilled).await;
         backfilled
     } else {
-        match read_globals(&client, &state).await {
+        match read_globals(&client, &state, None).await {
             Ok((_, day_count, _)) => {
                 let known_days: HashSet<u64> =
                     file_data.iter().map(|e| e.current_day).collect();
@@ -1519,12 +1834,12 @@ async fn main() {
         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
             live_data_frequency: 15,
             liquid_hex: 0.0,
-            historical_start_day: 1260,
+            historical_start_day: 1256,
         }),
         Err(_) => Config {
             live_data_frequency: 15,
             liquid_hex: 0.0,
-            historical_start_day: 1260,
+            historical_start_day: 1256,
         },
     };
 
