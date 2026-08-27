@@ -1078,7 +1078,7 @@ async fn backfill_hex_json(
 
 info!(
     "Backfill start day: {}, current day count: {}",
-    1255, day_count
+    1256, day_count
 );
 
     info!(
@@ -1108,7 +1108,7 @@ info!(
         by_day.insert(entry.current_day, entry.clone());
     }
 
-    let missing_days: Vec<u64> = (1255..day_count)
+    let missing_days: Vec<u64> = (1256..day_count)
         .filter(|day| !by_day.contains_key(day))
         .collect();
 
@@ -1809,12 +1809,12 @@ async fn main() {
         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
             live_data_frequency: 15,
             liquid_hex: 0.0,
-            historical_start_day: 1255,
+            historical_start_day: 1256,
         }),
         Err(_) => Config {
             live_data_frequency: 15,
             liquid_hex: 0.0,
-            historical_start_day: 1255,
+            historical_start_day: 1256,
         },
     };
 
