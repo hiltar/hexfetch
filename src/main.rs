@@ -191,7 +191,6 @@ struct AppState {
     active_rpc_idx: RwLock<usize>,
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
-    wallet_balance: RwLock<f64>,
 }
 
 // =============================================
@@ -1332,7 +1331,7 @@ async fn fetch_live_data(
         penalties_hex_pulsechain: penalties,
         payout_per_tshare_pulsechain: payout_per_tshare,
         beat,
-        wallet_balance: current_liquid_hex,
+        liquid_hex: current_liquid_hex,
     })
 }
 
@@ -1954,7 +1953,6 @@ async fn main() {
         active_rpc_idx: RwLock::new(0),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
-        wallet_balance: RwLock::new(0.0),
     });
 
     let client = Client::builder()
