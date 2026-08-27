@@ -973,12 +973,25 @@ async function initialLoad() {
 
         let totalTS = 0;
         const activeMiners = [];
-
         miners.forEach(m => {
             if (m.status !== 'completed') {
                 totalTS += Number(m.tShares) || 0;
                 activeMiners.push(m);
             }
+        });
+        activeMiners.sort((a, b) => {
+            const endA = parseDateDDMMYYYY(a.endDate);
+            const endB = parseDateDDMMYYYY(b.endDate);
+            const startA = parseDateDDMMYYYY(a.startDate);
+            const startB = parseDateDDMMYYYY(b.startDate);
+
+            if (endA && endB && endA.getTime() !== endB.getTime()) {
+                return endA.getTime() - endB.getTime();
+            }
+            if (startA && startB) {
+                return startA.getTime() - startB.getTime();
+            }
+            return 0;
         });
 
         userTotalTShares = totalTS;
@@ -1155,8 +1168,22 @@ async function initialLoad() {
 
         const existingDiv = document.getElementById('existing-miners');
         existingDiv.innerHTML = '';
+        
+        const sortedMiners = [...miners].sort((a, b) => {
+            const endA = parseDateDDMMYYYY(a.endDate);
+            const endB = parseDateDDMMYYYY(b.endDate);
+            const startA = parseDateDDMMYYYY(a.startDate);
+            const startB = parseDateDDMMYYYY(b.startDate);
 
-        miners.forEach(m => {
+            if (endA && endB && endA.getTime() !== endB.getTime()) {
+                return endA.getTime() - endB.getTime();
+            }
+            if (startA && startB) {
+                return startA.getTime() - startB.getTime();
+            }
+            return 0;
+        });
+        sortedMiners.forEach(m => {
             const div = document.createElement('div');
             div.className = 'list-item';
 
