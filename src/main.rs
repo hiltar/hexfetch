@@ -1136,8 +1136,6 @@ info!(
             let client = client.clone();
             let state = state.clone();
             let finder = finder;
-            let current_price = current_price;
-            let current_tshare_rate = current_tshare_rate;
 
             async move {
                 let outcome: Result<(f64, f64, f64, f64), String> = async {
