@@ -99,24 +99,24 @@ pub struct HexJsonEntry {
 pub struct LiveData {
     #[serde(rename = "price_Pulsechain")]
     pub price_pulsechain: f64,
-
+    
     #[serde(rename = "tsharePrice_Pulsechain")]
     pub tshare_price_pulsechain: f64,
-
+    
     #[serde(rename = "tshareRateHEX_Pulsechain")]
     pub tshare_rate_hex_pulsechain: f64,
-
+    
     #[serde(rename = "penaltiesHEX_Pulsechain")]
     pub penalties_hex_pulsechain: f64,
-
+    
     #[serde(rename = "payoutPerTshare_Pulsechain")]
     pub payout_per_tshare_pulsechain: f64,
-
+    
     #[serde(rename = "beat")]
     pub beat: f64,
-
-    #[serde(rename = "walletBalance", default)]
-    pub wallet_balance: f64,
+    
+    #[serde(rename = "liquidHEX", default)]
+    pub liquid_hex: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1314,16 +1314,16 @@ async fn fetch_live_data(
     let (tshare_rate, daily_data_count, penalties) = read_globals(client, state, None).await?;
 
     let mut payout_per_tshare = 0.0;
-
     if daily_data_count > 0 {
         let day_to_query = daily_data_count - 1;
-
         if let Ok((payout_hearts, shares)) =
             read_daily_data(client, state, day_to_query, None).await
         {
             payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
         }
     }
+
+    let current_liquid_hex = state.config.read().await.liquid_hex;
 
     Ok(LiveData {
         price_pulsechain: price,
@@ -1332,7 +1332,7 @@ async fn fetch_live_data(
         penalties_hex_pulsechain: penalties,
         payout_per_tshare_pulsechain: payout_per_tshare,
         beat,
-        wallet_balance: *state.wallet_balance.read().await,
+        wallet_balance: current_liquid_hex,
     })
 }
 
@@ -1662,13 +1662,17 @@ async fn wallet_balance_updater(state: Arc<AppState>, client: Client) {
             if !addresses.trim().is_empty() {
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
-                        *state.wallet_balance.write().await = balance;
-                        info!("Wallet balance updated: {:.8} HEX", balance);
+                        let mut config = state.config.write().await;
+                        config.liquid_hex = balance;
+                        let new_config = sanitize_config(config.clone());
+                        *config = new_config.clone();
+                        drop(config);
+                        save_config_to_file(&new_config).await;
+                        let _ = state.config_tx.send(());
+                        info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
-            } else {
-                *state.wallet_balance.write().await = 0.0;
             }
         }
         
@@ -1684,8 +1688,14 @@ async fn wallet_balance_updater(state: Arc<AppState>, client: Client) {
             _ = &mut sleep => {
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
-                        *state.wallet_balance.write().await = balance;
-                        info!("Wallet balance scheduled update: {:.8} HEX", balance);
+                        let mut config = state.config.write().await;
+                        config.liquid_hex = balance;
+                        let new_config = sanitize_config(config.clone());
+                        *config = new_config.clone();
+                        drop(config);
+                        save_config_to_file(&new_config).await;
+                        let _ = state.config_tx.send(());
+                        info!("Wallet balance scheduled update config liquid_hex: {:.8} HEX", balance);
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
@@ -1702,9 +1712,7 @@ async fn wallet_balance_updater(state: Arc<AppState>, client: Client) {
 // =============================================
 
 async fn handle_live_data(State(state): State<Arc<AppState>>) -> Json<LiveData> {
-    let mut data = state.live_data.read().await.clone();
-    data.wallet_balance = *state.wallet_balance.read().await;
-    Json(data)
+    Json(state.live_data.read().await.clone())
 }
 
 async fn handle_miners(State(state): State<Arc<AppState>>) -> Json<Vec<Miner>> {
