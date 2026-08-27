@@ -1427,7 +1427,7 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
                 let locked_day = U256::from_hex(locked_day_hex).to_f64() as u64;
                 let staked_days = U256::from_hex(staked_days_hex).to_f64() as u64;
                 let unlocked_day = U256::from_hex(unlocked_day_hex).to_f64() as u64;
-                let t_shares = stake_shares / 1e13;
+                let t_shares = stake_shares / 1e12;
                 let start_ts = hex_day_zero + (locked_day as i64 * 86400);
                 let end_ts = hex_day_zero + ((locked_day + staked_days) as i64 * 86400);
                 
