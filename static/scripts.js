@@ -1289,7 +1289,7 @@ function debouncedSaveConfig() {
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
     const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
-    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1;
+    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1; 
 
     fetch('/api/config', {
         method: 'POST',
