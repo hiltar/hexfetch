@@ -300,6 +300,44 @@ async fn get_block_timestamp(
     Ok(timestamp)
 }
 
+fn repair_historical_values(entries: &mut [HexJsonEntry]) {
+    entries.sort_by_key(|e| e.current_day);
+
+    let mut last_tshare = 0.0;
+    let mut last_price = 0.0;
+
+    for entry in entries.iter_mut() {
+        if entry.tshare_rate_hex.is_finite() && entry.tshare_rate_hex > 0.0 {
+            last_tshare = entry.tshare_rate_hex;
+        } else {
+            entry.tshare_rate_hex = last_tshare;
+        }
+
+        if entry.price_pulse_x.is_finite() && entry.price_pulse_x > 0.0 {
+            last_price = entry.price_pulse_x;
+        } else {
+            entry.price_pulse_x = last_price;
+        }
+    }
+
+    let mut next_tshare = 0.0;
+    let mut next_price = 0.0;
+
+    for entry in entries.iter_mut().rev() {
+        if entry.tshare_rate_hex.is_finite() && entry.tshare_rate_hex > 0.0 {
+            next_tshare = entry.tshare_rate_hex;
+        } else if next_tshare > 0.0 {
+            entry.tshare_rate_hex = next_tshare;
+        }
+
+        if entry.price_pulse_x.is_finite() && entry.price_pulse_x > 0.0 {
+            next_price = entry.price_pulse_x;
+        } else if next_price > 0.0 {
+            entry.price_pulse_x = next_price;
+        }
+    }
+}
+
 // =============================================
 // DATE PARSER
 // =============================================
@@ -1038,6 +1076,11 @@ async fn backfill_hex_json(
     let day_count = finder.current_hex_day;
     let current_tshare_rate = finder.current_tshare_rate;
 
+info!(
+    "Backfill start day: {}, current day count: {}",
+    start_day, day_count
+);
+
     info!(
         "globals(): tshareRate={:.1} HEX, dailyDataCount={}",
         current_tshare_rate, day_count
@@ -1065,7 +1108,7 @@ async fn backfill_hex_json(
         by_day.insert(entry.current_day, entry.clone());
     }
 
-    let missing_days: Vec<u64> = (1..day_count)
+    let missing_days: Vec<u64> = (1260..day_count)
         .filter(|day| !by_day.contains_key(day))
         .collect();
 
@@ -1117,8 +1160,8 @@ async fn backfill_hex_json(
                                 return Ok((
                                     payout_hearts,
                                     shares,
-                                    current_tshare_rate,
-                                    current_price,
+                                    0.0,
+                                    0.0,
                                 ));
                             }
                         };
@@ -1131,7 +1174,7 @@ async fn backfill_hex_json(
                             .await
                         {
                             Ok(p) => p,
-                            Err(_) => current_price,
+                            Err(_) => 0,
                         };
 
                     Ok((payout_hearts, shares, tshare_rate, price))
@@ -1196,14 +1239,14 @@ async fn backfill_hex_json(
 
         if is_multiple_of(fetched, BACKFILL_SAVE_INTERVAL) {
             let mut partial: Vec<HexJsonEntry> = by_day.values().cloned().collect();
-            partial.sort_by_key(|e| e.current_day);
+            repair_historical_values(&mut partial);
             save_hex_json_to_file(&partial).await;
             info!("Backfill: intermediate save ({} total entries)", partial.len());
         }
     }
 
     let mut result: Vec<HexJsonEntry> = by_day.into_values().collect();
-    result.sort_by_key(|e| e.current_day);
+    repair_historical_values(&mut result);
 
     info!("Backfill complete. Total HEXJSON entries: {}", result.len());
     result
