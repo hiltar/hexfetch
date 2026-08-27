@@ -596,36 +596,36 @@ function renderPortfolioHistoryChartWithData(rawData) {
 
 function updateProfileStats() {
     if (!liveDataCache) return;
-
     const d = liveDataCache;
     const price = Number(d.price_Pulsechain) || 0;
     const tsharePrice = Number(d.tsharePrice_Pulsechain) || 0;
     const payoutPerTshare = Number(d.payoutPerTshare_Pulsechain) || 0;
-    const walletBalance = Number(d.walletBalance) || 0;
+    
+    if (d.liquidHEX !== undefined) {
+        userLiquidHEX = Number(d.liquidHEX) || 0;
+        const liquidInput = document.getElementById('liquid-hex');
+        if (liquidInput && document.activeElement !== liquidInput) {
+            liquidInput.value = userLiquidHEX;
+        }
+    }
 
     document.getElementById('total-value').textContent =
         `$${formatWithCommas((userTotalTShares * tsharePrice).toFixed(2))}`;
 
-    document.getElementById('liquid-hex-value').textContent =
-        `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
-
-    const iHex = userTotalTShares * payoutPerTshare;
-
-    document.getElementById('interest-hex').textContent =
-        `${formatWithCommas(iHex.toFixed(2))} HEX`;
-
-    document.getElementById('interest-usd').textContent =
-        `$${formatWithCommas((iHex * price).toFixed(2))}`;
-
     const walletHexEl = document.getElementById('wallet-hex-value');
     if (walletHexEl) {
-        walletHexEl.textContent = `${formatWithCommas(walletBalance.toFixed(2))} HEX`;
+        walletHexEl.textContent = `${formatWithCommas(userLiquidHEX.toFixed(2))} HEX`;
     }
-    
     const walletUsdEl = document.getElementById('wallet-usd-value');
     if (walletUsdEl) {
-        walletUsdEl.textContent = `$${formatWithCommas((walletBalance * price).toFixed(2))}`;
+        walletUsdEl.textContent = `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
     }
+
+    const iHex = userTotalTShares * payoutPerTshare;
+    document.getElementById('interest-hex').textContent =
+        `${formatWithCommas(iHex.toFixed(2))} HEX`;
+    document.getElementById('interest-usd').textContent =
+        `$${formatWithCommas((iHex * price).toFixed(2))}`;
 }
 
 async function fetchLiveDataAndRender() {
