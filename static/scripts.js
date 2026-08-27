@@ -600,10 +600,9 @@ function updateProfileStats() {
     const price = Number(d.price_Pulsechain) || 0;
     const tsharePrice = Number(d.tsharePrice_Pulsechain) || 0;
     const payoutPerTshare = Number(d.payoutPerTshare_Pulsechain) || 0;
-    const walletBalance = Number(d.walletBalance) || 0;
-
-    if (walletBalance > 0) {
-        userLiquidHEX = walletBalance;
+    
+    if (d.liquidHEX !== undefined && d.liquidHEX > 0) {
+        userLiquidHEX = Number(d.liquidHEX);
         const liquidInput = document.getElementById('liquid-hex');
         if (liquidInput && document.activeElement !== liquidInput) {
             liquidInput.value = userLiquidHEX;
@@ -624,11 +623,10 @@ function updateProfileStats() {
     }
 
     const iHex = userTotalTShares * payoutPerTshare;
-    const interestHexEl = document.getElementById('interest-hex');
-    if (interestHexEl) interestHexEl.textContent = `${formatWithCommas(iHex.toFixed(2))} HEX`;
-    
-    const interestUsdEl = document.getElementById('interest-usd');
-    if (interestUsdEl) interestUsdEl.textContent = `$${formatWithCommas((iHex * price).toFixed(2))}`;
+    document.getElementById('interest-hex').textContent =
+        `${formatWithCommas(iHex.toFixed(2))} HEX`;
+    document.getElementById('interest-usd').textContent =
+        `$${formatWithCommas((iHex * price).toFixed(2))}`;
 }
 
 async function fetchLiveDataAndRender() {
