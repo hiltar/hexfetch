@@ -1174,7 +1174,7 @@ info!(
                             .await
                         {
                             Ok(p) => p,
-                            Err(_) => 0,
+                            Err(_) => 0.0,
                         };
 
                     Ok((payout_hearts, shares, tshare_rate, price))
