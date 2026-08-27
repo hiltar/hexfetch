@@ -596,24 +596,35 @@ function renderPortfolioHistoryChartWithData(rawData) {
 
 function updateProfileStats() {
     if (!liveDataCache) return;
-
     const d = liveDataCache;
-
     const price = Number(d.price_Pulsechain) || 0;
     const tsharePrice = Number(d.tsharePrice_Pulsechain) || 0;
     const payoutPerTshare = Number(d.payoutPerTshare_Pulsechain) || 0;
+    
+    if (d.liquidHEX !== undefined && d.liquidHEX > 0) {
+        userLiquidHEX = Number(d.liquidHEX);
+        const liquidInput = document.getElementById('liquid-hex');
+        if (liquidInput && document.activeElement !== liquidInput) {
+            liquidInput.value = userLiquidHEX;
+        }
+    }
 
     document.getElementById('total-value').textContent =
         `$${formatWithCommas((userTotalTShares * tsharePrice).toFixed(2))}`;
 
-    document.getElementById('liquid-hex-value').textContent =
-        `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
+    const walletHexEl = document.getElementById('wallet-hex-value');
+    if (walletHexEl) {
+        walletHexEl.textContent = `${formatWithCommas(userLiquidHEX.toFixed(2))} HEX`;
+    }
+    
+    const walletUsdEl = document.getElementById('wallet-usd-value');
+    if (walletUsdEl) {
+        walletUsdEl.textContent = `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
+    }
 
     const iHex = userTotalTShares * payoutPerTshare;
-
     document.getElementById('interest-hex').textContent =
         `${formatWithCommas(iHex.toFixed(2))} HEX`;
-
     document.getElementById('interest-usd').textContent =
         `$${formatWithCommas((iHex * price).toFixed(2))}`;
 }
@@ -772,6 +783,62 @@ function initTickerToggle() {
 }
 
 // =============================================
+// WALLET ADDRESS
+// =============================================
+function saveWalletSettings() {
+    const walletAddrs = document.getElementById('wallet-addresses').value || '';
+    const addrs = walletAddrs.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    
+    for (let addr of addrs) {
+        if (!addr.startsWith('0x') || addr.length < 10) {
+            showNotification('Invalid address format: ' + addr, 'danger');
+            return;
+        }
+    }
+    debouncedSaveConfig(); // Reuses the safe save logic
+}
+
+function updateWalletAddressesUI(addressesStr) {
+    const container = document.getElementById('saved-wallet-addresses');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    if (!addressesStr) return;
+    
+    const addresses = addressesStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    
+    addresses.forEach(addr => {
+        if (!addr.startsWith('0x') || addr.length < 10) return;
+        
+        // First 4 characters, last 4 characters
+        const masked = addr.substring(0, 4) + '....' + addr.substring(addr.length - 4);
+        
+        const item = document.createElement('div');
+        item.className = 'wallet-address-item';
+        
+        const span = document.createElement('span');
+        span.className = 'wallet-address-masked';
+        span.textContent = masked;
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-address-btn';
+        copyBtn.innerHTML = '📋 Copy';
+        copyBtn.title = 'Copy full address';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(addr).then(() => {
+                showNotification('Address copied!', 'success');
+            }).catch(() => {
+                showNotification('Failed to copy', 'danger');
+            });
+        });
+        
+        item.appendChild(span);
+        item.appendChild(copyBtn);
+        container.appendChild(item);
+    });
+}
+
+// =============================================
 // MINERS
 // =============================================
 
@@ -906,12 +973,25 @@ async function initialLoad() {
 
         let totalTS = 0;
         const activeMiners = [];
-
         miners.forEach(m => {
             if (m.status !== 'completed') {
                 totalTS += Number(m.tShares) || 0;
                 activeMiners.push(m);
             }
+        });
+        activeMiners.sort((a, b) => {
+            const endA = parseDateDDMMYYYY(a.endDate);
+            const endB = parseDateDDMMYYYY(b.endDate);
+            const startA = parseDateDDMMYYYY(a.startDate);
+            const startB = parseDateDDMMYYYY(b.startDate);
+
+            if (endA && endB && endA.getTime() !== endB.getTime()) {
+                return endA.getTime() - endB.getTime();
+            }
+            if (startA && startB) {
+                return startA.getTime() - startB.getTime();
+            }
+            return 0;
         });
 
         userTotalTShares = totalTS;
@@ -1078,13 +1158,32 @@ async function initialLoad() {
         document.getElementById('frequency').value = cfg.liveDataFrequency;
         document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
+        const walletAddrEl = document.getElementById('wallet-addresses');
+        if (walletAddrEl) walletAddrEl.value = cfg.walletAddresses || '';
+        const walletFreqEl = document.getElementById('wallet-freq');
+        if (walletFreqEl) walletFreqEl.value = cfg.walletFetchHours || 1;
+        updateWalletAddressesUI(cfg.walletAddresses || '');
 
         historicalStartDay = Number(cfg.historicalStartDay) || 1260;
 
         const existingDiv = document.getElementById('existing-miners');
         existingDiv.innerHTML = '';
+        
+        const sortedMiners = [...miners].sort((a, b) => {
+            const endA = parseDateDDMMYYYY(a.endDate);
+            const endB = parseDateDDMMYYYY(b.endDate);
+            const startA = parseDateDDMMYYYY(a.startDate);
+            const startB = parseDateDDMMYYYY(b.startDate);
 
-        miners.forEach(m => {
+            if (endA && endB && endA.getTime() !== endB.getTime()) {
+                return endA.getTime() - endB.getTime();
+            }
+            if (startA && startB) {
+                return startA.getTime() - startB.getTime();
+            }
+            return 0;
+        });
+        sortedMiners.forEach(m => {
             const div = document.createElement('div');
             div.className = 'list-item';
 
@@ -1184,30 +1283,27 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
 
 function debouncedSaveConfig() {
     if (saveInProgress) return;
-
     saveInProgress = true;
-
+    
     const freq = parseInt(document.getElementById('frequency').value) || 15;
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
+    const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
+    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1; 
 
     fetch('/api/config', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             liveDataFrequency: freq,
             liquidHEX: liquid,
-            historicalStartDay: hist
+            historicalStartDay: hist,
+            walletAddresses: walletAddrs,
+            walletFetchHours: walletFreq
         })
     })
     .then(r => {
-        showNotification(
-            r.ok ? 'Settings saved' : 'Error saving',
-            r.ok ? 'success' : 'danger'
-        );
-
+        showNotification(r.ok ? 'Settings saved' : 'Error saving', r.ok ? 'success' : 'danger');
         if (r.ok) initialLoad();
     })
     .catch(() => showNotification('Network error', 'danger'))
