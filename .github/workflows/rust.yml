@@ -22,6 +22,8 @@ jobs:
             output: hexfetch-arm
           - target: armv7-unknown-linux-musleabihf
             output: hexfetch-armv7
+          - target: aarch64-unknown-none
+            output: hexfetch-embed
     runs-on: ubuntu-latest
 
     steps:
