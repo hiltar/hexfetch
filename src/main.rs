@@ -1742,13 +1742,11 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
             let c = sanitize_config(config);
             (c.wallet_addresses, c.wallet_fetch_hours)
         };
-        
+
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
-        let should_fetch = addresses_changed || addresses.trim().is_empty();
-
-        if should_fetch {
+        if addresses_changed {
             if !addresses.trim().is_empty() {
                 // Fetch Balance
                 match fetch_wallet_balances(&client, &addresses).await {
@@ -1764,22 +1762,23 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
-                
+
                 // Fetch Miners
                 match fetch_wallet_miners(&client, &state, &addresses).await {
                     Ok(fetched_miners) => {
                         let mut miners_lock = state.miners.write().await;
                         let current_miners = miners_lock.clone();
+
                         let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter()
                             .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
                             .collect();
                         curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
-                        
+
                         let mut fetch_norm: Vec<(String, String, f64, Option<String>)> = fetched_miners.iter()
                             .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
                             .collect();
                         fetch_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
-                        
+
                         let mut is_different = curr_norm.len() != fetch_norm.len();
                         if !is_different {
                             for (c, f) in curr_norm.iter().zip(fetch_norm.iter()) {
@@ -1789,7 +1788,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                 }
                             }
                         }
-                        
+
                         if is_different {
                             info!("Miners changed! Replacing and saving to file.");
                             let (normalized, next_id) = normalize_miners(fetched_miners);
@@ -1812,9 +1811,11 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                 drop(config);
                 save_config_to_file(&new_config).await;
                 let _ = state.config_tx.send(());
+                info!("Wallet addresses cleared, liquid_hex reset to 0");
             }
         }
-        
+
+        // If no addresses configured, just wait for next config change
         if addresses.trim().is_empty() {
             let _ = rx.recv().await;
             continue;
@@ -1822,10 +1823,10 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
         let sleep = tokio::time::sleep(Duration::from_secs(hours * 3600));
         tokio::pin!(sleep);
-        
+
         tokio::select! {
             _ = &mut sleep => {
-                // Scheduled Update Loop
+                // Scheduled update: fetch balance
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
                         let mut config = state.config.write().await;
@@ -1839,22 +1840,23 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
-                
+
+                // Scheduled update: fetch miners
                 match fetch_wallet_miners(&client, &state, &addresses).await {
                     Ok(fetched_miners) => {
                         let mut miners_lock = state.miners.write().await;
                         let current_miners = miners_lock.clone();
-                        
+
                         let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter()
                             .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
                             .collect();
                         curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
-                        
+
                         let mut fetch_norm: Vec<(String, String, f64, Option<String>)> = fetched_miners.iter()
                             .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
                             .collect();
                         fetch_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
-                        
+
                         let mut is_different = curr_norm.len() != fetch_norm.len();
                         if !is_different {
                             for (c, f) in curr_norm.iter().zip(fetch_norm.iter()) {
@@ -1864,7 +1866,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                 }
                             }
                         }
-                        
+
                         if is_different {
                             info!("Miners changed! Replacing and saving to file.");
                             let (normalized, next_id) = normalize_miners(fetched_miners);
