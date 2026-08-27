@@ -1144,8 +1144,10 @@ async function initialLoad() {
         document.getElementById('frequency').value = cfg.liveDataFrequency;
         document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
-        document.getElementById('wallet-addresses').value = cfg.walletAddresses || '';
-        document.getElementById('wallet-freq').value = cfg.walletFetchHours || 1;
+        const walletAddrEl = document.getElementById('wallet-addresses');
+        if (walletAddrEl) walletAddrEl.value = cfg.walletAddresses || '';
+        const walletFreqEl = document.getElementById('wallet-freq');
+        if (walletFreqEl) walletFreqEl.value = cfg.walletFetchHours || 1;
         updateWalletAddressesUI(cfg.walletAddresses || '');
 
         historicalStartDay = Number(cfg.historicalStartDay) || 1260;
@@ -1260,7 +1262,7 @@ function debouncedSaveConfig() {
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
     const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
-    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value)
+    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1;
 
     fetch('/api/config', {
         method: 'POST',
