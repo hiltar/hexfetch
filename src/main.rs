@@ -1746,64 +1746,67 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
-        if addresses_changed && !addresses.trim().is_empty() {
-            // Fetch Balance
-            match fetch_wallet_balances(&client, &addresses).await {
-                Ok(balance) => {
-                    let mut config = state.config.write().await;
-                    config.liquid_hex = balance;
-                    let new_config = sanitize_config(config.clone());
-                    *config = new_config.clone();
-                    drop(config);
-                    save_config_to_file(&new_config).await;
-                    let _ = state.config_tx.send(());
-                    info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
+        if addresses_changed {
+            if !addresses.trim().is_empty() {
+                // Fetch Balance
+                match fetch_wallet_balances(&client, &addresses).await {
+                    Ok(balance) => {
+                        let mut config = state.config.write().await;
+                        config.liquid_hex = balance;
+                        let new_config = sanitize_config(config.clone());
+                        *config = new_config.clone();
+                        drop(config);
+                        save_config_to_file(&new_config).await;
+                        let _ = state.config_tx.send(());
+                        info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
+                    }
+                    Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
-                Err(e) => warn!("Wallet balance fetch failed: {}", e),
-            }
 
-            // Fetch Miners
-            match fetch_wallet_miners(&client, &state, &addresses).await {
-                Ok(fetched_miners) => {
-                    let mut miners_lock = state.miners.write().await;
-                    let current_miners = miners_lock.clone();
+                // Fetch Miners
+                match fetch_wallet_miners(&client, &state, &addresses).await {
+                    Ok(fetched_miners) => {
+                        let mut miners_lock = state.miners.write().await;
+                        let current_miners = miners_lock.clone();
 
-                    let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                        .collect();
-                    curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter()
+                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                            .collect();
+                        curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
 
-                    let mut fetch_norm: Vec<(String, String, f64, Option<String>)> = fetched_miners.iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                        .collect();
-                    fetch_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+                        let mut fetch_norm: Vec<(String, String, f64, Option<String>)> = fetched_miners.iter()
+                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                            .collect();
+                        fetch_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
 
-                    let mut is_different = curr_norm.len() != fetch_norm.len();
-                    if !is_different {
-                        for (c, f) in curr_norm.iter().zip(fetch_norm.iter()) {
-                            if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
-                                is_different = true;
-                                break;
+                        let mut is_different = curr_norm.len() != fetch_norm.len();
+                        if !is_different {
+                            for (c, f) in curr_norm.iter().zip(fetch_norm.iter()) {
+                                if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
+                                    is_different = true;
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    if is_different {
-                        info!("Miners changed! Replacing and saving to file.");
-                        let (normalized, next_id) = normalize_miners(fetched_miners);
-                        state.next_miner_id.store(next_id, Ordering::SeqCst);
-                        *miners_lock = normalized.clone();
-                        drop(miners_lock);
-                        save_miners_to_file(&normalized).await;
-                    } else {
-                        drop(miners_lock);
-                        info!("Fetched miners match saved miners. No disk write needed.");
+                        if is_different {
+                            info!("Miners changed! Replacing and saving to file.");
+                            let (normalized, next_id) = normalize_miners(fetched_miners);
+                            state.next_miner_id.store(next_id, Ordering::SeqCst);
+                            *miners_lock = normalized.clone();
+                            drop(miners_lock);
+                            save_miners_to_file(&normalized).await;
+                        } else {
+                            drop(miners_lock);
+                            info!("Fetched miners match saved miners. No disk write needed.");
+                        }
                     }
+                    Err(e) => warn!("Wallet miners fetch failed: {}", e),
                 }
-                Err(e) => warn!("Wallet miners fetch failed: {}", e),
             }
         }
 
+        // If no addresses configured, just wait for next config change
         if addresses.trim().is_empty() {
             let _ = rx.recv().await;
             continue;
