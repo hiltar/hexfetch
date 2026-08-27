@@ -568,6 +568,42 @@ canvas { width: 100% !important; height: 100% !important; }
     color: var(--success);
 }
 
+/* Wallet Addresses List */
+.wallet-addresses-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.wallet-address-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    font-family: monospace;
+    font-size: 0.95rem;
+}
+.wallet-address-masked {
+    color: var(--primary);
+    font-weight: 600;
+}
+.copy-address-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: 0.2s;
+    font-size: 0.85rem;
+}
+.copy-address-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
 /* ============ Responsive ============ */
 @media (max-width: 640px) {
   .header-bar { justify-content: center; row-gap: 0.4rem; }
