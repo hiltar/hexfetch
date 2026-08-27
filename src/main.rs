@@ -1741,27 +1741,19 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                 Ok(fetched_miners) => {
                     let mut miners_lock = state.miners.write().await;
                     let current_miners = miners_lock.clone();
-                    let today = chrono::Utc::now().date_naive();
                     let mut preserved_miners = Vec::new();
 
                     for saved in &current_miners {
                         let is_in_fetched = fetched_miners.iter().any(|f| {
-                            f.start_date == saved.start_date && f.end_date == saved.end_date && (f.t_shares - saved.t_shares).abs() < 0.01
+                            f.start_date == saved.start_date && 
+                            f.end_date == saved.end_date && 
+                            (f.t_shares - saved.t_shares).abs() < 0.01
                         });
+
                         if !is_in_fetched {
-                            let mut missing_miner = saved.clone();
-                            if missing_miner.status.as_deref() != Some("completed") {
-                                if let Some((y, m, d)) = parse_date(&saved.end_date) {
-                                    if let Some(end_date) = chrono::NaiveDate::from_ymd_opt(y, m, d) {
-                                        if end_date <= today {
-                                            missing_miner.status = Some("completed".to_string());
-                                            info!("Auto-completed matured miner missing from RPC: {} - {}", saved.start_date, saved.end_date);
-                                        }
-                                    }
-                                }
-                            }
-                            preserved_miners.push(missing_miner);
+                            preserved_miners.push(saved.clone());
                         }
+                    }
                     }
 
                     let mut merged_miners = fetched_miners;
