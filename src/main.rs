@@ -1078,7 +1078,7 @@ async fn backfill_hex_json(
 
 info!(
     "Backfill start day: {}, current day count: {}",
-    start_day, day_count
+    1260, day_count
 );
 
     info!(
