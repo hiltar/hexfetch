@@ -31,6 +31,8 @@ const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechainrpc.com",
 ];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
+const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
 const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const GECKOTERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/pulsechain/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const DEFAULT_SECONDS_PER_BLOCK: f64 = 2.0;
@@ -664,41 +666,6 @@ async fn read_daily_data(
     let day_shares = U256::from_hex(&d_str[64..128]);
 
     Ok((day_payout.to_f64(), day_shares.to_f64()))
-}
-
-// =============================================
-// RPC PRICE LOGIC
-// =============================================
-const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
-const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
-
-async fn fetch_price_rpc(client: &Client, state: &Arc<AppState>) -> Result<f64, String> {
-    let params = serde_json::json!([
-        { "to": USDC_HEX_PAIR, "data": GET_RESERVES_SELECTOR },
-        "latest"
-    ]);
-
-    let hex_result = call_rpc(client, state, "eth_call", params).await?;
-    let r_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
-
-    if r_str.len() < 128 {
-        return Err(format!("getReserves() too short ({} chars)", r_str.len()));
-    }
-
-    let reserve_usdc = U256::from_hex(&r_str[0..64]).to_f64();
-    let reserve_hex = U256::from_hex(&r_str[64..128]).to_f64();
-
-    if reserve_usdc == 0.0 || reserve_hex == 0.0 {
-        return Err("Invalid reserves (zero)".to_string());
-    }
-
-    let price = (reserve_usdc / reserve_hex) * 100.0;
-
-    if price <= 0.0 || !price.is_finite() {
-        return Err("RPC returned zero or invalid price".to_string());
-    }
-
-    Ok(price)
 }
 
 // =============================================
