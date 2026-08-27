@@ -598,10 +598,10 @@ function updateProfileStats() {
     if (!liveDataCache) return;
 
     const d = liveDataCache;
-
     const price = Number(d.price_Pulsechain) || 0;
     const tsharePrice = Number(d.tsharePrice_Pulsechain) || 0;
     const payoutPerTshare = Number(d.payoutPerTshare_Pulsechain) || 0;
+    const walletBalance = Number(d.walletBalance) || 0;
 
     document.getElementById('total-value').textContent =
         `$${formatWithCommas((userTotalTShares * tsharePrice).toFixed(2))}`;
@@ -616,6 +616,16 @@ function updateProfileStats() {
 
     document.getElementById('interest-usd').textContent =
         `$${formatWithCommas((iHex * price).toFixed(2))}`;
+
+    const walletHexEl = document.getElementById('wallet-hex-value');
+    if (walletHexEl) {
+        walletHexEl.textContent = `${formatWithCommas(walletBalance.toFixed(2))} HEX`;
+    }
+    
+    const walletUsdEl = document.getElementById('wallet-usd-value');
+    if (walletUsdEl) {
+        walletUsdEl.textContent = `$${formatWithCommas((walletBalance * price).toFixed(2))}`;
+    }
 }
 
 async function fetchLiveDataAndRender() {
@@ -768,6 +778,62 @@ function initTickerToggle() {
 
         btn.setAttribute('aria-expanded', String(!nowCollapsed));
         localStorage.setItem('hex-ticker-collapsed', nowCollapsed ? '1' : '0');
+    });
+}
+
+// =============================================
+// WALLET ADDRESS
+// =============================================
+function saveWalletSettings() {
+    const walletAddrs = document.getElementById('wallet-addresses').value || '';
+    const addrs = walletAddrs.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    
+    for (let addr of addrs) {
+        if (!addr.startsWith('0x') || addr.length < 10) {
+            showNotification('Invalid address format: ' + addr, 'danger');
+            return;
+        }
+    }
+    debouncedSaveConfig(); // Reuses the safe save logic
+}
+
+function updateWalletAddressesUI(addressesStr) {
+    const container = document.getElementById('saved-wallet-addresses');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    if (!addressesStr) return;
+    
+    const addresses = addressesStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    
+    addresses.forEach(addr => {
+        if (!addr.startsWith('0x') || addr.length < 10) return;
+        
+        // First 4 characters, last 4 characters
+        const masked = addr.substring(0, 4) + '....' + addr.substring(addr.length - 4);
+        
+        const item = document.createElement('div');
+        item.className = 'wallet-address-item';
+        
+        const span = document.createElement('span');
+        span.className = 'wallet-address-masked';
+        span.textContent = masked;
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-address-btn';
+        copyBtn.innerHTML = '📋 Copy';
+        copyBtn.title = 'Copy full address';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(addr).then(() => {
+                showNotification('Address copied!', 'success');
+            }).catch(() => {
+                showNotification('Failed to copy', 'danger');
+            });
+        });
+        
+        item.appendChild(span);
+        item.appendChild(copyBtn);
+        container.appendChild(item);
     });
 }
 
@@ -1078,6 +1144,9 @@ async function initialLoad() {
         document.getElementById('frequency').value = cfg.liveDataFrequency;
         document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
+        document.getElementById('wallet-addresses').value = cfg.walletAddresses || '';
+        document.getElementById('wallet-freq').value = cfg.walletFetchHours || 1;
+        updateWalletAddressesUI(cfg.walletAddresses || '');
 
         historicalStartDay = Number(cfg.historicalStartDay) || 1260;
 
@@ -1190,6 +1259,8 @@ function debouncedSaveConfig() {
     const freq = parseInt(document.getElementById('frequency').value) || 15;
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
+    const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
+    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value)
 
     fetch('/api/config', {
         method: 'POST',
@@ -1199,7 +1270,9 @@ function debouncedSaveConfig() {
         body: JSON.stringify({
             liveDataFrequency: freq,
             liquidHEX: liquid,
-            historicalStartDay: hist
+            historicalStartDay: hist,
+            walletAddresses: walletAddrs,
+            walletFetchHours: walletFreq
         })
     })
     .then(r => {
