@@ -1255,20 +1255,17 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
 
 function debouncedSaveConfig() {
     if (saveInProgress) return;
-
     saveInProgress = true;
-
+    
     const freq = parseInt(document.getElementById('frequency').value) || 15;
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
     const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
-    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1;
+    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1; 
 
     fetch('/api/config', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             liveDataFrequency: freq,
             liquidHEX: liquid,
@@ -1278,11 +1275,7 @@ function debouncedSaveConfig() {
         })
     })
     .then(r => {
-        showNotification(
-            r.ok ? 'Settings saved' : 'Error saving',
-            r.ok ? 'success' : 'danger'
-        );
-
+        showNotification(r.ok ? 'Settings saved' : 'Error saving', r.ok ? 'success' : 'danger');
         if (r.ok) initialLoad();
     })
     .catch(() => showNotification('Network error', 'danger'))
