@@ -1723,6 +1723,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         current_addresses = addresses.clone();
 
         if addresses_changed && !addresses.trim().is_empty() {
+            // 1. Fetch Balance
             match fetch_wallet_balances(&client, &addresses).await {
                 Ok(balance) => {
                     let mut config = state.config.write().await;
@@ -1737,6 +1738,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                 Err(e) => warn!("Wallet balance fetch failed: {}", e),
             }
 
+            // 2. Fetch Miners
             match fetch_wallet_miners(&client, &state, &addresses).await {
                 Ok(fetched_miners) => {
                     let mut miners_lock = state.miners.write().await;
@@ -1745,55 +1747,79 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
                     for saved in &current_miners {
                         let is_in_fetched = fetched_miners.iter().any(|f| {
-                            f.start_date == saved.start_date && 
-                            f.end_date == saved.end_date && 
-                            (f.t_shares - saved.t_shares).abs() < 0.01
+                            f.start_date == saved.start_date
+                                && f.end_date == saved.end_date
+                                && (f.t_shares - saved.t_shares).abs() < 0.01
                         });
 
                         if !is_in_fetched {
+                            // Preserve missing miners as-is without changing their status.
+                            // This keeps matured miners visible in the UI so the user 
+                            // remembers to end them on-chain and avoid penalties.
                             preserved_miners.push(saved.clone());
                         }
-                    }
                     }
 
                     let mut merged_miners = fetched_miners;
                     merged_miners.extend(preserved_miners);
 
-                    let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone())).collect();
-                    curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+                    let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
+                        .iter()
+                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                        .collect();
+                    curr_norm.sort_by(|a, b| {
+                        a.0.cmp(&b.0)
+                            .then(a.1.cmp(&b.1))
+                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                    });
 
-                    let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners.iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone())).collect();
-                    merge_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+                    let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
+                        .iter()
+                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                        .collect();
+                    merge_norm.sort_by(|a, b| {
+                        a.0.cmp(&b.0)
+                            .then(a.1.cmp(&b.1))
+                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                    });
 
                     let mut is_different = curr_norm.len() != merge_norm.len();
                     if !is_different {
                         for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
-                            if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 { is_different = true; break; }
+                            if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
+                                is_different = true;
+                                break;
+                            }
                         }
                     }
 
                     if is_different {
-                        info!("Miners changed! Updating active and preserving completed.");
+                        info!("Miners changed! Updating active and preserving missing.");
                         let (normalized, next_id) = normalize_miners(merged_miners);
                         state.next_miner_id.store(next_id, Ordering::SeqCst);
                         *miners_lock = normalized.clone();
                         drop(miners_lock);
                         save_miners_to_file(&normalized).await;
-                    } else { drop(miners_lock); info!("Fetched miners match saved miners. No disk write needed."); }
+                    } else {
+                        drop(miners_lock);
+                        info!("Fetched miners match saved miners. No disk write needed.");
+                    }
                 }
                 Err(e) => warn!("Wallet miners fetch failed: {}", e),
             }
         }
 
-        if addresses.trim().is_empty() { let _ = rx.recv().await; continue; }
+        if addresses.trim().is_empty() {
+            let _ = rx.recv().await;
+            continue;
+        }
 
         let sleep = tokio::time::sleep(Duration::from_secs(hours * 3600));
         tokio::pin!(sleep);
 
         tokio::select! {
             _ = &mut sleep => {
+                // Scheduled update: fetch balance
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
                         let mut config = state.config.write().await;
@@ -1807,44 +1833,77 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
+
+                // Scheduled update: fetch miners
                 match fetch_wallet_miners(&client, &state, &addresses).await {
                     Ok(fetched_miners) => {
                         let mut miners_lock = state.miners.write().await;
                         let current_miners = miners_lock.clone();
-                        let today = chrono::Utc::now().date_naive();
                         let mut preserved_miners = Vec::new();
+
                         for saved in &current_miners {
-                            let is_in_fetched = fetched_miners.iter().any(|f| f.start_date == saved.start_date && f.end_date == saved.end_date && (f.t_shares - saved.t_shares).abs() < 0.01);
+                            let is_in_fetched = fetched_miners.iter().any(|f| {
+                                f.start_date == saved.start_date
+                                    && f.end_date == saved.end_date
+                                    && (f.t_shares - saved.t_shares).abs() < 0.01
+                            });
+
                             if !is_in_fetched {
-                                let mut missing_miner = saved.clone();
-                                if missing_miner.status.as_deref() != Some("completed") {
-                                    if let Some((y, m, d)) = parse_date(&saved.end_date) {
-                                        if let Some(end_date) = chrono::NaiveDate::from_ymd_opt(y, m, d) {
-                                            if end_date <= today { missing_miner.status = Some("completed".to_string()); }
-                                        }
-                                    }
-                                }
-                                preserved_miners.push(missing_miner);
+                                preserved_miners.push(saved.clone());
                             }
                         }
+
                         let mut merged_miners = fetched_miners;
                         merged_miners.extend(preserved_miners);
-                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter().map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone())).collect();
-                        curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
-                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners.iter().map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone())).collect();
-                        merge_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+
+                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
+                            .iter()
+                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                            .collect();
+                        curr_norm.sort_by(|a, b| {
+                            a.0.cmp(&b.0)
+                                .then(a.1.cmp(&b.1))
+                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                        });
+
+                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
+                            .iter()
+                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                            .collect();
+                        merge_norm.sort_by(|a, b| {
+                            a.0.cmp(&b.0)
+                                .then(a.1.cmp(&b.1))
+                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                        });
+
                         let mut is_different = curr_norm.len() != merge_norm.len();
-                        if !is_different { for (c, f) in curr_norm.iter().zip(merge_norm.iter()) { if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 { is_different = true; break; } } }
+                        if !is_different {
+                            for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
+                                if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
+                                    is_different = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         if is_different {
                             let (normalized, next_id) = normalize_miners(merged_miners);
                             state.next_miner_id.store(next_id, Ordering::SeqCst);
-                            *miners_lock = normalized.clone(); drop(miners_lock); save_miners_to_file(&normalized).await;
-                        } else { drop(miners_lock); }
+                            *miners_lock = normalized.clone();
+                            drop(miners_lock);
+                            save_miners_to_file(&normalized).await;
+                        } else {
+                            drop(miners_lock);
+                        }
                     }
                     Err(e) => warn!("Wallet miners fetch failed: {}", e),
                 }
             }
-            result = rx.recv() => { if let Err(_) = result { warn!("Config receiver closed/lagged in wallet updater"); } }
+            result = rx.recv() => {
+                if let Err(_) = result {
+                    warn!("Config receiver closed/lagged in wallet updater");
+                }
+            }
         }
     }
 }
