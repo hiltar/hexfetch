@@ -600,9 +600,10 @@ function updateProfileStats() {
     const price = Number(d.price_Pulsechain) || 0;
     const tsharePrice = Number(d.tsharePrice_Pulsechain) || 0;
     const payoutPerTshare = Number(d.payoutPerTshare_Pulsechain) || 0;
-    
-    if (d.liquidHEX !== undefined) {
-        userLiquidHEX = Number(d.liquidHEX) || 0;
+    const walletBalance = Number(d.walletBalance) || 0;
+
+    if (walletBalance > 0) {
+        userLiquidHEX = walletBalance;
         const liquidInput = document.getElementById('liquid-hex');
         if (liquidInput && document.activeElement !== liquidInput) {
             liquidInput.value = userLiquidHEX;
@@ -616,16 +617,18 @@ function updateProfileStats() {
     if (walletHexEl) {
         walletHexEl.textContent = `${formatWithCommas(userLiquidHEX.toFixed(2))} HEX`;
     }
+    
     const walletUsdEl = document.getElementById('wallet-usd-value');
     if (walletUsdEl) {
         walletUsdEl.textContent = `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
     }
 
     const iHex = userTotalTShares * payoutPerTshare;
-    document.getElementById('interest-hex').textContent =
-        `${formatWithCommas(iHex.toFixed(2))} HEX`;
-    document.getElementById('interest-usd').textContent =
-        `$${formatWithCommas((iHex * price).toFixed(2))}`;
+    const interestHexEl = document.getElementById('interest-hex');
+    if (interestHexEl) interestHexEl.textContent = `${formatWithCommas(iHex.toFixed(2))} HEX`;
+    
+    const interestUsdEl = document.getElementById('interest-usd');
+    if (interestUsdEl) interestUsdEl.textContent = `$${formatWithCommas((iHex * price).toFixed(2))}`;
 }
 
 async function fetchLiveDataAndRender() {
@@ -1261,7 +1264,7 @@ function debouncedSaveConfig() {
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
     const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
-    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1; 
+    const walletFreq = parseInt(document.getElementById('wallet-freq')?.value) || 1;
 
     fetch('/api/config', {
         method: 'POST',
