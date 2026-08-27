@@ -133,12 +133,6 @@ pub struct Miner {
     #[serde(rename = "tShares")]
     pub t_shares: f64,
 
-    #[serde(rename = "walletAddresses", default)]
-    pub wallet_addresses: String,
-    
-    #[serde(rename = "walletFetchHours", default = "default_wallet_fetch_hours")]
-    pub wallet_fetch_hours: u64,
-
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
 }
@@ -170,6 +164,12 @@ pub struct Config {
 
     #[serde(rename = "historicalStartDay")]
     pub historical_start_day: u64,
+
+    #[serde(rename = "walletAddresses", default)]
+    pub wallet_addresses: String,
+
+    #[serde(rename = "walletFetchHours", default = "default_wallet_fetch_hours")]
+    pub wallet_fetch_hours: u64,
 }
 
 #[derive(Deserialize)]
@@ -197,6 +197,8 @@ struct AppState {
 // =============================================
 // HELPERS
 // =============================================
+
+fn default_wallet_fetch_hours() -> u64 { 1 }
 
 fn is_multiple_of(n: usize, divisor: usize) -> bool {
     divisor != 0 && n % divisor == 0
@@ -1330,6 +1332,7 @@ async fn fetch_live_data(
         penalties_hex_pulsechain: penalties,
         payout_per_tshare_pulsechain: payout_per_tshare,
         beat,
+        wallet_balance: *state.wallet_balance.read().await,
     })
 }
 
@@ -1911,11 +1914,15 @@ async fn main() {
             live_data_frequency: 15,
             liquid_hex: 0.0,
             historical_start_day: 1256,
+            wallet_addresses: String::new(),
+            wallet_fetch_hours: 24,
         }),
         Err(_) => Config {
             live_data_frequency: 15,
             liquid_hex: 0.0,
             historical_start_day: 1256,
+            wallet_addresses: String::new(),
+            wallet_fetch_hours: 24,
         },
     };
 
