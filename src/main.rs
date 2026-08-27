@@ -114,6 +114,9 @@ pub struct LiveData {
 
     #[serde(rename = "beat")]
     pub beat: f64,
+
+    #[serde(rename = "walletBalance", default)]
+    pub wallet_balance: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -129,6 +132,12 @@ pub struct Miner {
 
     #[serde(rename = "tShares")]
     pub t_shares: f64,
+
+    #[serde(rename = "walletAddresses", default)]
+    pub wallet_addresses: String,
+    
+    #[serde(rename = "walletFetchHours", default = "default_wallet_fetch_hours")]
+    pub wallet_fetch_hours: u64,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
@@ -182,6 +191,7 @@ struct AppState {
     active_rpc_idx: RwLock<usize>,
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
+    wallet_balance: RwLock<f64>,
 }
 
 // =============================================
@@ -195,12 +205,10 @@ fn is_multiple_of(n: usize, divisor: usize) -> bool {
 fn sanitize_config(config: Config) -> Config {
     Config {
         live_data_frequency: config.live_data_frequency.clamp(1, 24 * 60),
-        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 {
-            config.liquid_hex
-        } else {
-            0.0
-        },
+        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 { config.liquid_hex } else { 0.0 },
         historical_start_day: config.historical_start_day.max(1),
+        wallet_addresses: config.wallet_addresses,
+        wallet_fetch_hours: config.wallet_fetch_hours.clamp(1, 24),
     }
 }
 
@@ -1582,12 +1590,118 @@ async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
     }
 }
 
+async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f64, String> {
+    let addresses: Vec<&str> = addresses_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if addresses.is_empty() { return Ok(0.0); }
+
+    let mut total_hex = 0.0;
+    let hex_contract_lower = HEX_CONTRACT.trim().to_lowercase();
+
+    for addr in addresses {
+        let url = format!("https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances", addr);
+        
+        match client.get(&url).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    if let Ok(balances) = resp.json::<Vec<serde_json::Value>>().await {
+                        for b in balances {
+                            if let Some(token) = b.get("token") {
+                                let is_hex = token.get("address")
+                                    .and_then(|a| a.as_str())
+                                    .map(|a| a.to_lowercase() == hex_contract_lower)
+                                    .unwrap_or(false) || 
+                                    token.get("symbol")
+                                    .and_then(|s| s.as_str())
+                                    .map(|s| s == "HEX")
+                                    .unwrap_or(false);
+                                    
+                                if is_hex {
+                                    if let Some(value_str) = b.get("value").and_then(|v| v.as_str()) {
+                                        if let Ok(val) = value_str.parse::<f64>() {
+                                            total_hex += val / 1e8;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    warn!("Blockscout API returned {} for {}", resp.status(), addr);
+                }
+            }
+            Err(e) => warn!("Failed to fetch balance for {}: {}", addr, e),
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    Ok(total_hex)
+}
+
+async fn wallet_balance_updater(state: Arc<AppState>, client: Client) {
+    let mut rx = state.config_tx.subscribe();
+    let mut current_addresses = String::new();
+
+    loop {
+        let (addresses, hours) = {
+            let config = state.config.read().await.clone();
+            let c = sanitize_config(config);
+            (c.wallet_addresses, c.wallet_fetch_hours)
+        };
+        
+        let addresses_changed = addresses != current_addresses;
+        current_addresses = addresses.clone();
+
+        if addresses_changed || addresses.trim().is_empty() {
+            if !addresses.trim().is_empty() {
+                match fetch_wallet_balances(&client, &addresses).await {
+                    Ok(balance) => {
+                        *state.wallet_balance.write().await = balance;
+                        info!("Wallet balance updated: {:.8} HEX", balance);
+                    }
+                    Err(e) => warn!("Wallet balance fetch failed: {}", e),
+                }
+            } else {
+                *state.wallet_balance.write().await = 0.0;
+            }
+        }
+        
+        if addresses.trim().is_empty() {
+            let _ = rx.recv().await;
+            continue;
+        }
+
+        let sleep = tokio::time::sleep(Duration::from_secs(hours * 3600));
+        tokio::pin!(sleep);
+        
+        tokio::select! {
+            _ = &mut sleep => {
+                match fetch_wallet_balances(&client, &addresses).await {
+                    Ok(balance) => {
+                        *state.wallet_balance.write().await = balance;
+                        info!("Wallet balance scheduled update: {:.8} HEX", balance);
+                    }
+                    Err(e) => warn!("Wallet balance fetch failed: {}", e),
+                }
+            }
+            result = rx.recv() => {
+                if let Err(_) = result { warn!("Config receiver closed/lagged in wallet updater"); }
+            }
+        }
+    }
+}
+
 // =============================================
 // API HANDLERS
 // =============================================
 
 async fn handle_live_data(State(state): State<Arc<AppState>>) -> Json<LiveData> {
-    Json(state.live_data.read().await.clone())
+    let mut data = state.live_data.read().await.clone();
+    data.wallet_balance = *state.wallet_balance.read().await;
+    Json(data)
 }
 
 async fn handle_miners(State(state): State<Arc<AppState>>) -> Json<Vec<Miner>> {
@@ -1825,6 +1939,7 @@ async fn main() {
         active_rpc_idx: RwLock::new(0),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
+        wallet_balance: RwLock::new(0.0),
     });
 
     let client = Client::builder()
@@ -1838,6 +1953,7 @@ async fn main() {
     tokio::spawn(live_data_updater(state.clone(), client.clone()));
     tokio::spawn(hex_json_updater(state.clone(), client.clone()));
     tokio::spawn(rpc_health_checker(state.clone(), client.clone()));
+    tokio::spawn(wallet_balance_updater(state.clone(), client.clone()));
 
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
