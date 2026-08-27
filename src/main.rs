@@ -1116,17 +1116,6 @@ async fn backfill_hex_json(
         return existing_data.to_vec();
     }
 
-    let current_price = match fetch_price(client, state).await {
-        Ok(p) => {
-            info!("Using current price as final fallback price: ${:.8}", p);
-            p
-        }
-        Err(e) => {
-            warn!("Price fetch failed: {}. Using 0.0 as final fallback.", e);
-            0.0
-        }
-    };
-
     let mut by_day: HashMap<u64, HexJsonEntry> = HashMap::new();
 
     for entry in existing_data {
