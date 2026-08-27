@@ -1368,6 +1368,9 @@ async fn fetch_live_data_with_retry(
 // =============================================
 // FETCH MINERS
 // =============================================
+// =============================================
+// FETCH MINERS
+// =============================================
 async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_str: &str) -> Result<Vec<Miner>, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
@@ -1427,17 +1430,15 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
                 let locked_day = U256::from_hex(locked_day_hex).to_f64() as u64;
                 let staked_days = U256::from_hex(staked_days_hex).to_f64() as u64;
                 let unlocked_day = U256::from_hex(unlocked_day_hex).to_f64() as u64;
-                let t_shares = stake_shares / 1e12;
+                let t_shares = stake_shares / 1e12;     
                 let start_ts = hex_day_zero + (locked_day as i64 * 86400);
                 let end_ts = hex_day_zero + ((locked_day + staked_days) as i64 * 86400);
-                
                 let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
                     .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
                     .format("%d-%m-%Y").to_string();
                 let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
                     .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
                     .format("%d-%m-%Y").to_string();
-
                 let status = if unlocked_day > 0 { Some("completed".to_string()) } else { None };
                 
                 all_miners.push(Miner {
@@ -1806,7 +1807,6 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
             }
         }
 
-        // If no addresses configured, just wait for next config change
         if addresses.trim().is_empty() {
             let _ = rx.recv().await;
             continue;
