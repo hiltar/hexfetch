@@ -167,9 +167,6 @@ pub struct Config {
 
     #[serde(rename = "walletAddresses", default)]
     pub wallet_addresses: String,
-
-    #[serde(rename = "walletFetchHours", default = "default_wallet_fetch_hours")]
-    pub wallet_fetch_hours: u64,
 }
 
 #[derive(Deserialize)]
@@ -209,7 +206,6 @@ fn sanitize_config(config: Config) -> Config {
         liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 { config.liquid_hex } else { 0.0 },
         historical_start_day: config.historical_start_day.max(1),
         wallet_addresses: config.wallet_addresses,
-        wallet_fetch_hours: config.wallet_fetch_hours.clamp(1, 24),
     }
 }
 
@@ -1713,24 +1709,25 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
     let mut current_addresses = String::new();
 
     loop {
-        let (addresses, hours) = {
+        let addresses = {
             let config = state.config.read().await.clone();
-            let c = sanitize_config(config);
-            (c.wallet_addresses, c.wallet_fetch_hours)
+            sanitize_config(config).wallet_addresses
         };
 
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
         if addresses_changed && !addresses.trim().is_empty() {
-            // 1. Fetch Balance
             match fetch_wallet_balances(&client, &addresses).await {
                 Ok(balance) => {
                     let mut config = state.config.write().await;
                     config.liquid_hex = balance;
                     let new_config = sanitize_config(config.clone());
                     *config = new_config.clone();
+                    let mut live_data = state.live_data.write().await;
+                    live_data.liquid_hex = new_config.liquid_hex;
                     drop(config);
+                    drop(live_data);
                     save_config_to_file(&new_config).await;
                     let _ = state.config_tx.send(());
                     info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
@@ -1738,7 +1735,6 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                 Err(e) => warn!("Wallet balance fetch failed: {}", e),
             }
 
-            // 2. Fetch Miners
             match fetch_wallet_miners(&client, &state, &addresses).await {
                 Ok(fetched_miners) => {
                     let mut miners_lock = state.miners.write().await;
@@ -1751,11 +1747,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                 && f.end_date == saved.end_date
                                 && (f.t_shares - saved.t_shares).abs() < 0.01
                         });
-
                         if !is_in_fetched {
-                            // Preserve missing miners as-is without changing their status.
-                            // This keeps matured miners visible in the UI so the user 
-                            // remembers to end them on-chain and avoid penalties.
                             preserved_miners.push(saved.clone());
                         }
                     }
@@ -1767,21 +1759,13 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         .iter()
                         .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
                         .collect();
-                    curr_norm.sort_by(|a, b| {
-                        a.0.cmp(&b.0)
-                            .then(a.1.cmp(&b.1))
-                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                    });
+                    curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
 
                     let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
                         .iter()
                         .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
                         .collect();
-                    merge_norm.sort_by(|a, b| {
-                        a.0.cmp(&b.0)
-                            .then(a.1.cmp(&b.1))
-                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                    });
+                    merge_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
 
                     let mut is_different = curr_norm.len() != merge_norm.len();
                     if !is_different {
@@ -1802,7 +1786,6 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         save_miners_to_file(&normalized).await;
                     } else {
                         drop(miners_lock);
-                        info!("Fetched miners match saved miners. No disk write needed.");
                     }
                 }
                 Err(e) => warn!("Wallet miners fetch failed: {}", e),
@@ -1814,95 +1797,58 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
             continue;
         }
 
-        let sleep = tokio::time::sleep(Duration::from_secs(hours * 3600));
+        let sleep = tokio::time::sleep(Duration::from_secs(3600));
         tokio::pin!(sleep);
 
         tokio::select! {
             _ = &mut sleep => {
-                // Scheduled update: fetch balance
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
                         let mut config = state.config.write().await;
                         config.liquid_hex = balance;
                         let new_config = sanitize_config(config.clone());
                         *config = new_config.clone();
+                        
+                        let mut live_data = state.live_data.write().await;
+                        live_data.liquid_hex = new_config.liquid_hex;
+                        
                         drop(config);
+                        drop(live_data);
                         save_config_to_file(&new_config).await;
                         let _ = state.config_tx.send(());
                         info!("Wallet balance scheduled update: {:.8} HEX", balance);
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
-
-                // Scheduled update: fetch miners
+                
                 match fetch_wallet_miners(&client, &state, &addresses).await {
                     Ok(fetched_miners) => {
                         let mut miners_lock = state.miners.write().await;
                         let current_miners = miners_lock.clone();
                         let mut preserved_miners = Vec::new();
-
                         for saved in &current_miners {
-                            let is_in_fetched = fetched_miners.iter().any(|f| {
-                                f.start_date == saved.start_date
-                                    && f.end_date == saved.end_date
-                                    && (f.t_shares - saved.t_shares).abs() < 0.01
-                            });
-
-                            if !is_in_fetched {
-                                preserved_miners.push(saved.clone());
-                            }
+                            let is_in_fetched = fetched_miners.iter().any(|f| f.start_date == saved.start_date && f.end_date == saved.end_date && (f.t_shares - saved.t_shares).abs() < 0.01);
+                            if !is_in_fetched { preserved_miners.push(saved.clone()); }
                         }
-
                         let mut merged_miners = fetched_miners;
                         merged_miners.extend(preserved_miners);
-
-                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
-                            .iter()
-                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                            .collect();
-                        curr_norm.sort_by(|a, b| {
-                            a.0.cmp(&b.0)
-                                .then(a.1.cmp(&b.1))
-                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                        });
-
-                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
-                            .iter()
-                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                            .collect();
-                        merge_norm.sort_by(|a, b| {
-                            a.0.cmp(&b.0)
-                                .then(a.1.cmp(&b.1))
-                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                        });
-
+                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners.iter().map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone())).collect();
+                        curr_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners.iter().map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone())).collect();
+                        merge_norm.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
                         let mut is_different = curr_norm.len() != merge_norm.len();
-                        if !is_different {
-                            for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
-                                if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
-                                    is_different = true;
-                                    break;
-                                }
-                            }
-                        }
-
+                        if !is_different { for (c, f) in curr_norm.iter().zip(merge_norm.iter()) { if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 { is_different = true; break; } } }
                         if is_different {
                             let (normalized, next_id) = normalize_miners(merged_miners);
                             state.next_miner_id.store(next_id, Ordering::SeqCst);
-                            *miners_lock = normalized.clone();
-                            drop(miners_lock);
-                            save_miners_to_file(&normalized).await;
-                        } else {
-                            drop(miners_lock);
-                        }
+                            *miners_lock = normalized.clone(); drop(miners_lock); save_miners_to_file(&normalized).await;
+                        } else { drop(miners_lock); }
                     }
                     Err(e) => warn!("Wallet miners fetch failed: {}", e),
                 }
             }
             result = rx.recv() => {
-                if let Err(_) = result {
-                    warn!("Config receiver closed/lagged in wallet updater");
-                }
+                if let Err(_) = result { warn!("Config receiver closed/lagged in wallet updater"); }
             }
         }
     }
@@ -2009,6 +1955,8 @@ async fn handle_post_config(
     {
         let mut config = state.config.write().await;
         *config = new_config.clone();
+        let mut live_data = state.live_data.write().await;
+        live_data.liquid_hex = new_config.liquid_hex;
     }
 
     let _ = state.config_tx.send(());
@@ -2116,11 +2064,11 @@ async fn main() {
     let initial_config = match tokio::fs::read_to_string(config_file_path()).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
             live_data_frequency: 15, liquid_hex: 0.0, historical_start_day: 1256,
-            wallet_addresses: String::new(), wallet_fetch_hours: 24,
+            wallet_addresses: String::new(),
         }),
         Err(_) => Config {
             live_data_frequency: 15, liquid_hex: 0.0, historical_start_day: 1256,
-            wallet_addresses: String::new(), wallet_fetch_hours: 24,
+            wallet_addresses: String::new(),
         },
     };
     let initial_config = sanitize_config(initial_config);
