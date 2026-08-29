@@ -412,7 +412,7 @@ function updateLiveDataUI(data) {
     document.getElementById('penalties').textContent = `${formatWithCommas(Math.floor(penalties.toFixed(0)))} HEX`;
     document.getElementById('beat').textContent = `${formatWithCommas(Math.floor(beat.toFixed(0)))}`;
     document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-    document.title = `HEX Stats - $${price.toFixed(5)}`;
+    document.title = `HEXTRACK - $${price.toFixed(5)}`;
 
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
     updateCountdown();
