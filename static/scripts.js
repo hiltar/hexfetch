@@ -239,7 +239,7 @@ function renderAllCharts() {
 
 function createBaseChartOptions() {
     return {
-        animation: false, responsive: true, maintainAspectRatio: false,
+        animation: true, responsive: true, maintainAspectRatio: false,
         interaction: { intersect: false, mode: 'index' },
         scales: {
             x: { ticks: { color: '#9ca3af', maxTicksLimit: 12 }, grid: { color: '#374151' } },
@@ -252,7 +252,6 @@ function createBaseChartOptions() {
 function renderChartsWithData(data) {
     if (!window.Chart || !Array.isArray(data) || data.length === 0) return;
     const sorted = [...data].sort((a, b) => a.currentDay - b.currentDay);
-    const priceData = sorted.filter(e => e.currentDay >= historicalStartDay);
     const latest = sorted[sorted.length - 1] || {};
     const priceEl = document.getElementById('price-value');
     if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(5)}` : '$0.0000';
@@ -264,7 +263,7 @@ function renderChartsWithData(data) {
     if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX.toFixed(0))} HEX` : '0 HEX';
 
     const configs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: priceData },
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: sorted },
         { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
         { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
         { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
@@ -343,8 +342,6 @@ function updateProfileStats() {
     const tsharePrice = Number(d.tsharePrice_Pulsechain) || 0;
     const payoutPerTshare = Number(d.payoutPerTshare_Pulsechain) || 0;
     
-    // FIX: Removed `> 0` restriction so manual 0 values are respected.
-    // Also added activeElement check so it doesn't overwrite while you are typing.
     if (d.liquidHEX !== undefined) {
         userLiquidHEX = Number(d.liquidHEX);
         const liquidInput = document.getElementById('liquid-hex');
