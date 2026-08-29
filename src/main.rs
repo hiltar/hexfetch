@@ -44,7 +44,7 @@ const DAILY_DATA_SELECTOR: &str = "0x90de6871";
 const HEARTS_PER_HEX: f64 = 1e8;
 const TSHARE_UNIT: f64 = 10000.0;
 const BACKFILL_DELAY_MS: u64 = 60;
-const BACKFILL_SAVE_INTERVAL: usize = 1000;
+const BACKFILL_SAVE_INTERVAL: usize = 500;
 const BACKFILL_CONCURRENCY: usize = 6;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
 
@@ -1095,15 +1095,10 @@ async fn backfill_hex_json(
     let day_count = finder.current_hex_day;
     let current_tshare_rate = finder.current_tshare_rate;
 
-    let start_day = {
-        let config = state.config.read().await.clone();
-        sanitize_config(config).historical_start_day.max(1)
-    };
-
-    info!(
-        "Backfill start day: {}, current day count: {}",
-        start_day, day_count
-    );
+info!(
+    "Backfill start day: {}, current day count: {}",
+    1256, day_count
+);
 
     info!(
         "globals(): tshareRate={:.1} HEX, dailyDataCount={}",
@@ -1121,13 +1116,13 @@ async fn backfill_hex_json(
         by_day.insert(entry.current_day, entry.clone());
     }
 
-    let missing_days: Vec<u64> = (start_day..day_count)
+    let missing_days: Vec<u64> = (1256..day_count)
         .filter(|day| !by_day.contains_key(day))
         .collect();
 
     if missing_days.is_empty() {
         let mut result: Vec<HexJsonEntry> = by_day.into_values().collect();
-        repair_historical_values(&mut result);
+        result.sort_by_key(|e| e.current_day);
         info!("Backfill complete. Total HEXJSON entries: {}", result.len());
         return result;
     }
@@ -1161,7 +1156,7 @@ async fn backfill_hex_json(
                             Err(e) => {
                                 warn!(
                                     "Historical block lookup for day {} failed: {}. \
-                                     Marking tshare/price as missing for repair.",
+                                     Using latest state for payout and current tshare/price fallback.",
                                     day, e
                                 );
 
