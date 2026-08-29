@@ -133,13 +133,13 @@
       <h3>Historical Portfolio Value</h3>
       <div class="history-stats">
         <div>
-          <span class="label">Starting (Day <span id="hist-start-day-label">1260</span>)</span>
+          <span class="label">Starting day <span id="hist-start-day-label">1260</span></span>
           <span class="value" id="hist-start-value">$0.00</span>
         </div>
-        <div><span class="label">Current</span><span class="value" id="hist-current-value">$0.00</span></div>
+        <div><span class="label">Current day</span><span class="value" id="hist-current-value">$0.00</span></div>
         <div><span class="label">All-Time High</span><span class="value" id="hist-ath">$0.00</span></div>
         <div>
-          <span class="label">Growth</span>
+          <span class="label">Difference</span>
           <span class="value" id="hist-growth">$0.00</span>
           <span class="pct" id="hist-growth-pct">0.00%</span>
         </div>
@@ -197,17 +197,13 @@
     </div>
 
     <div class="card">
-        <h3>Wallet Address</h3>
+        <h3>Address</h3>
         <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
-            Enter one or multiple Pulsechain addresses separated by commas to automatically fetch your liquid HEX balance.
+            Enter one or multiple addresses separated by commas.
         </p>
         <div class="form-group">
-            <label for="wallet-addresses">Wallet Addresses</label>
+            <label for="wallet-addresses">Address</label>
             <input type="text" id="wallet-addresses" class="form-input" placeholder="0x12...ab, 0x56...ef">
-        </div>
-        <div class="form-group">
-            <label for="wallet-freq">Fetch Frequency (Hours, 1-24)</label>
-            <input type="number" id="wallet-freq" class="form-input" min="1" max="24" value="1">
         </div>
         <div class="input-group">
             <button class="btn btn-primary" onclick="saveWalletSettings()">Save Wallet Settings</button>
