@@ -12,8 +12,8 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, RwLock};
@@ -23,7 +23,6 @@ use tracing::{error, info, warn};
 // =============================================
 // CONFIGURATION & CONSTANTS
 // =============================================
-
 const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechain.com",
     "https://rpc-pulsechain.g4mm4.io",
@@ -99,22 +98,22 @@ pub struct HexJsonEntry {
 pub struct LiveData {
     #[serde(rename = "price_Pulsechain")]
     pub price_pulsechain: f64,
-
+    
     #[serde(rename = "tsharePrice_Pulsechain")]
     pub tshare_price_pulsechain: f64,
-
+    
     #[serde(rename = "tshareRateHEX_Pulsechain")]
     pub tshare_rate_hex_pulsechain: f64,
-
+    
     #[serde(rename = "penaltiesHEX_Pulsechain")]
     pub penalties_hex_pulsechain: f64,
-
+    
     #[serde(rename = "payoutPerTshare_Pulsechain")]
     pub payout_per_tshare_pulsechain: f64,
-
+    
     #[serde(rename = "beat")]
     pub beat: f64,
-
+    
     #[serde(rename = "liquidHEX", default)]
     pub liquid_hex: f64,
 }
@@ -123,6 +122,9 @@ pub struct LiveData {
 pub struct Miner {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u64>,
+
+    #[serde(default)]
+    pub address: String,
 
     #[serde(rename = "startDate")]
     pub start_date: String,
@@ -167,9 +169,6 @@ pub struct Config {
 
     #[serde(rename = "walletAddresses", default)]
     pub wallet_addresses: String,
-
-    #[serde(rename = "walletFetchHours", default = "default_wallet_fetch_hours")]
-    pub wallet_fetch_hours: u64,
 }
 
 #[derive(Deserialize)]
@@ -197,8 +196,6 @@ struct AppState {
 // HELPERS
 // =============================================
 
-fn default_wallet_fetch_hours() -> u64 { 1 }
-
 fn is_multiple_of(n: usize, divisor: usize) -> bool {
     divisor != 0 && n % divisor == 0
 }
@@ -206,14 +203,9 @@ fn is_multiple_of(n: usize, divisor: usize) -> bool {
 fn sanitize_config(config: Config) -> Config {
     Config {
         live_data_frequency: config.live_data_frequency.clamp(1, 24 * 60),
-        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 {
-            config.liquid_hex
-        } else {
-            0.0
-        },
+        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 { config.liquid_hex } else { 0.0 },
         historical_start_day: config.historical_start_day.max(1),
         wallet_addresses: config.wallet_addresses,
-        wallet_fetch_hours: config.wallet_fetch_hours.clamp(1, 24),
     }
 }
 
@@ -499,9 +491,8 @@ fn get_duration_until_next_1am_utc() -> std::time::Duration {
 }
 
 // =============================================
-// FILE PATHS / PERSISTENCE (Windows Compatible)
+// FILE PATHS / PERSISTENCE
 // =============================================
-
 fn get_data_dir() -> &'static Path {
     static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
     DATA_DIR.get_or_init(|| {
@@ -526,7 +517,6 @@ fn miners_file_path() -> PathBuf {
 
 async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
     let path = hexjson_file_path();
-
     match serde_json::to_string(data) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
@@ -539,7 +529,6 @@ async fn save_hex_json_to_file(data: &[HexJsonEntry]) {
 
 async fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
     let path = hexjson_file_path();
-
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => match serde_json::from_str::<Vec<HexJsonEntry>>(&content) {
             Ok(data) => {
@@ -560,7 +549,6 @@ async fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
 
 async fn save_config_to_file(config: &Config) {
     let path = config_file_path();
-
     match serde_json::to_string_pretty(config) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
@@ -573,7 +561,6 @@ async fn save_config_to_file(config: &Config) {
 
 async fn save_miners_to_file(miners: &[Miner]) {
     let path = miners_file_path();
-
     match serde_json::to_string_pretty(miners) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
@@ -1504,7 +1491,14 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
                 let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
                     .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
 
-                all_miners.push(Miner { id: None, start_date, end_date, t_shares, status: None });
+                all_miners.push(Miner { 
+                    id: None, 
+                    address: addr.to_string(), 
+                    start_date, 
+                    end_date, 
+                    t_shares, 
+                    status: None 
+                });
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -1744,10 +1738,9 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
     let mut current_addresses = String::new();
 
     loop {
-        let (addresses, hours) = {
+        let addresses = {
             let config = state.config.read().await.clone();
-            let c = sanitize_config(config);
-            (c.wallet_addresses, c.wallet_fetch_hours)
+            sanitize_config(config).wallet_addresses
         };
 
         let addresses_changed = addresses != current_addresses;
@@ -1760,7 +1753,12 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     config.liquid_hex = balance;
                     let new_config = sanitize_config(config.clone());
                     *config = new_config.clone();
+                    
+                    let mut live_data = state.live_data.write().await;
+                    live_data.liquid_hex = new_config.liquid_hex;
+                    
                     drop(config);
+                    drop(live_data);
                     save_config_to_file(&new_config).await;
                     let _ = state.config_tx.send(());
                     info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
@@ -1774,6 +1772,12 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     let current_miners = miners_lock.clone();
                     let mut preserved_miners = Vec::new();
 
+                    let current_addresses_set: HashSet<String> = addresses
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+
                     for saved in &current_miners {
                         let is_in_fetched = fetched_miners.iter().any(|f| {
                             f.start_date == saved.start_date
@@ -1782,7 +1786,14 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         });
 
                         if !is_in_fetched {
-                            preserved_miners.push(saved.clone());
+                            let is_manual = saved.address.is_empty();
+                            let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
+                            
+                            if addr_still_tracked {
+                                preserved_miners.push(saved.clone());
+                            } else if saved.status.as_deref() == Some("completed") {
+                                preserved_miners.push(saved.clone());
+                            }
                         }
                     }
 
@@ -1820,7 +1831,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     }
 
                     if is_different {
-                        info!("Miners changed! Updating active and preserving missing.");
+                        info!("Miners changed! Updating active and cleaning up removed addresses.");
                         let (normalized, next_id) = normalize_miners(merged_miners);
                         state.next_miner_id.store(next_id, Ordering::SeqCst);
                         *miners_lock = normalized.clone();
@@ -1840,7 +1851,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
             continue;
         }
 
-        let sleep = tokio::time::sleep(Duration::from_secs(hours * 3600));
+        let sleep = tokio::time::sleep(Duration::from_secs(3600));
         tokio::pin!(sleep);
 
         tokio::select! {
@@ -1851,18 +1862,31 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         config.liquid_hex = balance;
                         let new_config = sanitize_config(config.clone());
                         *config = new_config.clone();
+                        
+                        let mut live_data = state.live_data.write().await;
+                        live_data.liquid_hex = new_config.liquid_hex;
+                        
                         drop(config);
+                        drop(live_data);
                         save_config_to_file(&new_config).await;
                         let _ = state.config_tx.send(());
                         info!("Wallet balance scheduled update: {:.8} HEX", balance);
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
+                
                 match fetch_wallet_miners(&client, &state, &addresses).await {
                     Ok(fetched_miners) => {
                         let mut miners_lock = state.miners.write().await;
                         let current_miners = miners_lock.clone();
                         let mut preserved_miners = Vec::new();
+                        
+                        let current_addresses_set: HashSet<String> = addresses
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
                         for saved in &current_miners {
                             let is_in_fetched = fetched_miners.iter().any(|f| {
                                 f.start_date == saved.start_date
@@ -1870,11 +1894,20 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                     && (f.t_shares - saved.t_shares).abs() < 0.01
                             });
                             if !is_in_fetched {
-                                preserved_miners.push(saved.clone());
+                                let is_manual = saved.address.is_empty();
+                                let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
+                                
+                                if addr_still_tracked {
+                                    preserved_miners.push(saved.clone());
+                                } else if saved.status.as_deref() == Some("completed") {
+                                    preserved_miners.push(saved.clone());
+                                }
                             }
                         }
+
                         let mut merged_miners = fetched_miners;
                         merged_miners.extend(preserved_miners);
+
                         let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
                             .iter()
                             .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
@@ -1884,6 +1917,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                 .then(a.1.cmp(&b.1))
                                 .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
                         });
+
                         let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
                             .iter()
                             .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
@@ -1893,6 +1927,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                 .then(a.1.cmp(&b.1))
                                 .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
                         });
+
                         let mut is_different = curr_norm.len() != merge_norm.len();
                         if !is_different {
                             for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
@@ -1902,6 +1937,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                                 }
                             }
                         }
+
                         if is_different {
                             let (normalized, next_id) = normalize_miners(merged_miners);
                             state.next_miner_id.store(next_id, Ordering::SeqCst);
@@ -2025,6 +2061,9 @@ async fn handle_post_config(
     {
         let mut config = state.config.write().await;
         *config = new_config.clone();
+        
+        let mut live_data = state.live_data.write().await;
+        live_data.liquid_hex = new_config.liquid_hex;
     }
 
     let _ = state.config_tx.send(());
@@ -2056,6 +2095,7 @@ async fn handle_add_miner(
 
     let miner = Miner {
         id: Some(id),
+        address: String::new(),
         start_date: req.start_date,
         end_date: req.end_date,
         t_shares: req.t_shares,
@@ -2130,9 +2170,7 @@ async fn main() {
         )
         .init();
 
-    tokio::fs::create_dir_all(get_data_dir())
-        .await
-        .expect("Failed to create data dir");
+    tokio::fs::create_dir_all(get_data_dir()).await.expect("Failed to create data dir");
 
     let initial_config = match tokio::fs::read_to_string(config_file_path()).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
@@ -2140,26 +2178,21 @@ async fn main() {
             liquid_hex: 0.0,
             historical_start_day: 1256,
             wallet_addresses: String::new(),
-            wallet_fetch_hours: 24,
         }),
         Err(_) => Config {
             live_data_frequency: 15,
             liquid_hex: 0.0,
             historical_start_day: 1256,
             wallet_addresses: String::new(),
-            wallet_fetch_hours: 24,
         },
     };
-
     let initial_config = sanitize_config(initial_config);
 
     let raw_miners = match tokio::fs::read_to_string(miners_file_path()).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => Vec::new(),
     };
-
     let (initial_miners, next_miner_id) = normalize_miners(raw_miners);
-
     let (config_tx, _) = broadcast::channel(16);
 
     let state = Arc::new(AppState {
@@ -2197,21 +2230,13 @@ async fn main() {
         .fallback(get(|uri: axum::http::Uri| async move {
             let path = uri.path().trim_start_matches('/');
             let path = if path.is_empty() { "index.html" } else { path };
-
-            if path.contains("..") {
-                return Err(StatusCode::NOT_FOUND);
-            }
-
+            if path.contains("..") { return Err(StatusCode::NOT_FOUND); }
             match Assets::get(path) {
                 Some(content) => {
                     let mime = get_mime_type(path);
-
-                    Ok::<_, StatusCode>(
-                        axum::response::Response::builder()
-                            .header("Content-Type", mime)
-                            .body(axum::body::Body::from(content.data.into_owned()))
-                            .unwrap(),
-                    )
+                    Ok::<_, StatusCode>(axum::response::Response::builder()
+                        .header("Content-Type", mime)
+                        .body(axum::body::Body::from(content.data.into_owned())).unwrap())
                 }
                 None => Err(StatusCode::NOT_FOUND),
             }
@@ -2220,12 +2245,10 @@ async fn main() {
         .with_state(state);
 
     let addr: SocketAddr = std::env::var("HEXFETCH_BIND")
-        .ok()
-        .and_then(|s| s.parse().ok())
+        .ok().and_then(|s| s.parse().ok())
         .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 5555)));
 
-    info!("⬢ HEXtrack server starting on {} ⬢", addr);
-
+    info!("⬢ HEXTRACK starting on {} ⬢", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
     axum::serve(listener, app)
