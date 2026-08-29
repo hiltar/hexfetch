@@ -7,12 +7,10 @@
   <meta name="theme-color" content="#0f1115">
   <title>HEX Stats</title>
   <link rel="icon" type="image/webp" href="/icon.webp">
-
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/air-datepicker@3.5.3/air-datepicker.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/air-datepicker@3.6.0/air-datepicker.css">
   <link rel="stylesheet" href="/styles.css">
-
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/air-datepicker@3.5.3/air-datepicker.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/air-datepicker@3.6.0/air-datepicker.js"></script>
   <script defer src="/scripts.js"></script>
 </head>
 <body>
@@ -21,12 +19,10 @@
 <header class="app-header">
   <div class="container container-wide">
     <div class="header-bar">
-
       <div class="brand">
         <img src="/icon.webp" alt="HEX Stats logo" class="logo">
         <span class="app-title">HEX Stats</span>
       </div>
-
       <div class="live-ticker-wrap" id="live-ticker-wrap">
         <div class="ticker-head">
           <span class="ticker-title"><span class="live-pulse"></span> Live Data</span>
@@ -38,7 +34,6 @@
             </svg>
           </button>
         </div>
-
         <div class="live-ticker" id="live-ticker">
           <div class="ticker-item">
             <span class="ticker-label">HEX Price</span>
@@ -67,11 +62,10 @@
           <div class="ticker-updated"><span id="last-updated">Waiting for data...</span></div>
         </div>
       </div>
-
       <div class="header-side">
         <div class="connection-status" id="connection-status" data-status="connecting" role="status">
           <span class="status-dot"></span>
-          <span id="connection-label">Connecting…</span>
+          <span id="connection-label">Conn</span>
         </div>
         <div class="refresh-timer" title="Time until next live data refresh">
           <div class="timer-ring">
@@ -83,7 +77,6 @@
           </div>
         </div>
       </div>
-
     </div>
   </div>
 </header>
