@@ -353,7 +353,7 @@ function updateProfileStats() {
     document.getElementById('total-value').textContent = `$${formatWithCommas((userTotalTShares * tsharePrice).toFixed(2))}`;
 
     const walletHexEl = document.getElementById('wallet-hex-value');
-    if (walletHexEl) walletHexEl.textContent = `${formatWithCommas(userLiquidHEX.toFixed(2))} HEX`;
+    if (walletHexEl) walletHexEl.textContent = `${formatWithCommas(userLiquidHEX.toFixed(0))} HEX`;
     
     const walletUsdEl = document.getElementById('wallet-usd-value');
     if (walletUsdEl) walletUsdEl.textContent = `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
