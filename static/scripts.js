@@ -5,30 +5,23 @@ let chartInstances = {
     dailyPayoutChart: null,
     historicalValueChart: null
 };
-
 let userTotalTShares = 0;
 let userLiquidHEX = 0;
 let historicalStartDay = 1260;
-
 let liveDataCache = null;
 let countdownIntervalId = null;
 let nextRefreshTime = Date.now();
 let currentFrequency = 15;
-
 let saveInProgress = false;
 let scheduledNextFetch = null;
 let hasConnectedOnce = false;
-
 let liveFetchGeneration = 0;
 let hexJsonETag = localStorage.getItem('hexjson-etag') || '';
-
 window.HEXJSON_CACHE = [];
-
 let datepickers = {
     startDate: null,
     endDate: null
 };
-
 const RING_CIRCUMFERENCE = 2 * Math.PI * 16;
 
 // =============================================
@@ -128,13 +121,30 @@ function showNotification(message, type = 'success') {
     if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.textContent = message;
+    toast.setAttribute('role', type === 'danger' ? 'alert' : 'status');
+    toast.setAttribute('aria-live', type === 'danger' ? 'assertive' : 'polite');
+    
+    const msgSpan = document.createElement('span');
+    msgSpan.textContent = message;
+    toast.appendChild(msgSpan);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'toast-close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.setAttribute('aria-label', 'Close notification');
+    
+    toast.appendChild(closeBtn);
     container.appendChild(toast);
-    setTimeout(() => {
+
+    const removeToast = () => {
+        if (toast._timeoutId) clearTimeout(toast._timeoutId);
         toast.style.opacity = '0';
         toast.style.transform = 'translateX(100%)';
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    };
+
+    closeBtn.addEventListener('click', removeToast);
+    toast._timeoutId = setTimeout(removeToast, 4000);
 }
 
 function showConfirmModal(title, message) {
@@ -169,6 +179,10 @@ function showConfirmModal(title, message) {
         dialog.appendChild(footer);
         document.body.appendChild(dialog);
         dialog.showModal();
+        
+        // Focus cancel button for safety against accidental confirmation
+        cancelBtn.focus(); 
+        
         const cleanup = result => { dialog.close(); dialog.remove(); resolve(result); };
         closeBtn.onclick = () => cleanup(false);
         cancelBtn.onclick = () => cleanup(false);
@@ -496,11 +510,20 @@ function updateWalletAddressesUI(addressesStr) {
         span.textContent = masked;
         const copyBtn = document.createElement('button');
         copyBtn.className = 'copy-address-btn';
-        copyBtn.innerHTML = '📋 Copy';
+        copyBtn.innerHTML = 'Copy';
         copyBtn.title = 'Copy full address';
+        copyBtn.setAttribute('aria-label', `Copy address ${masked}`);
         copyBtn.addEventListener('click', () => {
-            navigator.clipboard.writeText(addr).then(() => showNotification('Address copied!', 'success'))
-                .catch(() => showNotification('Failed to copy', 'danger'));
+            navigator.clipboard.writeText(addr).then(() => {
+                showNotification('Address copied!', 'success');
+                const originalText = copyBtn.innerHTML;
+                copyBtn.innerHTML = 'Copied!';
+                copyBtn.classList.add('copied');
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalText;
+                    copyBtn.classList.remove('copied');
+                }, 2000);
+            }).catch(() => showNotification('Failed to copy', 'danger'));
         });
         item.appendChild(span);
         item.appendChild(copyBtn);
@@ -650,13 +673,21 @@ async function initialLoad() {
             progressInfo.appendChild(daysLeftSpan); progressInfo.appendChild(percentageSpan);
             
             const progressBar = document.createElement('div'); progressBar.className = 'miner-progress-bar';
-            const progressFill = document.createElement('div'); progressFill.className = `miner-progress-fill ${matured ? 'matured' : ''}`; progressFill.style.width = `${percentage}%`;
+            const progressFill = document.createElement('div'); 
+            progressFill.className = `miner-progress-fill ${matured ? 'matured' : ''}`; 
+            progressFill.style.width = `${percentage}%`;
+            progressFill.setAttribute('role', 'progressbar');
+            progressFill.setAttribute('aria-valuenow', percentage.toFixed(0));
+            progressFill.setAttribute('aria-valuemin', '0');
+            progressFill.setAttribute('aria-valuemax', '100');
+            progressFill.setAttribute('aria-label', `Mining progress: ${percentage.toFixed(1)}% complete`);
             progressBar.appendChild(progressFill);
             progressContainer.appendChild(progressInfo); progressContainer.appendChild(progressBar);
             
             const footer = document.createElement('div'); footer.className = 'miner-card-footer';
             if (matured) {
                 const endBtn = document.createElement('button'); endBtn.className = 'btn btn-sm btn-danger'; endBtn.textContent = 'End Miner';
+                endBtn.setAttribute('aria-label', `End miner starting on ${m.startDate}`);
                 endBtn.addEventListener('click', () => endMiner(m.id));
                 footer.appendChild(endBtn);
             } else {
@@ -693,6 +724,7 @@ async function initialLoad() {
             const span = document.createElement('span');
             span.textContent = `${m.startDate} - ${m.endDate} • T-Shares: ${(Number(m.tShares) || 0).toFixed(2)}`;
             const deleteBtn = document.createElement('button'); deleteBtn.className = 'btn btn-sm btn-danger'; deleteBtn.textContent = 'Delete';
+            deleteBtn.setAttribute('aria-label', `Delete miner starting on ${m.startDate}`);
             deleteBtn.addEventListener('click', () => deleteMiner(m.id));
             div.appendChild(span); div.appendChild(deleteBtn);
             existingDiv.appendChild(div);
@@ -796,17 +828,43 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => clearInterval(checkLoaded), 5000);
     }
 
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            const targetTab = document.getElementById(btn.dataset.tab);
-            targetTab.classList.add('active');
-            if (btn.dataset.tab === 'charts') renderAllCharts();
-            else if (btn.dataset.tab === 'profile') {
-                if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
-            }
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanels = document.querySelectorAll('.tab-content');
+
+    function activateTab(btn) {
+        tabButtons.forEach(b => {
+            b.classList.remove('active');
+            b.setAttribute('aria-selected', 'false');
+            b.setAttribute('tabindex', '-1');
+        });
+        tabPanels.forEach(c => c.classList.remove('active'));
+        
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        btn.setAttribute('tabindex', '0');
+        
+        const targetTab = document.getElementById(btn.dataset.tab);
+        targetTab.classList.add('active');
+        
+        if (btn.dataset.tab === 'charts') renderAllCharts();
+        else if (btn.dataset.tab === 'profile') {
+            if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
+        }
+    }
+
+    tabButtons.forEach((btn, index) => {
+        btn.addEventListener('click', () => activateTab(btn));
+        btn.addEventListener('keydown', (e) => {
+            let newIndex = index;
+            if (e.key === 'ArrowRight') newIndex = (index + 1) % tabButtons.length;
+            else if (e.key === 'ArrowLeft') newIndex = (index - 1 + tabButtons.length) % tabButtons.length;
+            else if (e.key === 'Home') newIndex = 0;
+            else if (e.key === 'End') newIndex = tabButtons.length - 1;
+            else return;
+            
+            e.preventDefault();
+            tabButtons[newIndex].focus();
+            activateTab(tabButtons[newIndex]);
         });
     });
 
