@@ -5,35 +5,42 @@ let chartInstances = {
     dailyPayoutChart: null,
     historicalValueChart: null
 };
-
 let userTotalTShares = 0;
 let userLiquidHEX = 0;
 let historicalStartDay = 1260;
-
 let liveDataCache = null;
 let countdownIntervalId = null;
 let nextRefreshTime = Date.now();
 let currentFrequency = 15;
-
 let saveInProgress = false;
 let scheduledNextFetch = null;
 let hasConnectedOnce = false;
-
 let liveFetchGeneration = 0;
 let hexJsonETag = localStorage.getItem('hexjson-etag') || '';
-
 window.HEXJSON_CACHE = [];
-
 let datepickers = {
     startDate: null,
     endDate: null
 };
-
 const RING_CIRCUMFERENCE = 2 * Math.PI * 16;
 
 // =============================================
 // HELPERS
 // =============================================
+const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+};
+
+const setHTML = (id, html) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+};
+
+const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = val;
+};
 
 function safeParseArray(text) {
     try {
@@ -124,7 +131,7 @@ function formatDateDDMMYYYY(date) {
 }
 
 function showNotification(message, type = 'success') {
-    const container = document.getElementById('notification-container');
+    const container = document.getElementById('notifications'); // Updated ID
     if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
@@ -148,12 +155,14 @@ function showConfirmModal(title, message) {
         const closeBtn = document.createElement('button');
         closeBtn.className = 'btn-close';
         closeBtn.setAttribute('aria-label', 'Close');
-        closeBtn.textContent = '×';
+        closeBtn.innerHTML = '&times;';
         header.appendChild(h3);
         header.appendChild(closeBtn);
-        const body = document.createElement('p');
+        const body = document.createElement('div');
         body.className = 'modal-body';
-        body.textContent = message;
+        const p = document.createElement('p');
+        p.textContent = message;
+        body.appendChild(p);
         const footer = document.createElement('footer');
         footer.className = 'modal-footer';
         const cancelBtn = document.createElement('button');
@@ -201,7 +210,9 @@ function initAirDatepickers() {
         onShow: (isFinished, dp) => { if (isFinished && dp?.$datepicker) dp.$datepicker.style.setProperty('z-index', '1050', 'important'); },
         onSelect: ({ datepicker }) => { datepicker.$el.dispatchEvent(new Event('change', { bubbles: true })); }
     };
-    const startDateEl = document.getElementById('start-date');
+    
+    // Updated IDs for modernized HTML
+    const startDateEl = document.getElementById('miner-start-date');
     if (startDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.startDate) datepickers.startDate.destroy();
         datepickers.startDate = new AirDatepicker(startDateEl, {
@@ -212,7 +223,8 @@ function initAirDatepickers() {
             }
         });
     }
-    const endDateEl = document.getElementById('end-date');
+    
+    const endDateEl = document.getElementById('miner-end-date');
     if (endDateEl && typeof AirDatepicker !== 'undefined') {
         if (datepickers.endDate) datepickers.endDate.destroy();
         let initialMinDate = undefined;
@@ -242,10 +254,19 @@ function createBaseChartOptions() {
         animation: true, responsive: true, maintainAspectRatio: false,
         interaction: { intersect: false, mode: 'index' },
         scales: {
-            x: { ticks: { color: '#9ca3af', maxTicksLimit: 12 }, grid: { color: '#374151' } },
-            y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
+            x: { ticks: { color: '#9a8fb8' }, grid: { color: 'rgba(112, 93, 151, 0.15)' } },
+            y: { ticks: { color: '#9a8fb8' }, grid: { color: 'rgba(112, 93, 151, 0.15)' } }
         },
-        plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1d23', titleColor: '#fff', bodyColor: '#fff' } }
+        plugins: { 
+            legend: { display: false }, 
+            tooltip: { 
+                backgroundColor: 'rgba(43, 32, 49, 0.95)', 
+                titleColor: '#a4add3', 
+                bodyColor: '#e8e4f0',
+                borderColor: 'rgba(112, 93, 151, 0.3)',
+                borderWidth: 1
+            } 
+        }
     };
 }
 
@@ -253,24 +274,24 @@ function renderChartsWithData(data) {
     if (!window.Chart || !Array.isArray(data) || data.length === 0) return;
     const sorted = [...data].sort((a, b) => a.currentDay - b.currentDay);
     const latest = sorted[sorted.length - 1] || {};
-    const priceEl = document.getElementById('price-value');
-    if (priceEl) priceEl.textContent = latest.pricePulseX ? `$${latest.pricePulseX.toFixed(5)}` : '$0.0000';
-    const tshareEl = document.getElementById('tshare-rate-value');
-    if (tshareEl) tshareEl.textContent = latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX.toFixed(0))} HEX` : '0 HEX';
-    const payoutEl = document.getElementById('payout-per-tshare-value');
-    if (payoutEl) payoutEl.textContent = latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(2))} HEX` : '0.000 HEX';
-    const dailyEl = document.getElementById('daily-payout-value');
-    if (dailyEl) dailyEl.textContent = latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX.toFixed(0))} HEX` : '0 HEX';
+    
+    setText('price-value', latest.pricePulseX ? `$${latest.pricePulseX.toFixed(5)}` : '$0.0000');
+    setText('tshare-rate-value', latest.tshareRateHEX ? `${formatWithCommas(latest.tshareRateHEX.toFixed(0))} HEX` : '0 HEX');
+    setText('payout-per-tshare-value', latest.payoutPerTshareHEX ? `${formatWithCommas(latest.payoutPerTshareHEX.toFixed(2))} HEX` : '0.000 HEX');
+    setText('daily-payout-value', latest.dailyPayoutHEX ? `${formatWithCommas(latest.dailyPayoutHEX.toFixed(0))} HEX` : '0 HEX');
 
     const configs = [
-        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#00b7eb', data: sorted },
-        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#00cc99', data: sorted },
-        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#9966ff', data: sorted },
-        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#ff6f61', data: sorted }
+        { id: 'priceChart', label: 'HEX Price', field: 'pricePulseX', border: '#705d97', data: sorted },
+        { id: 'tshareRateChart', label: 'T-Share Rate', field: 'tshareRateHEX', border: '#4ade80', data: sorted },
+        { id: 'payoutPerTshareChart', label: 'Payout Per T-Share', field: 'payoutPerTshareHEX', border: '#a4add3', data: sorted },
+        { id: 'dailyPayoutChart', label: 'Daily Payout', field: 'dailyPayoutHEX', border: '#fbbf24', data: sorted }
     ];
 
     configs.forEach(c => {
         if (!Array.isArray(c.data)) return;
+        const canvas = document.getElementById(c.id);
+        if (!canvas) return;
+        
         const labels = c.data.map(e => e.currentDay);
         const values = c.data.map(e => e[c.field]);
         if (chartInstances[c.id]) {
@@ -278,7 +299,7 @@ function renderChartsWithData(data) {
             chartInstances[c.id].data.datasets[0].data = values;
             chartInstances[c.id].update('none');
         } else {
-            chartInstances[c.id] = new Chart(document.getElementById(c.id).getContext('2d'), {
+            chartInstances[c.id] = new Chart(canvas.getContext('2d'), {
                 type: 'line',
                 data: { labels, datasets: [{ label: c.label, data: values, borderColor: c.border, fill: false, pointRadius: 0, pointHoverRadius: 5, tension: 0.25, spanGaps: true }] },
                 options: createBaseChartOptions()
@@ -297,34 +318,40 @@ function renderPortfolioHistoryChartWithData(rawData) {
     const ath = Math.max(...portfolio.map(d => d.value));
     const growth = curr - start;
     const pct = start > 0 ? (growth / start) * 100 : 0;
-    const startLbl = document.getElementById('hist-start-day-label');
-    if (startLbl) startLbl.textContent = historicalStartDay;
-    const startVal = document.getElementById('hist-start-value');
-    if (startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
-    const currVal = document.getElementById('hist-current-value');
-    if (currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
-    const athVal = document.getElementById('hist-ath');
-    if (athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
-    const gEl = document.getElementById('hist-growth');
-    if (gEl) { gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}`; gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; }
-    const pEl = document.getElementById('hist-growth-pct');
-    if (pEl) { pEl.textContent = `${growth >= 0 ? '+' : ''}${pct.toFixed(2)}%`; pEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; }
+    
+    setText('hist-start-day-label', historicalStartDay);
+    setText('hist-start-value', `$${formatWithCommas(start.toFixed(2))}`);
+    setText('hist-current-value', `$${formatWithCommas(curr.toFixed(2))}`);
+    setText('hist-ath', `$${formatWithCommas(ath.toFixed(2))}`);
+    
+    const gEl = document.getElementById('hist-diff'); // Updated ID
+    if (gEl) { 
+        gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}`; 
+        gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; 
+    }
+    const pEl = document.getElementById('hist-pct'); // Updated ID
+    if (pEl) { 
+        pEl.textContent = `${growth >= 0 ? '+' : ''}${pct.toFixed(2)}%`; 
+        pEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; 
+    }
+    
     const labels = portfolio.map(d => d.day);
     const values = portfolio.map(d => d.value);
-    const canvas = document.getElementById('historicalValueChart');
+    const canvas = document.getElementById('portfolio-chart'); // Updated ID
     if (!canvas) return;
+    
     if (chartInstances.historicalValueChart) {
         chartInstances.historicalValueChart.data.labels = labels;
         chartInstances.historicalValueChart.data.datasets[0].data = values;
         chartInstances.historicalValueChart.update('none');
     } else {
         const options = createBaseChartOptions();
-        options.scales.x.title = { display: true, text: 'Day', color: '#9ca3af' };
-        options.scales.y.title = { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' };
+        options.scales.x.title = { display: true, text: 'Day', color: '#9a8fb8' };
+        options.scales.y.title = { display: true, text: 'Portfolio Value (USD)', color: '#9a8fb8' };
         options.scales.y.ticks.callback = v => '$' + formatWithCommas(Math.round(v));
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
             type: 'line',
-            data: { labels, datasets: [{ label: 'Portfolio Value', data: values, borderColor: '#00b7eb', backgroundColor: 'rgba(0,183,235,0.15)', borderWidth: 3, tension: 0.25, fill: true, pointRadius: 0, pointHoverRadius: 5, spanGaps: true }] },
+            data: { labels, datasets: [{ label: 'Portfolio Value', data: values, borderColor: '#a4add3', backgroundColor: 'rgba(164, 173, 211, 0.15)', borderWidth: 3, tension: 0.25, fill: true, pointRadius: 0, pointHoverRadius: 5, spanGaps: true }] },
             options
         });
     }
@@ -344,23 +371,16 @@ function updateProfileStats() {
     
     if (d.liquidHEX !== undefined) {
         userLiquidHEX = Number(d.liquidHEX);
-        const liquidInput = document.getElementById('liquid-hex');
-        if (liquidInput && document.activeElement !== liquidInput) {
-            liquidInput.value = userLiquidHEX;
-        }
+        setVal('liquid-hex-amount', userLiquidHEX);
     }
 
-    document.getElementById('total-value').textContent = `$${formatWithCommas((userTotalTShares * tsharePrice).toFixed(2))}`;
-
-    const walletHexEl = document.getElementById('wallet-hex-value');
-    if (walletHexEl) walletHexEl.textContent = `${formatWithCommas(userLiquidHEX.toFixed(2))} HEX`;
-    
-    const walletUsdEl = document.getElementById('wallet-usd-value');
-    if (walletUsdEl) walletUsdEl.textContent = `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`;
+    setText('profile-tshares-value', `$${formatWithCommas((userTotalTShares * tsharePrice).toFixed(2))}`);
+    setText('profile-liquid-hex', `${formatWithCommas(userLiquidHEX.toFixed(2))} HEX`);
+    setText('profile-liquid-usd', `$${formatWithCommas((userLiquidHEX * price).toFixed(2))}`);
 
     const iHex = userTotalTShares * payoutPerTshare;
-    document.getElementById('interest-hex').textContent = `${formatWithCommas(iHex.toFixed(2))} HEX`;
-    document.getElementById('interest-usd').textContent = `$${formatWithCommas((iHex * price).toFixed(2))}`;
+    setText('profile-daily-interest', `${formatWithCommas(iHex.toFixed(2))} HEX`);
+    setText('profile-daily-usd', `$${formatWithCommas((iHex * price).toFixed(2))}`);
 }
 
 async function fetchLiveDataAndRender() {
@@ -402,13 +422,13 @@ function updateLiveDataUI(data) {
     const penalties = Number(data.penaltiesHEX_Pulsechain) || 0;
     const beat = Number(data.beat) || 0;
 
-    document.getElementById('price').textContent = `$${price.toFixed(5)}`;
-    document.getElementById('tshare-price').textContent = `$${tsharePrice.toFixed(2)}`;
-    document.getElementById('tshare-rate').textContent = `${formatWithCommas(Math.floor(tshareRate.toFixed(0)))} HEX`;
-    document.getElementById('payout').textContent = `${payout.toFixed(2)} HEX`;
-    document.getElementById('penalties').textContent = `${formatWithCommas(Math.floor(penalties.toFixed(0)))} HEX`;
-    document.getElementById('beat').textContent = `${formatWithCommas(Math.floor(beat.toFixed(0)))}`;
-    document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+    setText('ticker-hex-price', `$${price.toFixed(5)}`);
+    setText('ticker-tshare-price', `$${tsharePrice.toFixed(2)}`);
+    setText('ticker-tshare-rate', `${formatWithCommas(Math.floor(tshareRate.toFixed(0)))} HEX`);
+    setText('ticker-payout', `${payout.toFixed(2)} HEX`);
+    setText('ticker-penalties', `${formatWithCommas(Math.floor(penalties.toFixed(0)))} HEX`);
+    setText('ticker-beat', `${formatWithCommas(Math.floor(beat.toFixed(0)))}`);
+    setText('ticker-updated', `Updated: ${new Date().toLocaleTimeString()}`);
     document.title = `HEXTRACK - $${price.toFixed(5)}`;
 
     nextRefreshTime = Date.now() + currentFrequency * 60 * 1000;
@@ -420,9 +440,9 @@ function updateCountdown() {
     const totalMs = currentFrequency * 60 * 1000;
     const ms = Math.max(0, nextRefreshTime - Date.now());
     const s = Math.floor(ms / 1000);
-    const el = document.getElementById('countdown');
-    if (el) el.textContent = `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
-    const ring = document.getElementById('ring-progress');
+    setText('countdown', `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`);
+    
+    const ring = document.querySelector('.ring-progress');
     if (ring) {
         const fraction = totalMs > 0 ? ms / totalMs : 0;
         ring.style.strokeDashoffset = (RING_CIRCUMFERENCE * (1 - fraction)).toFixed(2);
@@ -442,8 +462,8 @@ function setupLiveDataInterval(freq) {
 }
 
 function setConnectionStatus(status) {
-    const pill = document.getElementById('connection-status');
-    const label = document.getElementById('connection-label');
+    const pill = document.querySelector('.connection-status');
+    const label = document.querySelector('.status-text');
     if (!pill || !label) return;
     if (pill.dataset.status === status) return;
     pill.dataset.status = status;
@@ -451,8 +471,8 @@ function setConnectionStatus(status) {
 }
 
 function initTickerToggle() {
-    const btn = document.getElementById('ticker-toggle');
-    const wrap = document.getElementById('live-ticker-wrap');
+    const btn = document.querySelector('.ticker-toggle');
+    const wrap = document.querySelector('.live-ticker-wrap');
     if (!btn || !wrap) return;
     const collapsed = localStorage.getItem('hex-ticker-collapsed') === '1';
     wrap.classList.toggle('collapsed', collapsed);
@@ -469,7 +489,7 @@ function initTickerToggle() {
 // =============================================
 
 function saveWalletSettings() {
-    const walletAddrs = document.getElementById('wallet-addresses').value || '';
+    const walletAddrs = document.getElementById('wallet-address')?.value || '';
     const addrs = walletAddrs.split(',').map(s => s.trim()).filter(s => s.length > 0);
     for (let addr of addrs) {
         if (!addr.startsWith('0x') || addr.length < 10) {
@@ -481,11 +501,18 @@ function saveWalletSettings() {
 }
 
 function updateWalletAddressesUI(addressesStr) {
-    const container = document.getElementById('saved-wallet-addresses');
+    const container = document.getElementById('wallet-list');
     if (!container) return;
     container.innerHTML = '';
-    if (!addressesStr) return;
+    if (!addressesStr) {
+        container.innerHTML = '<p class="empty-msg">No addresses saved yet.</p>';
+        return;
+    }
     const addresses = addressesStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    if (addresses.length === 0) {
+        container.innerHTML = '<p class="empty-msg">No addresses saved yet.</p>';
+        return;
+    }
     addresses.forEach(addr => {
         if (!addr.startsWith('0x') || addr.length < 10) return;
         const masked = addr.substring(0, 4) + '....' + addr.substring(addr.length - 4);
@@ -520,7 +547,7 @@ function showCompletedMiners() {
         const completed = miners.filter(m => m.status === 'completed');
         if (!completed.length) {
             const li = document.createElement('li');
-            li.style.color = 'var(--text-muted)';
+            li.className = 'empty-msg';
             li.textContent = 'No completed miners.';
             list.appendChild(li);
         } else {
@@ -531,7 +558,7 @@ function showCompletedMiners() {
                 list.appendChild(li);
             });
         }
-        const modal = document.getElementById('completed-miners-modal');
+        const modal = document.getElementById('completed-modal');
         if (modal) modal.showModal();
     }).catch(() => showNotification('Failed to load miners', 'danger'));
 }
@@ -592,12 +619,17 @@ async function initialLoad() {
 
         userTotalTShares = totalTS;
         userLiquidHEX = Number(cfg.liquidHEX) || 0;
-        document.getElementById('total-tshares').textContent = totalTS.toFixed(2);
+        
+        setText('profile-tshares', totalTS.toFixed(2));
         updateProfileStats();
 
-        const activeDiv = document.getElementById('active-miners');
-        activeDiv.innerHTML = '';
-        document.getElementById('profile-message').textContent = activeMiners.length ? '' : 'Empty profile. Please add HEX miners in Settings.';
+        const activeDiv = document.getElementById('active-miners-list');
+        if (activeDiv) {
+            activeDiv.innerHTML = '';
+            if (activeMiners.length === 0) {
+                activeDiv.innerHTML = '<p class="empty-msg">No active miners. Add a miner in Settings to get started.</p>';
+            }
+        }
 
         activeMiners.forEach(m => {
             const startDate = parseDateDDMMYYYY(m.startDate);
@@ -665,38 +697,44 @@ async function initialLoad() {
             }
             
             card.appendChild(header); card.appendChild(progressContainer); card.appendChild(footer);
-            activeDiv.appendChild(card);
+            if (activeDiv) activeDiv.appendChild(card);
         });
 
-        document.getElementById('frequency').value = cfg.liveDataFrequency;
-        document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
-        document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
+        setVal('update-frequency', cfg.liveDataFrequency);
+        setVal('liquid-hex-amount', cfg.liquidHEX || '');
+        setVal('starting-day', cfg.historicalStartDay || 1260);
         
-        const walletAddrEl = document.getElementById('wallet-addresses');
+        const walletAddrEl = document.getElementById('wallet-address');
         if (walletAddrEl) walletAddrEl.value = cfg.walletAddresses || '';
         updateWalletAddressesUI(cfg.walletAddresses || '');
 
         historicalStartDay = Number(cfg.historicalStartDay) || 1260;
 
-        const existingDiv = document.getElementById('existing-miners');
-        existingDiv.innerHTML = '';
-        const sortedMiners = [...miners].sort((a, b) => {
-            const endA = parseDateDDMMYYYY(a.endDate); const endB = parseDateDDMMYYYY(b.endDate);
-            const startA = parseDateDDMMYYYY(a.startDate); const startB = parseDateDDMMYYYY(b.startDate);
-            if (endA && endB && endA.getTime() !== endB.getTime()) return endA.getTime() - endB.getTime();
-            if (startA && startB) return startA.getTime() - startB.getTime();
-            return 0;
-        });
-        
-        sortedMiners.forEach(m => {
-            const div = document.createElement('div'); div.className = 'list-item';
-            const span = document.createElement('span');
-            span.textContent = `${m.startDate} - ${m.endDate} • T-Shares: ${(Number(m.tShares) || 0).toFixed(2)}`;
-            const deleteBtn = document.createElement('button'); deleteBtn.className = 'btn btn-sm btn-danger'; deleteBtn.textContent = 'Delete';
-            deleteBtn.addEventListener('click', () => deleteMiner(m.id));
-            div.appendChild(span); div.appendChild(deleteBtn);
-            existingDiv.appendChild(div);
-        });
+        const existingDiv = document.getElementById('existing-miners-list');
+        if (existingDiv) {
+            existingDiv.innerHTML = '';
+            const sortedMiners = [...miners].sort((a, b) => {
+                const endA = parseDateDDMMYYYY(a.endDate); const endB = parseDateDDMMYYYY(b.endDate);
+                const startA = parseDateDDMMYYYY(a.startDate); const startB = parseDateDDMMYYYY(b.startDate);
+                if (endA && endB && endA.getTime() !== endB.getTime()) return endA.getTime() - endB.getTime();
+                if (startA && startB) return startA.getTime() - startB.getTime();
+                return 0;
+            });
+            
+            if (sortedMiners.length === 0) {
+                existingDiv.innerHTML = '<p class="empty-msg">No miners added yet.</p>';
+            } else {
+                sortedMiners.forEach(m => {
+                    const div = document.createElement('div'); div.className = 'list-item';
+                    const span = document.createElement('span');
+                    span.textContent = `${m.startDate} - ${m.endDate} • T-Shares: ${(Number(m.tShares) || 0).toFixed(2)}`;
+                    const deleteBtn = document.createElement('button'); deleteBtn.className = 'btn btn-sm btn-danger'; deleteBtn.textContent = 'Delete';
+                    deleteBtn.addEventListener('click', () => deleteMiner(m.id));
+                    div.appendChild(span); div.appendChild(deleteBtn);
+                    existingDiv.appendChild(div);
+                });
+            }
+        }
 
         setupLiveDataInterval(cfg.liveDataFrequency);
         if (window.HEXJSON_CACHE.length > 0) requestAnimationFrame(() => renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE));
@@ -712,10 +750,10 @@ async function initialLoad() {
 // ACTIONS & CONFIG
 // =============================================
 
-document.getElementById('add-miner-btn').addEventListener('click', () => {
-    const sd = document.getElementById('start-date').value;
-    const ed = document.getElementById('end-date').value;
-    const ts = parseFloat(document.getElementById('tshares').value);
+document.getElementById('add-miner-btn')?.addEventListener('click', () => {
+    const sd = document.getElementById('miner-start-date')?.value;
+    const ed = document.getElementById('miner-end-date')?.value;
+    const ts = parseFloat(document.getElementById('miner-tshares')?.value);
     if (!sd || !ed || isNaN(ts) || ts <= 0) return showNotification('Fill all fields with valid data', 'danger');
     const startDate = parseDateDDMMYYYY(sd);
     const endDate = parseDateDDMMYYYY(ed);
@@ -730,9 +768,9 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
     }).then(r => {
         if (r.ok) {
             showNotification('Miner added', 'success');
-            document.getElementById('start-date').value = '';
-            document.getElementById('end-date').value = '';
-            document.getElementById('tshares').value = '';
+            setVal('miner-start-date', '');
+            setVal('miner-end-date', '');
+            setVal('miner-tshares', '');
             initialLoad();
         } else { showNotification('Error adding miner', 'danger'); }
     }).catch(() => showNotification('Network error', 'danger'))
@@ -743,10 +781,10 @@ function debouncedSaveConfig() {
     if (saveInProgress) return;
     saveInProgress = true;
     
-    const freq = parseInt(document.getElementById('frequency').value) || 15;
-    const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
-    const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
-    const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
+    const freq = parseInt(document.getElementById('update-frequency')?.value) || 15;
+    const liquid = parseFloat(document.getElementById('liquid-hex-amount')?.value) || 0;
+    const hist = parseInt(document.getElementById('starting-day')?.value) || 1260;
+    const walletAddrs = document.getElementById('wallet-address')?.value || '';
 
     fetch('/api/config', {
         method: 'POST',
@@ -767,17 +805,17 @@ function debouncedSaveConfig() {
 }
 
 function saveFrequency() {
-    if (parseInt(document.getElementById('frequency').value) <= 0) return showNotification('Frequency must be > 0', 'danger');
+    if (parseInt(document.getElementById('update-frequency')?.value) <= 0) return showNotification('Frequency must be > 0', 'danger');
     debouncedSaveConfig();
 }
 
 function saveLiquidHEX() {
-    if (parseFloat(document.getElementById('liquid-hex').value) < 0) return showNotification('Liquid HEX must be >= 0', 'danger');
+    if (parseFloat(document.getElementById('liquid-hex-amount')?.value) < 0) return showNotification('Liquid HEX must be >= 0', 'danger');
     debouncedSaveConfig();
 }
 
 function saveHistoricalStartDay() {
-    if (parseInt(document.getElementById('hist-start-day').value) < 1) return showNotification('Start day must be > 0', 'danger');
+    if (parseInt(document.getElementById('starting-day')?.value) < 1) return showNotification('Start day must be > 0', 'danger');
     debouncedSaveConfig();
 }
 
@@ -801,8 +839,8 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             btn.classList.add('active');
-            const targetTab = document.getElementById(btn.dataset.tab);
-            targetTab.classList.add('active');
+            const targetTab = document.getElementById(btn.dataset.tab + '-content');
+            if (targetTab) targetTab.classList.add('active');
             if (btn.dataset.tab === 'charts') renderAllCharts();
             else if (btn.dataset.tab === 'profile') {
                 if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
@@ -810,7 +848,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    document.getElementById('show-completed-btn')?.addEventListener('click', showCompletedMiners);
+    document.getElementById('view-completed-btn')?.addEventListener('click', showCompletedMiners);
+    
+    document.getElementById('save-live-settings')?.addEventListener('click', debouncedSaveConfig);
+    document.getElementById('save-wallet-btn')?.addEventListener('click', saveWalletSettings);
+    document.getElementById('save-liquid-hex-btn')?.addEventListener('click', saveLiquidHEX);
+    document.getElementById('save-starting-day-btn')?.addEventListener('click', saveHistoricalStartDay);
+
     document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => {
         btn.addEventListener('click', () => { const d = btn.closest('dialog'); if (d) d.close(); });
     });
