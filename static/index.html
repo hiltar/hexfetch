@@ -21,15 +21,15 @@
     <div class="header-bar">
       <div class="brand">
         <img src="/icon.webp" alt="HEXTRACK logo" class="logo">
-        <span class="app-title">HEXTRACK</span>
+        <h1 class="app-title">HEXTRACK</h1>
       </div>
-      <div class="live-ticker-wrap" id="live-ticker-wrap">
+      <div class="live-ticker-wrap" id="live-ticker-wrap" role="region" aria-label="Live market data">
         <div class="ticker-head">
-          <span class="ticker-title"><span class="live-pulse"></span> Live Data</span>
+          <span class="ticker-title"><span class="live-pulse" aria-hidden="true"></span> Live Data</span>
           <button class="ticker-toggle" id="ticker-toggle" aria-expanded="true"
                   aria-controls="live-ticker" aria-label="Toggle live data panel">
             <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
@@ -63,11 +63,11 @@
         </div>
       </div>
       <div class="header-side">
-        <div class="connection-status" id="connection-status" data-status="connecting" role="status">
-          <span class="status-dot"></span>
+        <div class="connection-status" id="connection-status" data-status="connecting" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
           <span id="connection-label">Conn</span>
         </div>
-        <div class="refresh-timer" title="Time until next live data refresh">
+        <div class="refresh-timer" title="Time until next live data refresh" role="timer" aria-label="Time until next live data refresh">
           <div class="timer-ring">
             <svg viewBox="0 0 36 36" aria-hidden="true">
               <circle class="ring-bg" cx="18" cy="18" r="16"></circle>
@@ -82,18 +82,18 @@
 </header>
 
 <!-- ================= TABS ================= -->
-<nav class="tab-nav">
-  <div class="container">
-    <button class="tab-btn active" data-tab="profile">Profile</button>
-    <button class="tab-btn" data-tab="charts">Charts</button>
-    <button class="tab-btn" data-tab="settings">Settings</button>
+<nav class="tab-nav" aria-label="Main navigation">
+  <div class="container" role="tablist" aria-label="Dashboard sections">
+    <button class="tab-btn active" data-tab="profile" role="tab" aria-selected="true" aria-controls="profile" id="tab-profile" tabindex="0">Profile</button>
+    <button class="tab-btn" data-tab="charts" role="tab" aria-selected="false" aria-controls="charts" id="tab-charts" tabindex="-1">Charts</button>
+    <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="settings" id="tab-settings" tabindex="-1">Settings</button>
   </div>
 </nav>
 
 <main class="container">
 
   <!-- ================= PROFILE ================= -->
-  <section class="tab-content active" id="profile">
+  <section class="tab-content active" id="profile" role="tabpanel" aria-labelledby="tab-profile" tabindex="0">
     <div class="profile-grid">
       <div class="stat-card">
         <strong>T-Shares Value</strong>
@@ -151,7 +151,7 @@
   </section>
 
   <!-- ================= CHARTS ================= -->
-  <section class="tab-content" id="charts">
+  <section class="tab-content" id="charts" role="tabpanel" aria-labelledby="tab-charts" tabindex="0">
     <div class="charts-grid">
       <div class="chart-card">
         <h4>HEX Price</h4>
@@ -177,16 +177,18 @@
   </section>
 
   <!-- ================= SETTINGS ================= -->
-  <section class="tab-content" id="settings">
+  <section class="tab-content" id="settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0">
     <div class="card">
       <h3>Live Data Settings</h3>
-      <div class="form-group">
-        <label for="frequency">Update Frequency (minutes)</label>
-        <div class="input-group">
-          <input type="number" id="frequency" class="form-input" min="1" value="15">
-          <button class="btn btn-primary" onclick="saveFrequency()">Save Frequency</button>
+      <form onsubmit="event.preventDefault(); saveFrequency();" novalidate>
+        <div class="form-group">
+          <label for="frequency">Update Frequency (minutes)</label>
+          <div class="input-group">
+            <input type="number" id="frequency" class="form-input" min="1" value="15" inputmode="numeric">
+            <button type="submit" class="btn btn-primary">Save Frequency</button>
+          </div>
         </div>
-      </div>
+      </form>
     </div>
 
     <div class="card">
@@ -194,55 +196,63 @@
         <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
             Enter one or multiple addresses separated by commas.
         </p>
-        <div class="form-group">
-            <label for="wallet-addresses">Address</label>
-            <input type="text" id="wallet-addresses" class="form-input" placeholder="0x12...ab, 0x56...ef">
-        </div>
-        <div class="input-group">
-            <button class="btn btn-primary" onclick="saveWalletSettings()">Save Wallet Settings</button>
-        </div>
+        <form onsubmit="event.preventDefault(); saveWalletSettings();" novalidate>
+            <div class="form-group">
+                <label for="wallet-addresses">Address</label>
+                <input type="text" id="wallet-addresses" class="form-input" placeholder="0x12...ab, 0x56...ef" autocomplete="off">
+            </div>
+            <div class="input-group">
+                <button type="submit" class="btn btn-primary">Save Wallet Settings</button>
+            </div>
+        </form>
         <div id="saved-wallet-addresses" class="wallet-addresses-list" style="margin-top: 1rem;"></div>
     </div>
 
     <div class="card">
       <h3>Liquid HEX Settings</h3>
-      <div class="form-group">
-        <label for="liquid-hex">Liquid HEX Amount</label>
-        <div class="input-group">
-          <input type="number" id="liquid-hex" class="form-input" min="0" step="any" placeholder="0.00">
-          <button class="btn btn-primary" onclick="saveLiquidHEX()">Save Liquid HEX</button>
+      <form onsubmit="event.preventDefault(); saveLiquidHEX();" novalidate>
+        <div class="form-group">
+          <label for="liquid-hex">Liquid HEX Amount</label>
+          <div class="input-group">
+            <input type="number" id="liquid-hex" class="form-input" min="0" step="any" placeholder="0.00" inputmode="decimal">
+            <button type="submit" class="btn btn-primary">Save Liquid HEX</button>
+          </div>
         </div>
-      </div>
+      </form>
     </div>
 
     <div class="card">
       <h3>Historical Chart Settings</h3>
-      <div class="form-group">
-        <label for="hist-start-day">Starting Day</label>
-        <div class="input-group">
-          <input type="number" id="hist-start-day" class="form-input" min="1" value="1260">
-          <button class="btn btn-primary" onclick="saveHistoricalStartDay()">Save Starting Day</button>
+      <form onsubmit="event.preventDefault(); saveHistoricalStartDay();" novalidate>
+        <div class="form-group">
+          <label for="hist-start-day">Starting Day</label>
+          <div class="input-group">
+            <input type="number" id="hist-start-day" class="form-input" min="1" value="1260" inputmode="numeric">
+            <button type="submit" class="btn btn-primary">Save Starting Day</button>
+          </div>
         </div>
-      </div>
+      </form>
     </div>
 
     <div class="card">
       <h3>Add New Miner</h3>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="start-date">Start Date</label>
-          <input id="start-date" class="form-input" placeholder="DD-MM-YYYY" readonly>
+      <form onsubmit="event.preventDefault(); document.getElementById('add-miner-btn').click();" novalidate>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="start-date">Start Date</label>
+            <input id="start-date" class="form-input" placeholder="DD-MM-YYYY" readonly autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="end-date">End Date</label>
+            <input id="end-date" class="form-input" placeholder="DD-MM-YYYY" readonly autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="tshares">T-Shares</label>
+            <input type="number" id="tshares" class="form-input" min="0" step="any" placeholder="0.00" inputmode="decimal">
+          </div>
         </div>
-        <div class="form-group">
-          <label for="end-date">End Date</label>
-          <input id="end-date" class="form-input" placeholder="DD-MM-YYYY" readonly>
-        </div>
-        <div class="form-group">
-          <label for="tshares">T-Shares</label>
-          <input type="number" id="tshares" class="form-input" min="0" step="any" placeholder="0.00">
-        </div>
-      </div>
-      <button class="btn btn-success" id="add-miner-btn">Add Miner</button>
+        <button type="submit" class="btn btn-success" id="add-miner-btn">Add Miner</button>
+      </form>
     </div>
 
     <div class="card">
@@ -267,7 +277,7 @@
   </footer>
 </dialog>
 
-<div class="notification-container" id="notification-container"></div>
+<div class="notification-container" id="notification-container" aria-live="polite" aria-atomic="false"></div>
 
 </body>
 </html>
