@@ -620,7 +620,6 @@ async function initialLoad() {
 
         const activeDiv = document.getElementById('active-miners');
         activeDiv.innerHTML = '';
-        document.getElementById('profile-message').textContent = activeMiners.length ? '' : 'Empty profile. Please add HEX miners in Settings.';
 
         activeMiners.forEach(m => {
             const startDate = parseDateDDMMYYYY(m.startDate);
