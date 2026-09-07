@@ -1541,7 +1541,6 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
             result = rx.recv() => {
                 match result {
                     Ok(_) => {
-                        info!("Config changed, restarting live updater loop...");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!("Config receiver lagged by {}", n);
@@ -1865,7 +1864,6 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         drop(live_data);
                         save_config_to_file(&new_config).await;
                         let _ = state.config_tx.send(());
-                        info!("Wallet balance scheduled update: {:.8} HEX", balance);
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
