@@ -1601,11 +1601,7 @@ textarea.form-input {
     }
 
     .header-side {
-        order: 2;
-        margin-left: 0;
-        justify-content: center;
-        width: 100%;
-        flex-wrap: wrap;
+        display: none;
     }
 
     .live-ticker-wrap {
@@ -1721,6 +1717,36 @@ textarea.form-input {
     .wallet-address-item {
         flex-wrap: wrap;
     }
+}
+
+/* Status-aware LIVE DATA title (mobile header replacement) */
+.ticker-title {
+    transition: color 0.25s;
+}
+.ticker-title .live-pulse {
+    background: var(--text-muted);
+    animation: none;
+}
+.ticker-title[data-status="online"] {
+    color: var(--success-text);
+}
+.ticker-title[data-status="online"] .live-pulse {
+    background: var(--success);
+    animation: statusBlink 2s infinite;
+}
+.ticker-title[data-status="connecting"] {
+    color: var(--warning-text);
+}
+.ticker-title[data-status="connecting"] .live-pulse {
+    background: var(--warning);
+    animation: statusBlink 1s infinite;
+}
+.ticker-title[data-status="offline"] {
+    color: var(--danger-text);
+}
+.ticker-title[data-status="offline"] .live-pulse {
+    background: var(--danger);
+    animation: statusBlink 1.2s infinite;
 }
 
 /* ============ Reduced motion ============ */
