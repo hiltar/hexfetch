@@ -197,6 +197,32 @@ function isValidLiveData(data) {
     return Number.isFinite(price) && price > 0;
 }
 
+function copyToClipboard(text) {
+    // Modern API — only available on https / localhost
+    if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+    }
+    // Fallback for plain HTTP (LAN / mobile access)
+    return new Promise((resolve, reject) => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.contentEditable = true;
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { ta.setSelectionRange(0, text.length); } catch {}
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch { ok = false; }
+        ta.remove();
+        ok ? resolve() : reject(new Error('Copy failed'));
+    });
+}
+
 // =============================================
 // AIR DATEPICKER
 // =============================================
@@ -458,10 +484,14 @@ function setupLiveDataInterval(freq) {
 function setConnectionStatus(status) {
     const pill = document.getElementById('connection-status');
     const label = document.getElementById('connection-label');
-    if (!pill || !label) return;
-    if (pill.dataset.status === status) return;
-    pill.dataset.status = status;
-    label.textContent = status === 'online' ? 'Live' : status === 'offline' ? 'Off' : 'Conn';
+    if (pill && label && pill.dataset.status !== status) {
+        pill.dataset.status = status;
+        label.textContent = status === 'online' ? 'Live' : status === 'offline' ? 'Off' : 'Conn';
+    }
+    const tickerTitle = document.querySelector('.ticker-title');
+    if (tickerTitle && tickerTitle.dataset.status !== status) {
+        tickerTitle.dataset.status = status;
+    }
 }
 
 function initTickerToggle() {
@@ -514,16 +544,18 @@ function updateWalletAddressesUI(addressesStr) {
         copyBtn.title = 'Copy full address';
         copyBtn.setAttribute('aria-label', `Copy address ${masked}`);
         copyBtn.addEventListener('click', () => {
-            navigator.clipboard.writeText(addr).then(() => {
+            copyToClipboard(addr)
+                .then(() => {
                 showNotification('Address copied!', 'success');
-                const originalText = copyBtn.innerHTML;
-                copyBtn.innerHTML = 'Copied!';
-                copyBtn.classList.add('copied');
-                setTimeout(() => {
-                    copyBtn.innerHTML = originalText;
-                    copyBtn.classList.remove('copied');
-                }, 2000);
-            }).catch(() => showNotification('Failed to copy', 'danger'));
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = 'Copied!';
+                    copyBtn.classList.add('copied');
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.classList.remove('copied');
+                    }, 2000);
+                })
+                .catch(() => showNotification('Failed to copy', 'danger'));
         });
         item.appendChild(span);
         item.appendChild(copyBtn);
