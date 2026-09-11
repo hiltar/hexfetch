@@ -165,22 +165,46 @@ a:hover {
     top: 0;
     z-index: 50;
     padding-top: env(safe-area-inset-top);
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
+/* Subtle shadow when scrolled */
+.app-header.is-scrolled {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    border-bottom-color: transparent;
+}
+
+/* Grid-based adaptive layout */
 .header-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: "brand ticker side";
     gap: 0.5rem 1rem;
+    align-items: center;
     padding: 0.55rem 0;
 }
 
-.brand {
+.brand { 
+    grid-area: brand; 
     display: flex;
     align-items: center;
     gap: 0.6rem;
     flex: none;
     min-width: 0;
+}
+
+.live-ticker-wrap { 
+    grid-area: ticker; 
+    min-width: 0; 
+    position: relative; /* For fade mask */
+}
+
+.header-side { 
+    grid-area: side;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: none;
 }
 
 .logo {
@@ -195,15 +219,6 @@ a:hover {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* Right-hand cluster: connection status + refresh ring */
-.header-side {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex: none;
-    margin-left: auto;
 }
 
 /* Connection status pill */
@@ -274,20 +289,12 @@ a:hover {
 }
 
 @keyframes statusPulse {
-    0% {
-        transform: scale(0.6);
-        opacity: 1;
-    }
-    100% {
-        transform: scale(1.6);
-        opacity: 0;
-    }
+    0% { transform: scale(0.6); opacity: 1; }
+    100% { transform: scale(1.6); opacity: 0; }
 }
 
 @keyframes statusBlink {
-    50% {
-        opacity: 0.35;
-    }
+    50% { opacity: 0.35; }
 }
 
 /* Countdown ring timer */
@@ -350,12 +357,6 @@ a:hover {
 }
 
 /* ============ Live data ticker ============ */
-/* flex-basis 620px: if the row can't give the ticker ~620px, it drops to its own line */
-.live-ticker-wrap {
-    flex: 1 0 620px;
-    min-width: 0;
-}
-
 .ticker-head {
     display: none; /* mobile only */
 }
@@ -438,6 +439,23 @@ a:hover {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     flex: none;
+}
+
+/* Ticker fade mask (right side) */
+.live-ticker-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; right: 0;
+    width: 2.5rem;
+    background: linear-gradient(to left, var(--surface) 10%, transparent);
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.live-ticker-wrap.has-overflow::after {
+    opacity: 1;
 }
 
 /* Mobile-only ticker head elements */
@@ -923,10 +941,6 @@ textarea.form-input {
     background: rgba(255, 255, 255, 0.02);
 }
 
-/*
-  If using <dialog class="modal">, this works automatically.
-  If using a div-based modal, add .is-open when shown.
-*/
 .modal {
     border: none;
     border-radius: var(--radius-lg);
@@ -1563,64 +1577,50 @@ textarea.form-input {
 }
 
 /* ============ Responsive ============ */
-@media (max-width: 1024px) {
-    .live-ticker-wrap {
-        flex-basis: 520px;
+@media (max-width: 1023px) {
+    /* Tablet: Row 1 = Brand + Side, Row 2 = Ticker */
+    .header-bar {
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+            "brand side"
+            "ticker ticker";
     }
-
+    .header-side { margin-left: 0; }
     .chart-container {
         height: clamp(240px, 40vh, 380px);
     }
 }
 
-@media (max-width: 820px) {
-    .header-bar {
-        justify-content: center;
-    }
-
-    .header-side {
-        margin-left: 0;
-    }
-}
-
 @media (max-width: 640px) {
+    /* Mobile: Row 1 = Brand, Row 2 = Ticker (Side hidden) */
     .header-bar {
-        justify-content: center;
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "brand"
+            "ticker";
+        text-align: center;
         row-gap: 0.45rem;
         padding: 0.65rem 0;
     }
-
-    .brand {
-        order: 1;
+    .brand { 
+        justify-content: center; 
         max-width: 100%;
-        justify-content: center;
     }
-
-    .app-title {
-        font-size: 1.1rem;
+    .app-title { font-size: 1.1rem; }
+    
+    /* Hide pill and timer on mobile */
+    .header-side { display: none; } 
+    
+    /* Show the LIVE DATA status title */
+    .ticker-head { 
+        display: flex; 
+        align-items: center; 
+        justify-content: space-between; 
+        gap: 0.5rem; 
+        margin-bottom: 0.4rem; 
     }
-
-    .header-side {
-        display: none;
-    }
-
-    .live-ticker-wrap {
-        order: 3;
-        flex-basis: 100%;
-    }
-
-    .ticker-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
-        margin-bottom: 0.4rem;
-    }
-
-    .ticker-toggle {
-        display: inline-flex;
-    }
-
+    .ticker-toggle { display: inline-flex; }
+    
     .live-ticker {
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -1629,13 +1629,11 @@ textarea.form-input {
         gap: 0.5rem;
         padding-bottom: 0.65rem;
     }
-
     .ticker-item {
         min-width: 120px;
         padding: 0.45rem 0.65rem;
         scroll-snap-align: start;
     }
-
     .ticker-updated {
         margin-left: 0;
         display: flex;
@@ -1643,80 +1641,31 @@ textarea.form-input {
         padding: 0 0.3rem;
         scroll-snap-align: start;
     }
-
-    .live-ticker-wrap.collapsed .live-ticker {
-        display: none;
-    }
-
+    .live-ticker-wrap.collapsed .live-ticker { display: none; }
     .live-ticker-wrap.collapsed .ticker-toggle .chevron,
     .ticker-toggle[aria-expanded="false"] .chevron {
         transform: rotate(180deg);
     }
 
-    .tab-btn {
-        padding: 0.75rem 0.9rem;
-        font-size: 0.9rem;
-    }
-
-    .tab-btn.active::after {
-        left: 0.9rem;
-        right: 0.9rem;
-    }
-
-    .card {
-        padding: 1rem;
-    }
-
-    .profile-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .chart-container {
-        height: 280px;
-    }
-
-    .ld-row {
-        font-size: 1.05rem;
-    }
-
-    .ld-value {
-        font-size: 1.2rem;
-    }
-
-    .miner-card {
-        padding: 1rem;
-    }
-
-    .miner-tshares {
-        text-align: left;
-    }
-
-    .input-group {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .modal-footer {
-        flex-direction: column;
-    }
-
-    .modal-footer .btn {
-        width: 100%;
-    }
-
+    .tab-btn { padding: 0.75rem 0.9rem; font-size: 0.9rem; }
+    .tab-btn.active::after { left: 0.9rem; right: 0.9rem; }
+    .card { padding: 1rem; }
+    .profile-grid { grid-template-columns: 1fr; }
+    .chart-container { height: 280px; }
+    .ld-row { font-size: 1.05rem; }
+    .ld-value { font-size: 1.2rem; }
+    .miner-card { padding: 1rem; }
+    .miner-tshares { text-align: left; }
+    .input-group { flex-direction: column; align-items: stretch; }
+    .modal-footer { flex-direction: column; }
+    .modal-footer .btn { width: 100%; }
     .notification-container {
         left: max(1rem, env(safe-area-inset-left));
         right: max(1rem, env(safe-area-inset-right));
         align-items: stretch;
     }
-
-    .toast {
-        width: auto;
-    }
-
-    .wallet-address-item {
-        flex-wrap: wrap;
-    }
+    .toast { width: auto; }
+    .wallet-address-item { flex-wrap: wrap; }
 }
 
 /* Status-aware LIVE DATA title (mobile header replacement) */
