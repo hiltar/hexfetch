@@ -904,5 +904,33 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => { const d = btn.closest('dialog'); if (d) d.close(); });
     });
 
+    const appHeader = document.querySelector('.app-header');
+    window.addEventListener('scroll', () => {
+        if (appHeader) appHeader.classList.toggle('is-scrolled', window.scrollY > 10);
+    }, { passive: true });
+
+    const timerRing = document.querySelector('.refresh-timer');
+    if (timerRing) {
+        timerRing.style.cursor = 'pointer';
+        timerRing.title = 'Click to refresh live data';
+        timerRing.addEventListener('click', () => {
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+            if (scheduledNextFetch) clearTimeout(scheduledNextFetch);
+            fetchLiveDataAndRender();
+            showNotification('Refreshing live data...', 'info');
+        });
+    }
+
+    function checkTickerOverflow() {
+        const wrap = document.getElementById('live-ticker-wrap');
+        const ticker = document.querySelector('.live-ticker');
+        if (wrap && ticker) {
+            const hasOverflow = ticker.scrollWidth > wrap.clientWidth + 2;
+            wrap.classList.toggle('has-overflow', hasOverflow);
+        }
+    }
+    window.addEventListener('resize', checkTickerOverflow);
+    setTimeout(checkTickerOverflow, 500);
+
     initialLoad();
 });
