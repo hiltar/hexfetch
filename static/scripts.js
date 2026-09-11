@@ -904,11 +904,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => { const d = btn.closest('dialog'); if (d) d.close(); });
     });
 
-    const appHeader = document.querySelector('.app-header');
-    window.addEventListener('scroll', () => {
-        if (appHeader) appHeader.classList.toggle('is-scrolled', window.scrollY > 10);
-    }, { passive: true });
-
     const timerRing = document.querySelector('.refresh-timer');
     if (timerRing) {
         timerRing.style.cursor = 'pointer';
