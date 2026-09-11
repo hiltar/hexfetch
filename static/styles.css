@@ -165,13 +165,6 @@ a:hover {
     top: 0;
     z-index: 50;
     padding-top: env(safe-area-inset-top);
-    transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-/* Subtle shadow when scrolled */
-.app-header.is-scrolled {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    border-bottom-color: transparent;
 }
 
 /* Grid-based adaptive layout */
