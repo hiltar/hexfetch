@@ -38,6 +38,8 @@ const DEFAULT_SECONDS_PER_BLOCK: f64 = 2.0;
 const BLOCK_TIME_SAMPLE_BLOCKS: u64 = 100_000;
 const HISTORICAL_QUERY_OFFSET_SECS: u64 = 3700;
 const HISTORICAL_TIMESTAMP_TOLERANCE_SECS: u64 = 30;
+const STAKE_END_TOPIC: &str = "0xb7cda6a502fd4071cf6027d177e6b22e8a79e3d6b854d01e85886f18f2a6950e";
+const HEX_DAY_ZERO_UNIX: i64 = 1575331200;
 const HEX_DAY_ZERO_UNIX_OVERRIDE: Option<u64> = None;
 const GLOBALS_SELECTOR: &str = "0xc3124525";
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
@@ -156,6 +158,18 @@ struct MinerIdRequest {
     id: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct EndedStakeInfo {
+    pub address: String,
+    pub stake_id: u64,
+    pub payout_hearts: f64,
+    pub penalty_hearts: f64,
+    pub block_number: u64,
+    pub block_timestamp: u64,
+    pub locked_day: u64,
+    pub staked_days: u64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     #[serde(rename = "liveDataFrequency")]
@@ -190,6 +204,7 @@ struct AppState {
     active_rpc_idx: RwLock<usize>,
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
+    last_stake_end_check_block: AtomicU64,
 }
 
 // =============================================
@@ -303,6 +318,144 @@ async fn get_block_timestamp(
     }
 
     Ok(timestamp)
+}
+
+async fn fetch_recent_stake_ends(
+    client: &Client,
+    state: &Arc<AppState>,
+    addresses_str: &str,
+    from_block: u64,
+) -> Result<(Vec<EndedStakeInfo>, u64), String> {
+    let addresses: Vec<&str> = addresses_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if addresses.is_empty() {
+        return Ok((Vec::new(), from_block));
+    }
+
+    let mut ended_stakes = Vec::new();
+    let hex_contract = HEX_CONTRACT.trim();
+    let latest_block = get_block_number(client, state).await?;
+
+    if from_block >= latest_block {
+        return Ok((ended_stakes, latest_block));
+    }
+
+    for addr in addresses {
+        if !addr.starts_with("0x") || addr.len() != 42 {
+            continue;
+        }
+
+        let addr_topic = format!("0x000000000000000000000000{}", &addr[2..]);
+
+        let logs_req = serde_json::json!([{
+            "fromBlock": format!("0x{:x}", from_block),
+            "toBlock": format!("0x{:x}", latest_block),
+            "address": hex_contract,
+            "topics": [STAKE_END_TOPIC, null, addr_topic]
+        }]);
+
+        let logs_val = match call_rpc_value(client, state, "eth_getLogs", logs_req).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to fetch StakeEnd logs for {}: {}", addr, e);
+                continue;
+            }
+        };
+
+        if let Some(logs) = logs_val.as_array() {
+            for log in logs {
+                let data_str = log.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                let data_clean = data_str.strip_prefix("0x").unwrap_or(data_str);
+
+                if data_clean.len() < 256 {
+                    continue;
+                }
+
+                let topics = log.get("topics").and_then(|t| t.as_array()).unwrap_or(&vec![]);
+                if topics.len() < 3 {
+                    continue;
+                }
+
+                let stake_id_topic = topics[1].as_str().unwrap_or("");
+                let stake_id = U256::from_hex(stake_id_topic).to_f64() as u64;
+
+                // ABI encoding pads each parameter to 32 bytes (64 hex chars)
+                let locked_day = U256::from_hex(&data_clean[0..64]).to_f64() as u64;
+                let staked_days = U256::from_hex(&data_clean[64..128]).to_f64() as u64;
+                let payout_hearts = U256::from_hex(&data_clean[128..192]).to_f64();
+                let penalty_hearts = U256::from_hex(&data_clean[192..256]).to_f64();
+
+                let block_num = parse_hex_u64(log.get("blockNumber").and_then(|b| b.as_str()).unwrap_or("0x0"));
+                let block_ts = get_block_timestamp(client, state, block_num).await.unwrap_or(0);
+
+                ended_stakes.push(EndedStakeInfo {
+                    address: addr.to_string(),
+                    stake_id,
+                    payout_hearts,
+                    penalty_hearts,
+                    block_number: block_num,
+                    block_timestamp: block_ts,
+                    locked_day,
+                    staked_days,
+                });
+            }
+        }
+    }
+
+    Ok((ended_stakes, latest_block))
+}
+
+async fn apply_ended_stakes(state: &Arc<AppState>, ended_stakes: &[EndedStakeInfo]) -> bool {
+    if ended_stakes.is_empty() {
+        return false;
+    }
+
+    let mut miners_lock = state.miners.write().await;
+    let mut changed = false;
+
+    for ended in ended_stakes {
+        // Calculate the expected end date to match against our Miner structs
+        let expected_end_ts = HEX_DAY_ZERO_UNIX + ((ended.locked_day + ended.staked_days) as i64 * 86400);
+        let expected_end_date = chrono::DateTime::from_timestamp(expected_end_ts, 0)
+            .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
+            .format("%d-%m-%Y")
+            .to_string();
+
+        // Find the matching active stake in our list (status is None)
+        if let Some(miner) = miners_lock.iter_mut().find(|m| {
+            m.address == ended.address 
+            && m.end_date == expected_end_date 
+            && m.status.is_none() 
+        }) {
+            // Allow 1 day tolerance for maturity vs early end
+            if ended.block_timestamp >= (expected_end_ts as u64).saturating_sub(86400) {
+                miner.status = Some("matured".to_string());
+            } else {
+                miner.status = Some("early-ended".to_string());
+            }
+            
+            changed = true;
+            info!(
+                "Stake for {} ending on {} marked as {}. Payout: {:.2} HEX, Penalty: {:.2} HEX",
+                ended.address, expected_end_date, miner.status.as_ref().unwrap(),
+                ended.payout_hearts / 1e8, ended.penalty_hearts / 1e8
+            );
+        }
+    }
+
+    if changed {
+        let normalized = miners_lock.clone();
+        drop(miners_lock);
+        save_miners_to_file(&normalized).await;
+    } else {
+        drop(miners_lock);
+    }
+
+    changed
 }
 
 fn repair_historical_values(entries: &mut [HexJsonEntry]) {
@@ -1731,6 +1884,19 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
     let mut rx = state.config_tx.subscribe();
     let mut current_addresses = String::new();
 
+    // Initialize the block tracker
+    let mut last_checked_block = state.last_stake_end_check_block.load(Ordering::SeqCst);
+    if last_checked_block == 0 {
+        match get_block_number(&client, &state).await {
+            Ok(b) => {
+                // Start slightly in the past to catch any recent ends we missed
+                last_checked_block = b.saturating_sub(1000);
+                state.last_stake_end_check_block.store(last_checked_block, Ordering::SeqCst);
+            }
+            Err(e) => warn!("Failed to get initial block number for StakeEnd tracking: {}", e),
+        }
+    }
+
     loop {
         let addresses = {
             let config = state.config.read().await.clone();
@@ -1850,6 +2016,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
         tokio::select! {
             _ = &mut sleep => {
+                // 1. Standard Balance and Active Miner Check
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
                         let mut config = state.config.write().await;
@@ -1942,6 +2109,16 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         }
                     }
                     Err(e) => warn!("Wallet miners fetch failed: {}", e),
+                }
+
+                // 2. NEW: Incremental StakeEnd Check
+                match fetch_recent_stake_ends(&client, &state, &addresses, last_checked_block).await {
+                    Ok((ended_stakes, new_block)) => {
+                        apply_ended_stakes(&state, &ended_stakes).await;
+                        last_checked_block = new_block;
+                        state.last_stake_end_check_block.store(last_checked_block, Ordering::SeqCst);
+                    }
+                    Err(e) => warn!("Recent StakeEnd fetch failed: {}", e),
                 }
             }
             result = rx.recv() => {
@@ -2197,6 +2374,7 @@ async fn main() {
         active_rpc_idx: RwLock::new(0),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
+        last_stake_end_check_block: AtomicU64::new(0),
     });
 
     let client = Client::builder()
