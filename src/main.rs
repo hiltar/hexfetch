@@ -221,11 +221,22 @@ async fn get_logs_chunked(
     let hex_contract = HEX_CONTRACT.trim();
     let latest_block = get_block_number(client, state).await?;
     let chunk_size: u64 = 500_000; 
+    let total_chunks = (latest_block / chunk_size) + 1;
     let mut all_logs = Vec::new();
     let mut from_block = 0; 
+    let mut current_chunk = 0;
     
     while from_block <= latest_block {
         let to_block = std::cmp::min(from_block + chunk_size - 1, latest_block);
+        current_chunk += 1;
+        
+        // Log progress on the first chunk, every 10th chunk, and the final chunk
+        if current_chunk == 1 || current_chunk % 10 == 0 || to_block == latest_block {
+            info!(
+                "Fetching logs: chunk {}/{} (blocks {} to {})", 
+                current_chunk, total_chunks, from_block, to_block
+            );
+        }
         
         let logs_req = serde_json::json!([{
             "fromBlock": format!("0x{:x}", from_block),
@@ -248,9 +259,10 @@ async fn get_logs_chunked(
         from_block += chunk_size;
         
         // Small delay to avoid rate limits on public RPCs
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     
+    info!("Finished fetching logs. Total logs found: {}", all_logs.len());
     Ok(all_logs)
 }
 
