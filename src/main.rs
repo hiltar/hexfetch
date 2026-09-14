@@ -375,7 +375,8 @@ async fn fetch_recent_stake_ends(
                     continue;
                 }
 
-                let topics = log.get("topics").and_then(|t| t.as_array()).unwrap_or(&vec![]);
+                let empty_topics = vec![];
+                let topics = log.get("topics").and_then(|t| t.as_array()).unwrap_or(&empty_topics);
                 if topics.len() < 3 {
                     continue;
                 }
