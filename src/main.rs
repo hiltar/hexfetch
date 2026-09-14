@@ -38,9 +38,6 @@ const DEFAULT_SECONDS_PER_BLOCK: f64 = 2.0;
 const BLOCK_TIME_SAMPLE_BLOCKS: u64 = 100_000;
 const HISTORICAL_QUERY_OFFSET_SECS: u64 = 3700;
 const HISTORICAL_TIMESTAMP_TOLERANCE_SECS: u64 = 30;
-const STAKE_START_TOPIC: &str = "0xf870e4a675503f4c2eb8731f97cf032396b7edf722cff17e7717d7e1d1bd6853";
-const STAKE_END_TOPIC: &str = "0xb7cda6a502fd4071cf6027d177e6b22e8a79e3d6b854d01e85886f18f2a6950e";
-const HEX_DAY_ZERO_UNIX: i64 = 1575331200;
 const HEX_DAY_ZERO_UNIX_OVERRIDE: Option<u64> = None;
 const GLOBALS_SELECTOR: &str = "0xc3124525";
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
@@ -159,18 +156,6 @@ struct MinerIdRequest {
     id: u64,
 }
 
-#[derive(Debug, Clone)]
-pub struct EndedStakeInfo {
-    pub address: String,
-    pub stake_id: u64,
-    pub payout_hearts: f64,
-    pub penalty_hearts: f64,
-    pub block_number: u64,
-    pub block_timestamp: u64,
-    pub locked_day: u64,
-    pub staked_days: u64,
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     #[serde(rename = "liveDataFrequency")]
@@ -205,70 +190,11 @@ struct AppState {
     active_rpc_idx: RwLock<usize>,
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
-    last_stake_end_check_block: AtomicU64,
 }
 
 // =============================================
 // HELPERS
 // =============================================
-
-async fn get_logs_chunked(
-    client: &Client,
-    state: &Arc<AppState>,
-    topic: &str,
-    addr_topic: &str,
-) -> Result<Vec<serde_json::Value>, String> {
-    let hex_contract = HEX_CONTRACT.trim().to_lowercase();
-    let latest_block = get_block_number(client, state).await?;
-    let chunk_size: u64 = 500_000; 
-    let total_chunks = (latest_block / chunk_size) + 1;
-    let mut all_logs = Vec::new();
-    let mut from_block = 0; 
-    let mut current_chunk = 0;
-    
-    while from_block <= latest_block {
-        let to_block = std::cmp::min(from_block + chunk_size - 1, latest_block);
-        current_chunk += 1;
-        
-        if current_chunk == 1 || current_chunk % 10 == 0 || to_block == latest_block {
-            info!(
-                "Fetching logs: chunk {}/{} (blocks {} to {})", 
-                current_chunk, total_chunks, from_block, to_block
-            );
-        }
-        
-        let logs_req = serde_json::json!([{
-            "fromBlock": format!("0x{:x}", from_block),
-            "toBlock": format!("0x{:x}", to_block),
-            "address": hex_contract,
-            "topics": [topic, null, addr_topic]
-        }]);
-
-        match call_rpc_value(client, state, "eth_getLogs", logs_req).await {
-            Ok(v) => {
-                if let Some(logs) = v.as_array() {
-                    all_logs.extend(logs.clone());
-                } else {
-                    warn!("RPC returned non-array for chunk {}-{}: {:?}", from_block, to_block, v);
-                }
-            }
-            Err(e) => {
-                return Err(format!("Chunk {}-{} failed: {}", from_block, to_block, e));
-            }
-        }
-        
-        from_block += chunk_size;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    
-    if all_logs.is_empty() {
-        warn!("⚠️ eth_getLogs returned 0 results for topic {} and address {}. The RPC node's historical log index is likely pruned or broken.", topic, addr_topic);
-    } else {
-        info!("Finished fetching logs. Total logs found: {}", all_logs.len());
-    }
-    
-    Ok(all_logs)
-}
 
 fn is_multiple_of(n: usize, divisor: usize) -> bool {
     divisor != 0 && n % divisor == 0
@@ -377,175 +303,6 @@ async fn get_block_timestamp(
     }
 
     Ok(timestamp)
-}
-
-async fn fetch_recent_stake_ends(
-    client: &Client,
-    state: &Arc<AppState>,
-    addresses_str: &str,
-    from_block: u64,
-) -> Result<(Vec<EndedStakeInfo>, u64), String> {
-    let addresses: Vec<&str> = addresses_str
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if addresses.is_empty() {
-        return Ok((Vec::new(), from_block));
-    }
-
-    let mut ended_stakes = Vec::new();
-    let hex_contract = HEX_CONTRACT.trim();
-    let latest_block = get_block_number(client, state).await?;
-
-    if from_block >= latest_block {
-        return Ok((ended_stakes, latest_block));
-    }
-
-    for addr in addresses {
-        if !addr.starts_with("0x") || addr.len() != 42 {
-            continue;
-        }
-
-        let addr_topic = format!("0x000000000000000000000000{}", &addr[2..].to_lowercase());
-
-        let logs_req = serde_json::json!([{
-            "fromBlock": format!("0x{:x}", from_block),
-            "toBlock": format!("0x{:x}", latest_block),
-            "address": hex_contract,
-            "topics": [STAKE_END_TOPIC, null, addr_topic]
-        }]);
-
-        let logs_val = match call_rpc_value(client, state, "eth_getLogs", logs_req).await {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("Failed to fetch StakeEnd logs for {}: {}", addr, e);
-                continue;
-            }
-        };
-
-        if let Some(logs) = logs_val.as_array() {
-            for log in logs {
-                let data_str = log.get("data").and_then(|d| d.as_str()).unwrap_or("");
-                let data_clean = data_str.strip_prefix("0x").unwrap_or(data_str);
-
-                if data_clean.len() < 256 {
-                    continue;
-                }
-
-                let empty_topics = vec![];
-                let topics = log.get("topics").and_then(|t| t.as_array()).unwrap_or(&empty_topics);
-                if topics.len() < 3 {
-                    continue;
-                }
-
-                let stake_id_topic = topics[1].as_str().unwrap_or("");
-                let stake_id = U256::from_hex(stake_id_topic).to_f64() as u64;
-
-                // ABI encoding pads each parameter to 32 bytes (64 hex chars)
-                let locked_day = U256::from_hex(&data_clean[0..64]).to_f64() as u64;
-                let staked_days = U256::from_hex(&data_clean[64..128]).to_f64() as u64;
-                let payout_hearts = U256::from_hex(&data_clean[128..192]).to_f64();
-                let penalty_hearts = U256::from_hex(&data_clean[192..256]).to_f64();
-
-                let block_num = parse_hex_u64(log.get("blockNumber").and_then(|b| b.as_str()).unwrap_or("0x0"));
-                let block_ts = get_block_timestamp(client, state, block_num).await.unwrap_or(0);
-
-                ended_stakes.push(EndedStakeInfo {
-                    address: addr.to_string(),
-                    stake_id,
-                    payout_hearts,
-                    penalty_hearts,
-                    block_number: block_num,
-                    block_timestamp: block_ts,
-                    locked_day,
-                    staked_days,
-                });
-            }
-        }
-    }
-
-    Ok((ended_stakes, latest_block))
-}
-
-async fn apply_ended_stakes(state: &Arc<AppState>, ended_stakes: &[EndedStakeInfo]) -> bool {
-    if ended_stakes.is_empty() {
-        return false;
-    }
-
-    let mut miners_lock = state.miners.write().await;
-    let mut changed = false;
-
-    for ended in ended_stakes {
-        let expected_end_ts = HEX_DAY_ZERO_UNIX + ((ended.locked_day + ended.staked_days) as i64 * 86400);
-        let expected_end_date = chrono::DateTime::from_timestamp(expected_end_ts, 0)
-            .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
-            .format("%d-%m-%Y")
-            .to_string();
-            
-        let start_ts = HEX_DAY_ZERO_UNIX + (ended.locked_day as i64 * 86400);
-        let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
-            .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
-            .format("%d-%m-%Y")
-            .to_string();
-
-        let status_str = if ended.block_timestamp >= (expected_end_ts as u64).saturating_sub(86400) {
-            "matured".to_string()
-        } else {
-            "early-ended".to_string()
-        };
-
-        // Try to find an active stake
-        let found_idx = miners_lock.iter().position(|m| {
-            m.address == ended.address 
-            && m.end_date == expected_end_date 
-            && m.status.is_none() 
-        });
-
-        if let Some(idx) = found_idx {
-            // Update existing active stake
-            miners_lock[idx].status = Some(status_str.clone());
-            changed = true;
-            info!(
-                "Stake for {} ending on {} marked as {}. Payout: {:.2} HEX, Penalty: {:.2} HEX",
-                ended.address, expected_end_date, status_str,
-                ended.payout_hearts / 1e8, ended.penalty_hearts / 1e8
-            );
-        } else {
-            // Check if we already have it as completed
-            let already_tracked = miners_lock.iter().any(|m| {
-                m.address == ended.address && m.end_date == expected_end_date && m.status.is_some()
-            });
-
-            if !already_tracked {
-                // Dynamically add untracked ended stake
-                miners_lock.push(Miner {
-                    id: None,
-                    address: ended.address.clone(),
-                    start_date,
-                    end_date: expected_end_date.clone(),
-                    t_shares: 0.0, // Unknown from StakeEnd event alone
-                    status: Some(status_str.clone()),
-                });
-                changed = true;
-                info!(
-                    "Added untracked ended stake for {} ending on {}. Payout: {:.2} HEX",
-                    ended.address, expected_end_date, ended.payout_hearts / 1e8
-                );
-            }
-        }
-    }
-
-    if changed {
-        let normalized = miners_lock.clone();
-        drop(miners_lock);
-        save_miners_to_file(&normalized).await;
-    } else {
-        drop(miners_lock);
-    }
-
-    changed
 }
 
 fn repair_historical_values(entries: &mut [HexJsonEntry]) {
@@ -1501,84 +1258,6 @@ info!(
     result
 }
 
-async fn backfill_historical_ended_stakes(
-    client: &Client,
-    state: &Arc<AppState>,
-    addresses_str: &str,
-) -> Result<Vec<Miner>, String> {
-    let addresses: Vec<&str> = addresses_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-    let mut ended_miners = Vec::new();
-
-    for addr in addresses {
-        if !addr.starts_with("0x") || addr.len() != 42 { continue; }
-        let addr_topic = format!("0x000000000000000000000000{}", &addr[2..]);
-
-        info!("Backfilling historical stakes for {}...", addr);
-
-        // 1. Fetch all StakeStart events (chunked to avoid RPC limits)
-        let start_logs = match get_logs_chunked(client, state, STAKE_START_TOPIC, &addr_topic).await {
-            Ok(logs) => logs,
-            Err(e) => { warn!("Backfill StakeStart failed for {}: {}", addr, e); continue; }
-        };
-
-        // 2. Fetch all StakeEnd events (chunked)
-        let end_logs = match get_logs_chunked(client, state, STAKE_END_TOPIC, &addr_topic).await {
-            Ok(logs) => logs,
-            Err(e) => { warn!("Backfill StakeEnd failed for {}: {}", addr, e); continue; }
-        };
-
-        // 3. Build a set of ended stakeIds
-        let mut ended_stake_ids = HashSet::new();
-        for log in &end_logs {
-            let empty_topics = vec![];
-            let topics = log.get("topics").and_then(|t| t.as_array()).unwrap_or(&empty_topics);
-            if topics.len() >= 3 {
-                let stake_id = U256::from_hex(topics[1].as_str().unwrap_or("")).to_f64() as u64;
-                ended_stake_ids.insert(stake_id);
-            }
-        }
-
-        // 4. Reconstruct ended stakes from StakeStart events
-        for log in &start_logs {
-            let empty_topics = vec![];
-            let topics = log.get("topics").and_then(|t| t.as_array()).unwrap_or(&empty_topics);
-            if topics.len() < 3 { continue; }
-            
-            let stake_id = U256::from_hex(topics[1].as_str().unwrap_or("")).to_f64() as u64;
-            
-            // Only process if this stake has ended
-            if ended_stake_ids.contains(&stake_id) {
-                let data_str = log.get("data").and_then(|d| d.as_str()).unwrap_or("");
-                let data_clean = data_str.strip_prefix("0x").unwrap_or(data_str);
-                if data_clean.len() < 192 { continue; }
-
-                let locked_day = U256::from_hex(&data_clean[0..64]).to_f64() as u64;
-                let staked_days = U256::from_hex(&data_clean[64..128]).to_f64() as u64;
-                let stake_shares = U256::from_hex(&data_clean[128..192]).to_f64();
-
-                let t_shares = stake_shares / 1e12;
-                let start_ts = HEX_DAY_ZERO_UNIX + (locked_day as i64 * 86400);
-                let end_ts = HEX_DAY_ZERO_UNIX + ((locked_day + staked_days) as i64 * 86400);
-
-                let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
-                let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
-
-                ended_miners.push(Miner {
-                    id: None,
-                    address: addr.to_string(),
-                    start_date,
-                    end_date,
-                    t_shares,
-                    status: Some("completed".to_string()),
-                });
-            }
-        }
-    }
-    Ok(ended_miners)
-}
-
 // =============================================
 // DAILY RECORDING
 // =============================================
@@ -2049,207 +1728,8 @@ async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
 }
 
 async fn wallet_updater(state: Arc<AppState>, client: Client) {
-    // -------------------------------------------------------
-    // Local helper: merge active miners with preserved miners
-    // -------------------------------------------------------
-    fn merge_active_miners(
-        current_miners: Vec<Miner>,
-        fetched_miners: Vec<Miner>,
-        addresses: &str,
-    ) -> Vec<Miner> {
-        let current_addresses_set: HashSet<String> = addresses
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let mut preserved_miners = Vec::new();
-
-        for saved in current_miners {
-            let is_in_fetched = fetched_miners.iter().any(|f| {
-                f.start_date == saved.start_date
-                    && f.end_date == saved.end_date
-                    && (f.t_shares - saved.t_shares).abs() < 0.01
-            });
-
-            if !is_in_fetched {
-                let is_manual = saved.address.is_empty();
-                let addr_still_tracked =
-                    is_manual || current_addresses_set.contains(&saved.address);
-
-                // Preserve:
-                // - manual miners
-                // - miners belonging to addresses still being tracked
-                // - already ended/completed/matured/early-ended miners
-                if addr_still_tracked || saved.status.is_some() {
-                    preserved_miners.push(saved);
-                }
-            }
-        }
-
-        let mut merged_miners = fetched_miners;
-        merged_miners.extend(preserved_miners);
-        merged_miners
-    }
-
-    // -------------------------------------------------------
-    // Local helper: compare miner lists without caring about id
-    // -------------------------------------------------------
-    fn miners_are_same(a: &[Miner], b: &[Miner]) -> bool {
-        if a.len() != b.len() {
-            return false;
-        }
-
-        let normalize =
-            |m: &Miner| -> (String, String, String, u64, Option<String>) {
-                (
-                    m.address.clone(),
-                    m.start_date.clone(),
-                    m.end_date.clone(),
-                    m.t_shares.to_bits(),
-                    m.status.clone(),
-                )
-            };
-
-        let mut av: Vec<(String, String, String, u64, Option<String>)> =
-            a.iter().map(normalize).collect();
-        let mut bv: Vec<(String, String, String, u64, Option<String>)> =
-            b.iter().map(normalize).collect();
-
-        av.sort();
-        bv.sort();
-
-        av == bv
-    }
-
-    // -------------------------------------------------------
-    // Local helper: update liquid HEX balance from wallets
-    // -------------------------------------------------------
-    async fn update_balance(state: &Arc<AppState>, client: &Client, addresses: &str) {
-        match fetch_wallet_balances(client, addresses).await {
-            Ok(balance) => {
-                let mut config = state.config.write().await;
-                config.liquid_hex = balance;
-                let new_config = sanitize_config(config.clone());
-                *config = new_config.clone();
-
-                let mut live_data = state.live_data.write().await;
-                live_data.liquid_hex = new_config.liquid_hex;
-
-                drop(config);
-                drop(live_data);
-
-                save_config_to_file(&new_config).await;
-                let _ = state.config_tx.send(());
-
-                info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
-            }
-            Err(e) => warn!("Wallet balance fetch failed: {}", e),
-        }
-    }
-
-    // -------------------------------------------------------
-    // Local helper: fetch and merge ACTIVE stakes
-    // -------------------------------------------------------
-    async fn sync_active_miners(
-        state: &Arc<AppState>,
-        client: &Client,
-        addresses: &str,
-    ) -> Result<(), String> {
-        let fetched_miners = fetch_wallet_miners(client, state, addresses).await?;
-
-        let mut miners_lock = state.miners.write().await;
-        let current_miners = miners_lock.clone();
-
-        let merged_miners =
-            merge_active_miners(current_miners.clone(), fetched_miners, addresses);
-
-        if !miners_are_same(&current_miners, &merged_miners) {
-            info!("Miners changed! Updating active and preserving ended/manual entries.");
-
-            let (normalized, next_id) = normalize_miners(merged_miners);
-            state.next_miner_id.store(next_id, Ordering::SeqCst);
-            *miners_lock = normalized.clone();
-            drop(miners_lock);
-
-            save_miners_to_file(&normalized).await;
-        } else {
-            drop(miners_lock);
-            info!("Fetched miners match saved miners. No disk write needed.");
-        }
-
-        Ok(())
-    }
-
-    // -------------------------------------------------------
-    // Local helper: backfill HISTORICAL ended stakes
-    // -------------------------------------------------------
-    async fn sync_historical_ended_stakes(
-        state: &Arc<AppState>,
-        client: &Client,
-        addresses: &str,
-    ) -> Result<(), String> {
-        let historical_ended =
-            backfill_historical_ended_stakes(client, state, addresses).await?;
-
-        if historical_ended.is_empty() {
-            return Ok(());
-        }
-
-        let mut miners_lock = state.miners.write().await;
-        let current_miners = miners_lock.clone();
-        let mut merged_miners = current_miners.clone();
-
-        for ended in historical_ended {
-            let exists = merged_miners.iter().any(|m| {
-                m.address == ended.address
-                    && m.start_date == ended.start_date
-                    && m.end_date == ended.end_date
-                    && (m.t_shares - ended.t_shares).abs() < 0.01
-            });
-
-            if !exists {
-                merged_miners.push(ended);
-            }
-        }
-
-        if !miners_are_same(&current_miners, &merged_miners) {
-            info!("Backfilled historical ended stakes.");
-
-            let (normalized, next_id) = normalize_miners(merged_miners);
-            state.next_miner_id.store(next_id, Ordering::SeqCst);
-            *miners_lock = normalized.clone();
-            drop(miners_lock);
-
-            save_miners_to_file(&normalized).await;
-        } else {
-            drop(miners_lock);
-        }
-
-        Ok(())
-    }
-
-    // -------------------------------------------------------
-    // Main wallet updater loop
-    // -------------------------------------------------------
     let mut rx = state.config_tx.subscribe();
     let mut current_addresses = String::new();
-
-    let mut last_checked_block = state.last_stake_end_check_block.load(Ordering::SeqCst);
-
-    if last_checked_block == 0 {
-        match get_block_number(&client, &state).await {
-            Ok(block) => {
-                last_checked_block = block.saturating_sub(1000);
-                state
-                    .last_stake_end_check_block
-                    .store(last_checked_block, Ordering::SeqCst);
-            }
-            Err(e) => {
-                warn!("Failed to initialize StakeEnd checkpoint: {}", e);
-            }
-        }
-    }
 
     loop {
         let addresses = {
@@ -2260,45 +1740,106 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
-        // ---------------------------------------------------
-        // When addresses change, do a full sync + backfill
-        // ---------------------------------------------------
         if addresses_changed && !addresses.trim().is_empty() {
-            update_balance(&state, &client, &addresses).await;
-
-            if let Err(e) = sync_active_miners(&state, &client, &addresses).await {
-                warn!("Wallet miners fetch failed: {}", e);
+            match fetch_wallet_balances(&client, &addresses).await {
+                Ok(balance) => {
+                    let mut config = state.config.write().await;
+                    config.liquid_hex = balance;
+                    let new_config = sanitize_config(config.clone());
+                    *config = new_config.clone();
+                    
+                    let mut live_data = state.live_data.write().await;
+                    live_data.liquid_hex = new_config.liquid_hex;
+                    
+                    drop(config);
+                    drop(live_data);
+                    save_config_to_file(&new_config).await;
+                    let _ = state.config_tx.send(());
+                    info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
+                }
+                Err(e) => warn!("Wallet balance fetch failed: {}", e),
             }
 
-            let mut historical_ok = false;
+            match fetch_wallet_miners(&client, &state, &addresses).await {
+                Ok(fetched_miners) => {
+                    let mut miners_lock = state.miners.write().await;
+                    let current_miners = miners_lock.clone();
+                    let mut preserved_miners = Vec::new();
 
-            match sync_historical_ended_stakes(&state, &client, &addresses).await {
-                Ok(_) => historical_ok = true,
-                Err(e) => warn!("Historical ended stakes backfill failed: {}", e),
-            }
+                    let current_addresses_set: HashSet<String> = addresses
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
 
-            // If historical backfill succeeded, move checkpoint to current block
-            if historical_ok {
-                match get_block_number(&client, &state).await {
-                    Ok(block) => {
-                        last_checked_block = block;
-                        state
-                            .last_stake_end_check_block
-                            .store(last_checked_block, Ordering::SeqCst);
+                    for saved in &current_miners {
+                        let is_in_fetched = fetched_miners.iter().any(|f| {
+                            f.start_date == saved.start_date
+                                && f.end_date == saved.end_date
+                                && (f.t_shares - saved.t_shares).abs() < 0.01
+                        });
+
+                        if !is_in_fetched {
+                            let is_manual = saved.address.is_empty();
+                            let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
+                            
+                            if addr_still_tracked {
+                                preserved_miners.push(saved.clone());
+                            } else if saved.status.as_deref() == Some("completed") {
+                                preserved_miners.push(saved.clone());
+                            }
+                        }
                     }
-                    Err(e) => {
-                        warn!(
-                            "Failed to update StakeEnd checkpoint after backfill: {}",
-                            e
-                        );
+
+                    let mut merged_miners = fetched_miners;
+                    merged_miners.extend(preserved_miners);
+
+                    let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
+                        .iter()
+                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                        .collect();
+                    curr_norm.sort_by(|a, b| {
+                        a.0.cmp(&b.0)
+                            .then(a.1.cmp(&b.1))
+                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                    });
+
+                    let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
+                        .iter()
+                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                        .collect();
+                    merge_norm.sort_by(|a, b| {
+                        a.0.cmp(&b.0)
+                            .then(a.1.cmp(&b.1))
+                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                    });
+
+                    let mut is_different = curr_norm.len() != merge_norm.len();
+                    if !is_different {
+                        for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
+                            if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
+                                is_different = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if is_different {
+                        info!("Miners changed! Updating active and cleaning up removed addresses.");
+                        let (normalized, next_id) = normalize_miners(merged_miners);
+                        state.next_miner_id.store(next_id, Ordering::SeqCst);
+                        *miners_lock = normalized.clone();
+                        drop(miners_lock);
+                        save_miners_to_file(&normalized).await;
+                    } else {
+                        drop(miners_lock);
+                        info!("Fetched miners match saved miners. No disk write needed.");
                     }
                 }
+                Err(e) => warn!("Wallet miners fetch failed: {}", e),
             }
         }
 
-        // ---------------------------------------------------
-        // If no addresses configured, just wait for config change
-        // ---------------------------------------------------
         if addresses.trim().is_empty() {
             let _ = rx.recv().await;
             continue;
@@ -2309,55 +1850,108 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
         tokio::select! {
             _ = &mut sleep => {
-                // Balance
-                update_balance(&state, &client, &addresses).await;
-
-                // Active stakes
-                if let Err(e) = sync_active_miners(&state, &client, &addresses).await {
-                    warn!("Wallet miners fetch failed: {}", e);
+                match fetch_wallet_balances(&client, &addresses).await {
+                    Ok(balance) => {
+                        let mut config = state.config.write().await;
+                        config.liquid_hex = balance;
+                        let new_config = sanitize_config(config.clone());
+                        *config = new_config.clone();
+                        
+                        let mut live_data = state.live_data.write().await;
+                        live_data.liquid_hex = new_config.liquid_hex;
+                        
+                        drop(config);
+                        drop(live_data);
+                        save_config_to_file(&new_config).await;
+                        let _ = state.config_tx.send(());
+                    }
+                    Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
+                
+                match fetch_wallet_miners(&client, &state, &addresses).await {
+                    Ok(fetched_miners) => {
+                        let mut miners_lock = state.miners.write().await;
+                        let current_miners = miners_lock.clone();
+                        let mut preserved_miners = Vec::new();
+                        
+                        let current_addresses_set: HashSet<String> = addresses
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
 
-                // Safety fallback if checkpoint was never initialized
-                if last_checked_block == 0 {
-                    if let Ok(block) = get_block_number(&client, &state).await {
-                        last_checked_block = block.saturating_sub(1000);
-                        state
-                            .last_stake_end_check_block
-                            .store(last_checked_block, Ordering::SeqCst);
-                    }
-                }
+                        for saved in &current_miners {
+                            let is_in_fetched = fetched_miners.iter().any(|f| {
+                                f.start_date == saved.start_date
+                                    && f.end_date == saved.end_date
+                                    && (f.t_shares - saved.t_shares).abs() < 0.01
+                            });
+                            if !is_in_fetched {
+                                let is_manual = saved.address.is_empty();
+                                let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
+                                
+                                if addr_still_tracked {
+                                    preserved_miners.push(saved.clone());
+                                } else if saved.status.as_deref() == Some("completed") {
+                                    preserved_miners.push(saved.clone());
+                                }
+                            }
+                        }
 
-                // Newly ended stakes since last checkpoint
-                match fetch_recent_stake_ends(
-                    &client,
-                    &state,
-                    &addresses,
-                    last_checked_block,
-                )
-                .await
-                {
-                    Ok((ended_stakes, new_block)) => {
-                        apply_ended_stakes(&state, &ended_stakes).await;
+                        let mut merged_miners = fetched_miners;
+                        merged_miners.extend(preserved_miners);
 
-                        last_checked_block = new_block;
-                        state
-                            .last_stake_end_check_block
-                            .store(last_checked_block, Ordering::SeqCst);
+                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
+                            .iter()
+                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                            .collect();
+                        curr_norm.sort_by(|a, b| {
+                            a.0.cmp(&b.0)
+                                .then(a.1.cmp(&b.1))
+                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                        });
+
+                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
+                            .iter()
+                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+                            .collect();
+                        merge_norm.sort_by(|a, b| {
+                            a.0.cmp(&b.0)
+                                .then(a.1.cmp(&b.1))
+                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                        });
+
+                        let mut is_different = curr_norm.len() != merge_norm.len();
+                        if !is_different {
+                            for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
+                                if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
+                                    is_different = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if is_different {
+                            let (normalized, next_id) = normalize_miners(merged_miners);
+                            state.next_miner_id.store(next_id, Ordering::SeqCst);
+                            *miners_lock = normalized.clone();
+                            drop(miners_lock);
+                            save_miners_to_file(&normalized).await;
+                        } else {
+                            drop(miners_lock);
+                        }
                     }
-                    Err(e) => {
-                        warn!("Recent StakeEnd fetch failed: {}", e);
-                    }
+                    Err(e) => warn!("Wallet miners fetch failed: {}", e),
                 }
             }
             result = rx.recv() => {
-                if result.is_err() {
+                if let Err(_) = result {
                     warn!("Config receiver closed/lagged in wallet updater");
                 }
             }
         }
     }
 }
-
 
 // =============================================
 // API HANDLERS
@@ -2603,7 +2197,6 @@ async fn main() {
         active_rpc_idx: RwLock::new(0),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
-        last_stake_end_check_block: AtomicU64::new(0),
     });
 
     let client = Client::builder()
