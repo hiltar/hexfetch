@@ -508,7 +508,7 @@ async fn apply_ended_stakes(state: &Arc<AppState>, ended_stakes: &[EndedStakeInf
                     id: None,
                     address: ended.address.clone(),
                     start_date,
-                    end_date: expected_end_date,
+                    end_date: expected_end_date.clone(),
                     t_shares: 0.0, // Unknown from StakeEnd event alone
                     status: Some(status_str.clone()),
                 });
