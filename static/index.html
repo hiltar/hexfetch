@@ -12,6 +12,7 @@
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/air-datepicker@3.6.0/air-datepicker.js"></script>
   <script defer src="/scripts.js"></script>
+<base target="_blank">
 </head>
 <body>
 
@@ -235,7 +236,12 @@
 
     <div class="card">
       <h3>Add New Miner</h3>
-      <form onsubmit="event.preventDefault(); document.getElementById('add-miner-btn').click();" novalidate>
+      <!-- FIX: the previous form called add-miner-btn.click() from its own onsubmit
+           while the button was type="submit" inside that same form. A programmatic
+           click() on a submit button triggers form submission, whose handler called
+           click() again -> infinite recursion that spammed POST /api/add-miner.
+           The button is now type="button" and both entry points call submitAddMiner(). -->
+      <form onsubmit="event.preventDefault(); if (typeof submitAddMiner === 'function') submitAddMiner();" novalidate>
         <div class="form-row">
           <div class="form-group">
             <label for="start-date">Start Date</label>
@@ -250,7 +256,7 @@
             <input type="number" id="tshares" class="form-input" min="0" step="any" placeholder="0.00" inputmode="decimal">
           </div>
         </div>
-        <button type="submit" class="btn btn-success" id="add-miner-btn">Add Miner</button>
+        <button type="button" class="btn btn-success" id="add-miner-btn">Add Miner</button>
       </form>
     </div>
 
