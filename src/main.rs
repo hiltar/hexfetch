@@ -32,7 +32,8 @@ const RPC_ENDPOINTS: &[&str] = &[
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const USDC_HEX_PAIR: &str = "0xC475332e92561CD58f278E4e2eD76c17D5b50f05";
 const GET_RESERVES_SELECTOR: &str = "0x0902f1ac";
-const DEXSCREENER_URL: &str = "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
+const DEXSCREENER_URL: &str =
+    "https://api.dexscreener.com/latest/dex/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const GECKOTERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/pulsechain/tokens/0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
 const DEFAULT_SECONDS_PER_BLOCK: f64 = 2.0;
 const BLOCK_TIME_SAMPLE_BLOCKS: u64 = 100_000;
@@ -47,6 +48,10 @@ const BACKFILL_DELAY_MS: u64 = 60;
 const BACKFILL_SAVE_INTERVAL: usize = 500;
 const BACKFILL_CONCURRENCY: usize = 6;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
+const WALLET_STAKE_CONCURRENCY: usize = 6;
+const HEX_DAY_ZERO_UNIX: i64 = 1_575_331_200;
+const SHARE_RATE_SCALE: f64 = 10_000.0;
+const BACKFILL_START_DAY: u64 = 1256;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -70,6 +75,27 @@ where
 {
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or(0))
+}
+
+fn opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::deserialize(deserializer)?)
+}
+
+fn opt_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::deserialize(deserializer)?)
+}
+
+fn opt_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::deserialize(deserializer)?)
 }
 
 // =============================================
@@ -98,22 +124,22 @@ pub struct HexJsonEntry {
 pub struct LiveData {
     #[serde(rename = "price_Pulsechain")]
     pub price_pulsechain: f64,
-    
+
     #[serde(rename = "tsharePrice_Pulsechain")]
     pub tshare_price_pulsechain: f64,
-    
+
     #[serde(rename = "tshareRateHEX_Pulsechain")]
     pub tshare_rate_hex_pulsechain: f64,
-    
+
     #[serde(rename = "penaltiesHEX_Pulsechain")]
     pub penalties_hex_pulsechain: f64,
-    
+
     #[serde(rename = "payoutPerTshare_Pulsechain")]
     pub payout_per_tshare_pulsechain: f64,
-    
+
     #[serde(rename = "beat")]
     pub beat: f64,
-    
+
     #[serde(rename = "liquidHEX", default)]
     pub liquid_hex: f64,
 }
@@ -134,6 +160,55 @@ pub struct Miner {
 
     #[serde(rename = "tShares")]
     pub t_shares: f64,
+
+
+    #[serde(
+        rename = "stakeId",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "opt_u64"
+    )]
+    pub stake_id: Option<u64>,
+
+    #[serde(
+        rename = "unlockedDay",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "opt_u64"
+    )]
+    pub unlocked_day: Option<u64>,
+
+    #[serde(
+        rename = "lockedDay",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "opt_u64"
+    )]
+    pub locked_day: Option<u64>,
+
+    #[serde(
+        rename = "stakedDays",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "opt_u64"
+    )]
+    pub staked_days: Option<u64>,
+
+    #[serde(
+        rename = "isAutoStake",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "opt_bool"
+    )]
+    pub is_auto_stake: Option<bool>,
+
+    #[serde(
+        rename = "stakedHearts",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "opt_f64"
+    )]
+    pub staked_hearts: Option<f64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
@@ -203,28 +278,44 @@ fn is_multiple_of(n: usize, divisor: usize) -> bool {
 fn sanitize_config(config: Config) -> Config {
     Config {
         live_data_frequency: config.live_data_frequency.clamp(1, 24 * 60),
-        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 { config.liquid_hex } else { 0.0 },
+        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 {
+            config.liquid_hex
+        } else {
+            0.0
+        },
         historical_start_day: config.historical_start_day.max(1),
         wallet_addresses: config.wallet_addresses,
     }
 }
 
 fn normalize_miners(mut miners: Vec<Miner>) -> (Vec<Miner>, u64) {
-    let mut next_id = miners
-        .iter()
-        .filter_map(|m| m.id)
-        .max()
-        .unwrap_or(0)
-        + 1;
+    const MANUAL_ID_BASE: u64 = 1_000_000_000;
+
+    let mut max_manual_id: u64 = MANUAL_ID_BASE - 1;
 
     for miner in miners.iter_mut() {
         if miner.id.is_none() {
-            miner.id = Some(next_id);
-            next_id += 1;
+            if let Some(stake_id) = miner.stake_id {
+                miner.id = Some(stake_id);
+            }
+        }
+        if let Some(id) = miner.id {
+            if id < MANUAL_ID_BASE {
+            } else if id > max_manual_id {
+                max_manual_id = id;
+            }
         }
     }
 
-    (miners, next_id)
+    let mut next_manual = max_manual_id + 1;
+    for miner in miners.iter_mut() {
+        if miner.id.is_none() {
+            miner.id = Some(next_manual);
+            next_manual += 1;
+        }
+    }
+
+    (miners, next_manual)
 }
 
 fn calc_payout_per_tshare(payout_hearts: f64, shares: f64) -> f64 {
@@ -247,7 +338,7 @@ fn parse_hex_u64(s: &str) -> u64 {
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
 
-    if s.is_empty() {
+    if s.is_empty() || s.len() > 16 {
         return 0;
     }
 
@@ -271,11 +362,9 @@ fn block_param(block_number: Option<u64>) -> serde_json::Value {
 
 async fn get_block_number(client: &Client, state: &Arc<AppState>) -> Result<u64, String> {
     let value = call_rpc_value(client, state, "eth_blockNumber", serde_json::json!([])).await?;
-
     let s = value
         .as_str()
         .ok_or("eth_blockNumber result was not a string")?;
-
     Ok(parse_hex_u64(s))
 }
 
@@ -297,11 +386,9 @@ async fn get_block_timestamp(
     }
 
     let timestamp = parse_timestamp_from_block(&value);
-
     if timestamp == 0 {
         return Err(format!("Block {} had invalid timestamp", block_number));
     }
-
     Ok(timestamp)
 }
 
@@ -349,7 +436,6 @@ fn repair_historical_values(entries: &mut [HexJsonEntry]) {
 
 fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
     let date = NaiveDate::parse_from_str(s, "%d-%m-%Y").ok()?;
-
     let y = date.year();
     let m = date.month();
     let d = date.day();
@@ -357,7 +443,6 @@ fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
     if !(2000..=2100).contains(&y) {
         return None;
     }
-
     Some((y, m, d))
 }
 
@@ -391,14 +476,15 @@ struct U256([u64; 4]);
 impl U256 {
     const ZERO: Self = Self([0; 4]);
 
-    fn from_hex(s: &str) -> Self {
+    /// Parse a hex string (without 0x prefix) into a 256-bit integer.
+    /// Returns `None` if the string contains invalid characters.
+    fn from_hex_checked(s: &str) -> Option<Self> {
         let s = s.strip_prefix("0x").unwrap_or(s);
-        let mut limbs = [0u64; 4];
-
         if s.is_empty() {
-            return Self::ZERO;
+            return Some(Self::ZERO);
         }
 
+        let mut limbs = [0u64; 4];
         let mut limb_idx = 0;
         let mut shift = 0;
 
@@ -407,7 +493,7 @@ impl U256 {
                 '0'..='9' => c as u64 - '0' as u64,
                 'a'..='f' => c as u64 - 'a' as u64 + 10,
                 'A'..='F' => c as u64 - 'A' as u64 + 10,
-                _ => continue,
+                _ => return None,
             };
 
             if limb_idx < 4 {
@@ -415,25 +501,26 @@ impl U256 {
             }
 
             shift += 4;
-
             if shift == 64 {
                 shift = 0;
                 limb_idx += 1;
             }
         }
 
-        Self(limbs)
+        Some(Self(limbs))
+    }
+
+    fn from_hex(s: &str) -> Self {
+        Self::from_hex_checked(s).unwrap_or(Self::ZERO)
     }
 
     fn to_f64(self) -> f64 {
         let mut result: f64 = 0.0;
-
         for (i, limb) in self.0.iter().enumerate() {
             if *limb != 0 {
                 result += (*limb as f64) * (2.0_f64).powi(64 * i as i32);
             }
         }
-
         result
     }
 }
@@ -443,10 +530,8 @@ impl std::ops::Sub<u64> for U256 {
 
     fn sub(self, rhs: u64) -> Self {
         let mut limbs = self.0;
-
         let (res, overflow) = limbs[0].overflowing_sub(rhs);
         limbs[0] = res;
-
         let mut borrow = if overflow { 1 } else { 0 };
 
         for limb in limbs.iter_mut().skip(1) {
@@ -454,7 +539,6 @@ impl std::ops::Sub<u64> for U256 {
             *limb = res;
             borrow = if overflow { 1 } else { 0 };
         }
-
         Self(limbs)
     }
 }
@@ -474,11 +558,9 @@ impl std::fmt::LowerHex for U256 {
 
 fn get_duration_until_next_1am_utc() -> std::time::Duration {
     let now = Utc::now();
-
     let today_1am = now
         .date_naive()
         .and_time(NaiveTime::from_hms_opt(1, 0, 0).unwrap());
-
     let mut next_1am = today_1am.and_utc();
 
     if next_1am <= now {
@@ -493,6 +575,7 @@ fn get_duration_until_next_1am_utc() -> std::time::Duration {
 // =============================================
 // FILE PATHS / PERSISTENCE
 // =============================================
+
 fn get_data_dir() -> &'static Path {
     static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
     DATA_DIR.get_or_init(|| {
@@ -506,11 +589,9 @@ fn get_data_dir() -> &'static Path {
 fn hexjson_file_path() -> PathBuf {
     get_data_dir().join("hexjson.json")
 }
-
 fn config_file_path() -> PathBuf {
     get_data_dir().join("config.json")
 }
-
 fn miners_file_path() -> PathBuf {
     get_data_dir().join("miners.json")
 }
@@ -646,7 +727,6 @@ async fn call_rpc(
     params: serde_json::Value,
 ) -> Result<String, String> {
     let value = call_rpc_value(client, state, method, params).await?;
-
     value
         .as_str()
         .map(|s| s.to_string())
@@ -656,7 +736,6 @@ async fn call_rpc(
 // =============================================
 // ON-CHAIN DATA READING
 // =============================================
-
 async fn read_globals(
     client: &Client,
     state: &Arc<AppState>,
@@ -670,21 +749,23 @@ async fn read_globals(
     let hex_result = call_rpc(client, state, "eth_call", params).await?;
     let g_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
 
-    if g_str.len() < 320 {
-        return Err(format!("globals() too short ({} chars)", g_str.len()));
+    if g_str.len() < 512 {
+        return Err(format!(
+            "globals() too short ({} chars, expected >= 512)",
+            g_str.len()
+        ));
     }
 
     let share_rate_raw = U256::from_hex(&g_str[128..192]);
     let penalty_raw = U256::from_hex(&g_str[192..256]);
     let daily_data_count = U256::from_hex(&g_str[256..320]);
-
     let tshare_rate = if share_rate_raw > U256::ZERO {
-        share_rate_raw.to_f64() / 10.0
+        share_rate_raw.to_f64() / SHARE_RATE_SCALE
     } else {
         0.0
     };
 
-    let penalties = penalty_raw.to_f64() / 1e8;
+    let penalties = penalty_raw.to_f64() / HEARTS_PER_HEX;
     let day_count = daily_data_count.to_f64() as u64;
 
     Ok((tshare_rate, day_count, penalties))
@@ -707,7 +788,11 @@ async fn read_daily_data(
     let d_str = hex_result.strip_prefix("0x").unwrap_or(&hex_result);
 
     if d_str.len() < 128 {
-        return Err(format!("dailyData({}) too short ({} chars)", day, d_str.len()));
+        return Err(format!(
+            "dailyData({}) too short ({} chars)",
+            day,
+            d_str.len()
+        ));
     }
 
     let day_payout = U256::from_hex(&d_str[0..64]);
@@ -719,7 +804,6 @@ async fn read_daily_data(
 // =============================================
 // RPC BLOCK FINDER
 // =============================================
-
 #[derive(Clone, Copy)]
 struct BlockFinder {
     latest_block: u64,
@@ -739,7 +823,6 @@ impl BlockFinder {
         let latest_timestamp = get_block_timestamp(client, state, latest_block).await?;
 
         let sample_block = latest_block.saturating_sub(BLOCK_TIME_SAMPLE_BLOCKS);
-
         let sample_timestamp = if sample_block > 0 {
             get_block_timestamp(client, state, sample_block)
                 .await
@@ -763,8 +846,8 @@ impl BlockFinder {
         }
 
         let current_day_start = latest_timestamp - (latest_timestamp % 86400);
-        let derived_day_zero = current_day_start
-            .saturating_sub(current_hex_day.saturating_mul(86400));
+        let derived_day_zero =
+            current_day_start.saturating_sub(current_hex_day.saturating_mul(86400));
 
         let mut finder = Self {
             latest_block,
@@ -776,16 +859,11 @@ impl BlockFinder {
         };
 
         finder.calibrate(client, state).await;
-
         Ok(finder)
     }
 
     async fn calibrate(&mut self, client: &Client, state: &Arc<AppState>) {
-        if HEX_DAY_ZERO_UNIX_OVERRIDE.is_some() {
-            return;
-        }
-
-        if self.current_hex_day < 3 {
+        if HEX_DAY_ZERO_UNIX_OVERRIDE.is_some() || self.current_hex_day < 3 {
             return;
         }
 
@@ -793,7 +871,6 @@ impl BlockFinder {
 
         for _ in 0..3 {
             let target_timestamp = self.target_timestamp_for_day(test_day);
-
             if target_timestamp >= self.latest_timestamp {
                 break;
             }
@@ -815,12 +892,10 @@ impl BlockFinder {
                 self.day_zero_timestamp = self.day_zero_timestamp.saturating_add(86400);
                 continue;
             }
-
             if count_at_block > test_day.saturating_add(1) {
                 self.day_zero_timestamp = self.day_zero_timestamp.saturating_sub(86400);
                 continue;
             }
-
             break;
         }
     }
@@ -840,19 +915,16 @@ impl BlockFinder {
         if target_timestamp >= self.latest_timestamp {
             return Ok(self.latest_block);
         }
-
         if !self.seconds_per_block.is_finite() || self.seconds_per_block <= 0.0 {
             return Err("Invalid seconds_per_block".to_string());
         }
 
         let time_diff = self.latest_timestamp.saturating_sub(target_timestamp);
         let estimated_block_diff = (time_diff as f64 / self.seconds_per_block) as u64;
-
         let mut block = self.latest_block.saturating_sub(estimated_block_diff);
 
         for _ in 0..6 {
             let timestamp = get_block_timestamp(client, state, block).await?;
-
             if timestamp < target_timestamp {
                 let delta = target_timestamp - timestamp;
                 let add = ((delta as f64 / self.seconds_per_block).ceil() as u64).max(1);
@@ -861,7 +933,6 @@ impl BlockFinder {
                 if block == 0 {
                     return Ok(0);
                 }
-
                 let delta = timestamp - target_timestamp;
                 let sub = ((delta as f64 / self.seconds_per_block).ceil() as u64).max(1);
                 block = block.saturating_sub(sub.min(block));
@@ -872,13 +943,11 @@ impl BlockFinder {
 
         let mut timestamp = get_block_timestamp(client, state, block).await?;
         let mut guard = 0u32;
-
         while timestamp < target_timestamp && guard < 20 {
             block = block.saturating_add(1);
             timestamp = get_block_timestamp(client, state, block).await?;
             guard += 1;
         }
-
         Ok(block)
     }
 
@@ -906,7 +975,6 @@ impl BlockFinder {
                     return Ok((block, tshare_rate));
                 }
             }
-
             target_timestamp = target_timestamp.saturating_add(3600);
         }
 
@@ -920,7 +988,6 @@ impl BlockFinder {
 // =============================================
 // PRICE FETCH
 // =============================================
-
 async fn fetch_price_rpc_at_block(
     client: &Client,
     state: &Arc<AppState>,
@@ -946,11 +1013,9 @@ async fn fetch_price_rpc_at_block(
     }
 
     let price = (reserve_usdc / reserve_hex) * 100.0;
-
     if price <= 0.0 || !price.is_finite() {
         return Err("RPC returned zero or invalid price".to_string());
     }
-
     Ok(price)
 }
 
@@ -990,7 +1055,6 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
     if price <= 0.0 || !price.is_finite() {
         return Err("DEXScreener returned zero or invalid price".to_string());
     }
-
     Ok(price)
 }
 
@@ -1016,23 +1080,18 @@ async fn fetch_price_geckoterminal(client: &Client) -> Result<f64, String> {
     if price <= 0.0 || !price.is_finite() {
         return Err("GeckoTerminal returned zero or invalid price".to_string());
     }
-
     Ok(price)
 }
 
 async fn fetch_price(client: &Client, state: &Arc<AppState>) -> Result<f64, String> {
     match fetch_price_rpc(client, state).await {
         Ok(price) => return Ok(price),
-        Err(e) => {
-            warn!("RPC price fetch failed: {}. Falling back to DexScreener...", e);
-        }
+        Err(e) => warn!("RPC price fetch failed: {}. Falling back to DexScreener...", e),
     }
 
     match fetch_price_dexscreener(client).await {
         Ok(price) => return Ok(price),
-        Err(e) => {
-            warn!("DexScreener failed: {}. Falling back to GeckoTerminal...", e);
-        }
+        Err(e) => warn!("DexScreener failed: {}. Falling back to GeckoTerminal...", e),
     }
 
     fetch_price_geckoterminal(client).await
@@ -1041,7 +1100,6 @@ async fn fetch_price(client: &Client, state: &Arc<AppState>) -> Result<f64, Stri
 // =============================================
 // DAILY ENTRY STORAGE
 // =============================================
-
 async fn store_daily_entry(state: &Arc<AppState>, entry: HexJsonEntry) -> bool {
     let mut hex_json = state.hex_json.write().await;
 
@@ -1095,10 +1153,10 @@ async fn backfill_hex_json(
     let day_count = finder.current_hex_day;
     let current_tshare_rate = finder.current_tshare_rate;
 
-info!(
-    "Backfill start day: {}, current day count: {}",
-    1256, day_count
-);
+    info!(
+        "Backfill start day: {}, current day count: {}",
+        BACKFILL_START_DAY, day_count
+    );
 
     info!(
         "globals(): tshareRate={:.1} HEX, dailyDataCount={}",
@@ -1111,12 +1169,11 @@ info!(
     }
 
     let mut by_day: HashMap<u64, HexJsonEntry> = HashMap::new();
-
     for entry in existing_data {
         by_day.insert(entry.current_day, entry.clone());
     }
 
-    let missing_days: Vec<u64> = (1256..day_count)
+    let missing_days: Vec<u64> = (BACKFILL_START_DAY..day_count)
         .filter(|day| !by_day.contains_key(day))
         .collect();
 
@@ -1128,7 +1185,6 @@ info!(
     }
 
     let total_to_fetch = missing_days.len();
-
     info!(
         "Backfilling {} missing days up to day {}...",
         total_to_fetch,
@@ -1147,30 +1203,22 @@ info!(
 
             async move {
                 let outcome: Result<(f64, f64, f64, f64), String> = async {
-                    let (historical_block, tshare_rate) =
-                        match finder
-                            .find_historical_block_for_day(&client, &state, day)
-                            .await
-                        {
-                            Ok(v) => v,
-                            Err(e) => {
-                                warn!(
-                                    "Historical block lookup for day {} failed: {}. \
-                                     Using latest state for payout and current tshare/price fallback.",
-                                    day, e
-                                );
-
-                                let (payout_hearts, shares) =
-                                    read_daily_data(&client, &state, day, None).await?;
-
-                                return Ok((
-                                    payout_hearts,
-                                    shares,
-                                    0.0,
-                                    0.0,
-                                ));
-                            }
-                        };
+                    let (historical_block, tshare_rate) = match finder
+                        .find_historical_block_for_day(&client, &state, day)
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!(
+                                "Historical block lookup for day {} failed: {}. \
+                                 Using latest state for payout and current tshare/price fallback.",
+                                day, e
+                            );
+                            let (payout_hearts, shares) =
+                                read_daily_data(&client, &state, day, None).await?;
+                            return Ok((payout_hearts, shares, 0.0, 0.0));
+                        }
+                    };
 
                     let (payout_hearts, shares) =
                         read_daily_data(&client, &state, day, Some(historical_block)).await?;
@@ -1190,7 +1238,6 @@ info!(
                 if BACKFILL_DELAY_MS > 0 {
                     tokio::time::sleep(Duration::from_millis(BACKFILL_DELAY_MS)).await;
                 }
-
                 (day, outcome)
             }
         })
@@ -1200,7 +1247,6 @@ info!(
         match outcome {
             Ok((payout_hearts, shares, tshare_rate, price)) => {
                 consecutive_errors = 0;
-
                 let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
                 let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
 
@@ -1217,7 +1263,6 @@ info!(
             }
             Err(e) => {
                 consecutive_errors += 1;
-
                 if consecutive_errors >= max_consecutive_errors {
                     error!(
                         "Backfill aborted at day {}: {} consecutive errors. Last: {}",
@@ -1225,7 +1270,6 @@ info!(
                     );
                     break;
                 }
-
                 if consecutive_errors <= 3 || is_multiple_of(consecutive_errors as usize, 20) {
                     warn!("Backfill: error reading day {}: {}", day, e);
                 }
@@ -1233,7 +1277,6 @@ info!(
         }
 
         fetched += 1;
-
         if is_multiple_of(fetched, 100) || fetched == total_to_fetch {
             info!(
                 "Backfill progress: {}/{} days ({:.1}%)",
@@ -1253,7 +1296,6 @@ info!(
 
     let mut result: Vec<HexJsonEntry> = by_day.into_values().collect();
     repair_historical_values(&mut result);
-
     info!("Backfill complete. Total HEXJSON entries: {}", result.len());
     result
 }
@@ -1261,21 +1303,17 @@ info!(
 // =============================================
 // DAILY RECORDING
 // =============================================
-
 async fn record_daily_entry(
     client: &Client,
     state: &Arc<AppState>,
 ) -> Result<HexJsonEntry, String> {
     let (tshare_rate, day_count, _) = read_globals(client, state, None).await?;
-
     if day_count == 0 {
         return Err("dailyDataCount is 0, cannot record".to_string());
     }
 
     let target_day = day_count - 1;
-
     let (payout_hearts, shares) = read_daily_data(client, state, target_day, None).await?;
-
     let daily_payout_hex = payout_hearts / HEARTS_PER_HEX;
     let payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
 
@@ -1303,7 +1341,6 @@ async fn record_daily_entry(
 // =============================================
 // LIVE DATA FETCHING
 // =============================================
-
 async fn fetch_live_data(
     client: &Client,
     state: &Arc<AppState>,
@@ -1321,12 +1358,10 @@ async fn fetch_live_data(
     let beat = gas_price_wei.to_f64() / 1e9;
 
     let (tshare_rate, daily_data_count, penalties) = read_globals(client, state, None).await?;
-
     let mut payout_per_tshare = 0.0;
 
     if daily_data_count > 0 {
         let day_to_query = daily_data_count - 1;
-
         if let Ok((payout_hearts, shares)) =
             read_daily_data(client, state, day_to_query, None).await
         {
@@ -1378,41 +1413,52 @@ async fn fetch_live_data_with_retry(
 }
 
 // =============================================
-// FETCH WALLET DATA
+// WALLET DATA FETCHING
 // =============================================
-
-async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f64, String> {
+async fn fetch_wallet_balances(
+    client: &Client,
+    addresses_str: &str,
+) -> Result<f64, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
 
-    if addresses.is_empty() { return Ok(0.0); }
+    if addresses.is_empty() {
+        return Ok(0.0);
+    }
 
     let mut total_hex = 0.0;
     let hex_contract_lower = HEX_CONTRACT.trim().to_lowercase();
 
     for addr in addresses {
-        let url = format!("https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances", addr);
-        
+        let url = format!(
+            "https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances",
+            addr
+        );
+
         match client.get(&url).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     if let Ok(balances) = resp.json::<Vec<serde_json::Value>>().await {
                         for b in balances {
                             if let Some(token) = b.get("token") {
-                                let is_hex = token.get("address")
+                                let is_hex = token
+                                    .get("address")
                                     .and_then(|a| a.as_str())
                                     .map(|a| a.to_lowercase() == hex_contract_lower)
-                                    .unwrap_or(false) || 
-                                    token.get("symbol")
-                                    .and_then(|s| s.as_str())
-                                    .map(|s| s == "HEX")
-                                    .unwrap_or(false);
-                                    
+                                    .unwrap_or(false)
+                                    || token
+                                        .get("symbol")
+                                        .and_then(|s| s.as_str())
+                                        .map(|s| s == "HEX")
+                                        .unwrap_or(false);
+
                                 if is_hex {
-                                    if let Some(value_str) = b.get("value").and_then(|v| v.as_str()) {
+                                    if let Some(value_str) =
+                                        b.get("value").and_then(|v| v.as_str())
+                                    {
                                         if let Ok(val) = value_str.parse::<f64>() {
                                             total_hex += val / 1e8;
                                         }
@@ -1432,72 +1478,169 @@ async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f
     Ok(total_hex)
 }
 
-async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_str: &str) -> Result<Vec<Miner>, String> {
+async fn fetch_wallet_miners(
+    client: &Client,
+    state: &Arc<AppState>,
+    addresses_str: &str,
+) -> Result<Vec<Miner>, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
 
-    if addresses.is_empty() { return Ok(Vec::new()); }
+    if addresses.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    let mut all_miners = Vec::new();
+    let (_, current_day, _) = read_globals(client, state, None).await?;
+
     let hex_contract = HEX_CONTRACT.trim();
-    let stake_count_selector = "33060d90";
-    let stake_lists_selector = "2607443b";
-    let hex_day_zero = 1575331200i64;
+    let stake_count_selector = "33060d90"; // stakeCount(address)
+    let stake_lists_selector = "2607443b"; // stakeLists(address,uint256)
+
+    let mut all_miners: Vec<Miner> = Vec::new();
 
     for addr in addresses {
-        if !addr.starts_with("0x") || addr.len() != 42 { continue; }
+        if !addr.starts_with("0x") || addr.len() != 42 {
+            continue;
+        }
+
         let addr_padded = format!("000000000000000000000000{}", &addr[2..]);
         let count_data = format!("0x{}{}", stake_count_selector, addr_padded);
-        let count_req = serde_json::json!([{ "to": hex_contract, "data": count_data }, "latest"]);
-        
+        let count_req = serde_json::json!([
+            { "to": hex_contract, "data": count_data },
+            "latest"
+        ]);
+
         let count_hex = match call_rpc(client, state, "eth_call", count_req).await {
             Ok(h) => h,
-            Err(e) => { warn!("Failed to get stakeCount for {}: {}", addr, e); continue; }
-        };
-        
-        let count = U256::from_hex(count_hex.trim()).to_f64() as u64;
-        
-        for i in 0..count {
-            let idx_hex = format!("{:064x}", i);
-            let list_data = format!("0x{}{}{}", stake_lists_selector, addr_padded, idx_hex);
-            let list_req = serde_json::json!([{ "to": hex_contract, "data": list_data }, "latest"]);
-            
-            let res_hex = match call_rpc(client, state, "eth_call", list_req).await {
-                Ok(h) => h,
-                Err(e) => { warn!("Failed to get stakeLists for {} index {}: {}", addr, i, e); continue; }
-            };
-            
-            let res_str = res_hex.trim().strip_prefix("0x").unwrap_or(res_hex.trim());
-            
-            if res_str.len() >= 448 {
-                let stake_shares = U256::from_hex(&res_str[128..192]).to_f64();
-                let locked_day = U256::from_hex(&res_str[192..256]).to_f64() as u64;
-                let staked_days = U256::from_hex(&res_str[256..320]).to_f64() as u64;
-                
-                let t_shares = stake_shares / 1e12;
-                let start_ts = hex_day_zero + (locked_day as i64 * 86400);
-                let end_ts = hex_day_zero + ((locked_day + staked_days) as i64 * 86400);
-                
-                let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
-                let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
-
-                all_miners.push(Miner { 
-                    id: None, 
-                    address: addr.to_string(), 
-                    start_date, 
-                    end_date, 
-                    t_shares, 
-                    status: None 
-                });
+            Err(e) => {
+                warn!("Failed to get stakeCount for {}: {}", addr, e);
+                continue;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+
+        let count = U256::from_hex(count_hex.trim()).to_f64() as u64;
+        if count == 0 {
+            continue;
         }
+
+        info!("Address {} has {} stakes (incl. ended). Fetching...", addr, count);
+
+        let addr_owned = addr.to_string();
+        let addr_padded_clone = addr_padded.clone();
+
+        let stake_results: Vec<(u64, Result<Miner, String>)> = stream::iter(0..count)
+            .map(|i| {
+                let client = client.clone();
+                let state = state.clone();
+                let addr = addr_owned.clone();
+                let addr_padded = addr_padded_clone.clone();
+                let hex_contract = hex_contract.to_string();
+
+                async move {
+                    let idx_hex = format!("{:064x}", i);
+                    let list_data =
+                        format!("0x{}{}{}", stake_lists_selector, addr_padded, idx_hex);
+                    let list_req = serde_json::json!([
+                        { "to": hex_contract, "data": list_data },
+                        "latest"
+                    ]);
+
+                    let res_hex =
+                        match call_rpc(&client, &state, "eth_call", list_req).await {
+                            Ok(h) => h,
+                            Err(e) => {
+                                return (
+                                    i,
+                                    Err(format!(
+                                        "stakeLists failed for {} idx {}: {}",
+                                        addr, i, e
+                                    )),
+                                );
+                            }
+                        };
+
+                    let res_str = res_hex
+                        .trim()
+                        .strip_prefix("0x")
+                        .unwrap_or(res_hex.trim());
+
+
+                    if res_str.len() < 448 {
+                        return (
+                            i,
+                            Err(format!(
+                                "stakeLists response too short: {} chars",
+                                res_str.len()
+                            )),
+                        );
+                    }
+
+                    let stake_id = U256::from_hex(&res_str[0..64]).to_f64() as u64;
+                    let staked_hearts = U256::from_hex(&res_str[64..128]).to_f64();
+                    let stake_shares = U256::from_hex(&res_str[128..192]).to_f64();
+                    let locked_day = U256::from_hex(&res_str[192..256]).to_f64() as u64;
+                    let staked_days = U256::from_hex(&res_str[256..320]).to_f64() as u64;
+                    let unlocked_day = U256::from_hex(&res_str[320..384]).to_f64() as u64;
+                    let is_auto_stake =
+                        U256::from_hex(&res_str[384..448]).to_f64() != 0.0;
+                    let t_shares = stake_shares / 1e12;
+                    let start_ts = HEX_DAY_ZERO_UNIX + (locked_day as i64 * 86400);
+                    let end_ts =
+                        HEX_DAY_ZERO_UNIX + ((locked_day + staked_days) as i64 * 86400);
+                    let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
+                        .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
+                        .format("%d-%m-%Y")
+                        .to_string();
+                    let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
+                        .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
+                        .format("%d-%m-%Y")
+                        .to_string();
+
+                    let status = if unlocked_day > 0 {
+                        "completed"
+                    } else if current_day >= locked_day + staked_days {
+                        "matured"
+                    } else {
+                        "active"
+                    };
+
+                    (
+                        i,
+                        Ok(Miner {
+                            id: None,
+                            address: addr,
+                            start_date,
+                            end_date,
+                            t_shares,
+                            stake_id: Some(stake_id),
+                            unlocked_day: Some(unlocked_day),
+                            locked_day: Some(locked_day),
+                            staked_days: Some(staked_days),
+                            is_auto_stake: Some(is_auto_stake),
+                            staked_hearts: Some(staked_hearts),
+                            status: Some(status.to_string()),
+                        }),
+                    )
+                }
+            })
+            .buffer_unordered(WALLET_STAKE_CONCURRENCY)
+            .collect()
+            .await;
+
+        for (_, result) in stake_results {
+            match result {
+                Ok(miner) => all_miners.push(miner),
+                Err(e) => warn!("{}", e),
+            }
+        }
+
+        // Small delay between addresses to avoid rate-limiting.
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
+
     Ok(all_miners)
 }
 
@@ -1540,8 +1683,7 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
             }
             result = rx.recv() => {
                 match result {
-                    Ok(_) => {
-                    }
+                    Ok(_) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!("Config receiver lagged by {}", n);
                     }
@@ -1568,7 +1710,7 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
                 let known_days: HashSet<u64> =
                     file_data.iter().map(|e| e.current_day).collect();
 
-                let missing_count = (1..day_count)
+                let missing_count = (BACKFILL_START_DAY..day_count)
                     .filter(|day| !known_days.contains(day))
                     .count();
 
@@ -1577,7 +1719,6 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
                         "HEXJSON has {} missing days. Backfilling/catching up...",
                         missing_count
                     );
-
                     let updated = backfill_hex_json(&client, &state, &file_data).await;
                     save_hex_json_to_file(&updated).await;
                     updated
@@ -1604,23 +1745,19 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
 
     loop {
         let sleep_duration = get_duration_until_next_1am_utc();
-
         info!(
             "HEXJSON updater sleeping for {:?} until next 1 AM UTC recording...",
             sleep_duration
         );
 
         tokio::time::sleep(sleep_duration).await;
-
         info!(
             "Waiting {} seconds for chain rollover to settle...",
             DAILY_RECORD_SETTLE_DELAY_SECS
         );
-
         tokio::time::sleep(Duration::from_secs(DAILY_RECORD_SETTLE_DELAY_SECS)).await;
 
         info!("Running daily HEXJSON recording...");
-
         let mut delay = Duration::from_secs(5);
         let max_retries = 10;
         let mut recorded = false;
@@ -1647,7 +1784,6 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
                     );
                 }
             }
-
             tokio::time::sleep(delay).await;
             delay = std::cmp::min(delay * 2, Duration::from_secs(120));
         }
@@ -1708,7 +1844,6 @@ async fn test_rpc(client: &Client, url: &str) -> bool {
 async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
     loop {
         tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
-
         let current_idx = *state.active_rpc_idx.read().await;
 
         if current_idx != 0 {
@@ -1716,7 +1851,6 @@ async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
                 "24h RPC health check: Testing primary RPC endpoint ({})...",
                 RPC_ENDPOINTS[0]
             );
-
             if test_rpc(&client, RPC_ENDPOINTS[0]).await {
                 info!("Primary RPC endpoint is back online. Switching back.");
                 *state.active_rpc_idx.write().await = 0;
@@ -1725,6 +1859,42 @@ async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
             }
         }
     }
+}
+
+fn miners_differ(current: &[Miner], fetched: &[Miner]) -> bool {
+    if current.len() != fetched.len() {
+        return true;
+    }
+
+    let mut curr_sorted: Vec<_> = current.iter().collect();
+    let mut fetch_sorted: Vec<_> = fetched.iter().collect();
+
+    let key = |m: &&Miner| {
+        (
+            m.stake_id.unwrap_or(0),
+            m.start_date.clone(),
+            m.end_date.clone(),
+            (m.t_shares * 100.0).round() as i64,
+            m.status.clone(),
+            m.unlocked_day,
+        )
+    };
+
+    curr_sorted.sort_by_key(key);
+    fetch_sorted.sort_by_key(key);
+
+    for (a, b) in curr_sorted.iter().zip(fetch_sorted.iter()) {
+        if a.stake_id != b.stake_id
+            || a.start_date != b.start_date
+            || a.end_date != b.end_date
+            || (a.t_shares - b.t_shares).abs() > 0.001
+            || a.status != b.status
+            || a.unlocked_day != b.unlocked_day
+        {
+            return true;
+        }
+    }
+    false
 }
 
 async fn wallet_updater(state: Arc<AppState>, client: Client) {
@@ -1741,16 +1911,17 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         current_addresses = addresses.clone();
 
         if addresses_changed && !addresses.trim().is_empty() {
+            // ---- Update liquid HEX balance ----
             match fetch_wallet_balances(&client, &addresses).await {
                 Ok(balance) => {
                     let mut config = state.config.write().await;
                     config.liquid_hex = balance;
                     let new_config = sanitize_config(config.clone());
                     *config = new_config.clone();
-                    
+
                     let mut live_data = state.live_data.write().await;
                     live_data.liquid_hex = new_config.liquid_hex;
-                    
+
                     drop(config);
                     drop(live_data);
                     save_config_to_file(&new_config).await;
@@ -1760,29 +1931,34 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                 Err(e) => warn!("Wallet balance fetch failed: {}", e),
             }
 
+            // ---- Fetch all stakes (active + matured + completed) ----
             match fetch_wallet_miners(&client, &state, &addresses).await {
                 Ok(fetched_miners) => {
                     let mut miners_lock = state.miners.write().await;
                     let current_miners = miners_lock.clone();
-                    let mut preserved_miners = Vec::new();
-
                     let current_addresses_set: HashSet<String> = addresses
                         .split(',')
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
 
+                    let mut preserved_miners = Vec::new();
                     for saved in &current_miners {
                         let is_in_fetched = fetched_miners.iter().any(|f| {
-                            f.start_date == saved.start_date
-                                && f.end_date == saved.end_date
-                                && (f.t_shares - saved.t_shares).abs() < 0.01
+                            if let (Some(f_id), Some(s_id)) = (f.stake_id, saved.stake_id) {
+                                f_id == s_id
+                            } else {
+                                f.start_date == saved.start_date
+                                    && f.end_date == saved.end_date
+                                    && (f.t_shares - saved.t_shares).abs() < 0.01
+                            }
                         });
 
                         if !is_in_fetched {
                             let is_manual = saved.address.is_empty();
-                            let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
-                            
+                            let addr_still_tracked =
+                                is_manual || current_addresses_set.contains(&saved.address);
+
                             if addr_still_tracked {
                                 preserved_miners.push(saved.clone());
                             } else if saved.status.as_deref() == Some("completed") {
@@ -1794,37 +1970,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     let mut merged_miners = fetched_miners;
                     merged_miners.extend(preserved_miners);
 
-                    let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
-                        .iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                        .collect();
-                    curr_norm.sort_by(|a, b| {
-                        a.0.cmp(&b.0)
-                            .then(a.1.cmp(&b.1))
-                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                    });
-
-                    let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
-                        .iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                        .collect();
-                    merge_norm.sort_by(|a, b| {
-                        a.0.cmp(&b.0)
-                            .then(a.1.cmp(&b.1))
-                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                    });
-
-                    let mut is_different = curr_norm.len() != merge_norm.len();
-                    if !is_different {
-                        for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
-                            if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
-                                is_different = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if is_different {
+                    if miners_differ(&current_miners, &merged_miners) {
                         info!("Miners changed! Updating active and cleaning up removed addresses.");
                         let (normalized, next_id) = normalize_miners(merged_miners);
                         state.next_miner_id.store(next_id, Ordering::SeqCst);
@@ -1850,16 +1996,17 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
         tokio::select! {
             _ = &mut sleep => {
+                // ---- Periodic liquid HEX refresh ----
                 match fetch_wallet_balances(&client, &addresses).await {
                     Ok(balance) => {
                         let mut config = state.config.write().await;
                         config.liquid_hex = balance;
                         let new_config = sanitize_config(config.clone());
                         *config = new_config.clone();
-                        
+
                         let mut live_data = state.live_data.write().await;
                         live_data.liquid_hex = new_config.liquid_hex;
-                        
+
                         drop(config);
                         drop(live_data);
                         save_config_to_file(&new_config).await;
@@ -1867,29 +2014,36 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                     }
                     Err(e) => warn!("Wallet balance fetch failed: {}", e),
                 }
-                
+
+                // ---- Periodic stake refresh ----
                 match fetch_wallet_miners(&client, &state, &addresses).await {
                     Ok(fetched_miners) => {
                         let mut miners_lock = state.miners.write().await;
                         let current_miners = miners_lock.clone();
-                        let mut preserved_miners = Vec::new();
-                        
+
                         let current_addresses_set: HashSet<String> = addresses
                             .split(',')
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty())
                             .collect();
 
+                        let mut preserved_miners = Vec::new();
                         for saved in &current_miners {
                             let is_in_fetched = fetched_miners.iter().any(|f| {
-                                f.start_date == saved.start_date
-                                    && f.end_date == saved.end_date
-                                    && (f.t_shares - saved.t_shares).abs() < 0.01
+                                if let (Some(f_id), Some(s_id)) = (f.stake_id, saved.stake_id) {
+                                    f_id == s_id
+                                } else {
+                                    f.start_date == saved.start_date
+                                        && f.end_date == saved.end_date
+                                        && (f.t_shares - saved.t_shares).abs() < 0.01
+                                }
                             });
+
                             if !is_in_fetched {
                                 let is_manual = saved.address.is_empty();
-                                let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
-                                
+                                let addr_still_tracked = is_manual
+                                    || current_addresses_set.contains(&saved.address);
+
                                 if addr_still_tracked {
                                     preserved_miners.push(saved.clone());
                                 } else if saved.status.as_deref() == Some("completed") {
@@ -1901,37 +2055,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                         let mut merged_miners = fetched_miners;
                         merged_miners.extend(preserved_miners);
 
-                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
-                            .iter()
-                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                            .collect();
-                        curr_norm.sort_by(|a, b| {
-                            a.0.cmp(&b.0)
-                                .then(a.1.cmp(&b.1))
-                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                        });
-
-                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
-                            .iter()
-                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                            .collect();
-                        merge_norm.sort_by(|a, b| {
-                            a.0.cmp(&b.0)
-                                .then(a.1.cmp(&b.1))
-                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                        });
-
-                        let mut is_different = curr_norm.len() != merge_norm.len();
-                        if !is_different {
-                            for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
-                                if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
-                                    is_different = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if is_different {
+                        if miners_differ(&current_miners, &merged_miners) {
                             let (normalized, next_id) = normalize_miners(merged_miners);
                             state.next_miner_id.store(next_id, Ordering::SeqCst);
                             *miners_lock = normalized.clone();
@@ -1956,7 +2080,6 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 // =============================================
 // API HANDLERS
 // =============================================
-
 async fn handle_live_data(State(state): State<Arc<AppState>>) -> Json<LiveData> {
     Json(state.live_data.read().await.clone())
 }
@@ -1991,9 +2114,7 @@ async fn handle_hex_json(
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
     {
-        if if_none_match == etag
-            || if_none_match.trim_matches('"') == etag.trim_matches('"')
-        {
+        if if_none_match == etag || if_none_match.trim_matches('"') == etag.trim_matches('"') {
             return match Response::builder()
                 .status(StatusCode::NOT_MODIFIED)
                 .header(
@@ -2018,26 +2139,22 @@ async fn handle_hex_json(
     } else {
         let from = query.from.unwrap_or(0);
         let limit = query.limit.unwrap_or(usize::MAX);
-
         let filtered: Vec<HexJsonEntry> = data
             .iter()
             .filter(|entry| entry.current_day >= from)
             .take(limit)
             .cloned()
             .collect();
-
         Json(filtered).into_response()
     };
 
     if let Ok(etag_value) = header::HeaderValue::from_str(&etag) {
         response.headers_mut().insert(header::ETAG, etag_value);
     }
-
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-cache"),
     );
-
     response
 }
 
@@ -2050,18 +2167,15 @@ async fn handle_post_config(
     Json(new_config): Json<Config>,
 ) -> impl IntoResponse {
     let new_config = sanitize_config(new_config);
-
     {
         let mut config = state.config.write().await;
         *config = new_config.clone();
-        
+
         let mut live_data = state.live_data.write().await;
         live_data.liquid_hex = new_config.liquid_hex;
     }
-
     let _ = state.config_tx.send(());
     save_config_to_file(&new_config).await;
-
     StatusCode::OK
 }
 
@@ -2079,7 +2193,6 @@ async fn handle_add_miner(
     if end < start {
         return StatusCode::BAD_REQUEST;
     }
-
     if req.t_shares <= 0.0 || !req.t_shares.is_finite() {
         return StatusCode::BAD_REQUEST;
     }
@@ -2092,17 +2205,21 @@ async fn handle_add_miner(
         start_date: req.start_date,
         end_date: req.end_date,
         t_shares: req.t_shares,
+        stake_id: None,
+        unlocked_day: None,
+        locked_day: None,
+        staked_days: None,
+        is_auto_stake: None,
+        staked_hearts: None,
         status: None,
     };
 
     let mut miners = state.miners.write().await;
     miners.push(miner);
-
     let miners_clone = miners.clone();
     drop(miners);
 
     save_miners_to_file(&miners_clone).await;
-
     StatusCode::CREATED
 }
 
@@ -2112,10 +2229,7 @@ async fn handle_end_miner(
 ) -> impl IntoResponse {
     let mut miners = state.miners.write().await;
 
-    let Some(miner) = miners
-        .iter_mut()
-        .find(|m| m.id == Some(req.id))
-    else {
+    let Some(miner) = miners.iter_mut().find(|m| m.id == Some(req.id)) else {
         return StatusCode::BAD_REQUEST;
     };
 
@@ -2125,7 +2239,6 @@ async fn handle_end_miner(
     drop(miners);
 
     save_miners_to_file(&miners_clone).await;
-
     StatusCode::OK
 }
 
@@ -2146,7 +2259,6 @@ async fn handle_delete_miner(
     drop(miners);
 
     save_miners_to_file(&miners_clone).await;
-
     StatusCode::OK
 }
 
@@ -2163,7 +2275,9 @@ async fn main() {
         )
         .init();
 
-    tokio::fs::create_dir_all(get_data_dir()).await.expect("Failed to create data dir");
+    tokio::fs::create_dir_all(get_data_dir())
+        .await
+        .expect("Failed to create data dir");
 
     let initial_config = match tokio::fs::read_to_string(config_file_path()).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
@@ -2223,13 +2337,18 @@ async fn main() {
         .fallback(get(|uri: axum::http::Uri| async move {
             let path = uri.path().trim_start_matches('/');
             let path = if path.is_empty() { "index.html" } else { path };
-            if path.contains("..") { return Err(StatusCode::NOT_FOUND); }
+            if path.contains("..") {
+                return Err(StatusCode::NOT_FOUND);
+            }
             match Assets::get(path) {
                 Some(content) => {
                     let mime = get_mime_type(path);
-                    Ok::<_, StatusCode>(axum::response::Response::builder()
-                        .header("Content-Type", mime)
-                        .body(axum::body::Body::from(content.data.into_owned())).unwrap())
+                    Ok::<_, StatusCode>(
+                        axum::response::Response::builder()
+                            .header("Content-Type", mime)
+                            .body(axum::body::Body::from(content.data.into_owned()))
+                            .unwrap(),
+                    )
                 }
                 None => Err(StatusCode::NOT_FOUND),
             }
@@ -2238,7 +2357,8 @@ async fn main() {
         .with_state(state);
 
     let addr: SocketAddr = std::env::var("HEXFETCH_BIND")
-        .ok().and_then(|s| s.parse().ok())
+        .ok()
+        .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 5555)));
 
     info!("⬢ HEXTRACK starting on {} ⬢", addr);
