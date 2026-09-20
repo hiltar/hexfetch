@@ -1001,6 +1001,7 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
                 .map(|s| s == "USDC" || s == "USDC.e")
                 .unwrap_or(false)
         })
+        .copied()
         .or_else(|| pulsechain_pairs.first().copied());
 
     let price = pair
