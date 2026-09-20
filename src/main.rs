@@ -47,6 +47,8 @@ const BACKFILL_DELAY_MS: u64 = 60;
 const BACKFILL_SAVE_INTERVAL: usize = 500;
 const BACKFILL_CONCURRENCY: usize = 6;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
+// Safety cap: refuse to iterate a stake count above this (garbage RPC data protection)
+const MAX_STAKE_COUNT: u64 = 10_000;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -98,22 +100,22 @@ pub struct HexJsonEntry {
 pub struct LiveData {
     #[serde(rename = "price_Pulsechain")]
     pub price_pulsechain: f64,
-    
+
     #[serde(rename = "tsharePrice_Pulsechain")]
     pub tshare_price_pulsechain: f64,
-    
+
     #[serde(rename = "tshareRateHEX_Pulsechain")]
     pub tshare_rate_hex_pulsechain: f64,
-    
+
     #[serde(rename = "penaltiesHEX_Pulsechain")]
     pub penalties_hex_pulsechain: f64,
-    
+
     #[serde(rename = "payoutPerTshare_Pulsechain")]
     pub payout_per_tshare_pulsechain: f64,
-    
+
     #[serde(rename = "beat")]
     pub beat: f64,
-    
+
     #[serde(rename = "liquidHEX", default)]
     pub liquid_hex: f64,
 }
@@ -157,6 +159,7 @@ struct MinerIdRequest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 pub struct Config {
     #[serde(rename = "liveDataFrequency")]
     pub live_data_frequency: u64,
@@ -169,6 +172,17 @@ pub struct Config {
 
     #[serde(rename = "walletAddresses", default)]
     pub wallet_addresses: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            live_data_frequency: 15,
+            liquid_hex: 0.0,
+            historical_start_day: 1256,
+            wallet_addresses: String::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -348,6 +362,19 @@ fn repair_historical_values(entries: &mut [HexJsonEntry]) {
 // =============================================
 
 fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
+    // Strictly require DD-MM-YYYY before handing to chrono, which is lenient
+    // about zero-padding (e.g. it accepts "1-1-2021").
+    let b = s.as_bytes();
+    let digits_ok = b.len() == 10
+        && b[2] == b'-'
+        && b[5] == b'-'
+        && b[..2].iter().all(|c| c.is_ascii_digit())
+        && b[3..5].iter().all(|c| c.is_ascii_digit())
+        && b[6..].iter().all(|c| c.is_ascii_digit());
+    if !digits_ok {
+        return None;
+    }
+
     let date = NaiveDate::parse_from_str(s, "%d-%m-%Y").ok()?;
 
     let y = date.year();
@@ -435,27 +462,6 @@ impl U256 {
         }
 
         result
-    }
-}
-
-impl std::ops::Sub<u64> for U256 {
-    type Output = Self;
-
-    fn sub(self, rhs: u64) -> Self {
-        let mut limbs = self.0;
-
-        let (res, overflow) = limbs[0].overflowing_sub(rhs);
-        limbs[0] = res;
-
-        let mut borrow = if overflow { 1 } else { 0 };
-
-        for limb in limbs.iter_mut().skip(1) {
-            let (res, overflow) = limb.overflowing_sub(borrow);
-            *limb = res;
-            borrow = if overflow { 1 } else { 0 };
-        }
-
-        Self(limbs)
     }
 }
 
@@ -968,17 +974,36 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
         .await
         .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
 
-    let price = resp
+    // FIX: among PulseChain pairs, prefer the USDC-quoted pair. The first
+    // pulsechain pair in the list can be an illiquid/derivative pool whose
+    // implied USD price is off.
+    let pulsechain_pairs: Vec<&serde_json::Value> = resp
         .get("pairs")
         .and_then(|pairs| pairs.as_array())
-        .and_then(|pairs| {
-            pairs.iter().find(|pair| {
-                pair.get("chainId")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c == "pulsechain")
-                    .unwrap_or(false)
-            })
+        .map(|pairs| {
+            pairs
+                .iter()
+                .filter(|pair| {
+                    pair.get("chainId")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c == "pulsechain")
+                        .unwrap_or(false)
+                })
+                .collect()
         })
+        .unwrap_or_default();
+
+    let pair = pulsechain_pairs
+        .iter()
+        .find(|pair| {
+            pair.pointer("/quoteToken/symbol")
+                .and_then(|s| s.as_str())
+                .map(|s| s == "USDC" || s == "USDC.e")
+                .unwrap_or(false)
+        })
+        .or_else(|| pulsechain_pairs.first().copied());
+
+    let price = pair
         .and_then(|pair| pair.get("priceUsd"))
         .and_then(|price| {
             price
@@ -1095,10 +1120,18 @@ async fn backfill_hex_json(
     let day_count = finder.current_hex_day;
     let current_tshare_rate = finder.current_tshare_rate;
 
-info!(
-    "Backfill start day: {}, current day count: {}",
-    1256, day_count
-);
+    // FIX: use the configured historical start day instead of a hardcoded
+    // constant. The frontend exposes this as "historicalStartDay"; the
+    // previous code ignored it and always started at day 1256.
+    let start_day = {
+        let config = state.config.read().await;
+        sanitize_config(config.clone()).historical_start_day
+    };
+
+    info!(
+        "Backfill start day: {}, current day count: {}",
+        start_day, day_count
+    );
 
     info!(
         "globals(): tshareRate={:.1} HEX, dailyDataCount={}",
@@ -1116,7 +1149,7 @@ info!(
         by_day.insert(entry.current_day, entry.clone());
     }
 
-    let missing_days: Vec<u64> = (1256..day_count)
+    let missing_days: Vec<u64> = (start_day..day_count)
         .filter(|day| !by_day.contains_key(day))
         .collect();
 
@@ -1395,7 +1428,7 @@ async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f
 
     for addr in addresses {
         let url = format!("https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances", addr);
-        
+
         match client.get(&url).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
@@ -1405,12 +1438,12 @@ async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f
                                 let is_hex = token.get("address")
                                     .and_then(|a| a.as_str())
                                     .map(|a| a.to_lowercase() == hex_contract_lower)
-                                    .unwrap_or(false) || 
+                                    .unwrap_or(false) ||
                                     token.get("symbol")
                                     .and_then(|s| s.as_str())
                                     .map(|s| s == "HEX")
                                     .unwrap_or(false);
-                                    
+
                                 if is_hex {
                                     if let Some(value_str) = b.get("value").and_then(|v| v.as_str()) {
                                         if let Ok(val) = value_str.parse::<f64>() {
@@ -1452,53 +1485,175 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
         let addr_padded = format!("000000000000000000000000{}", &addr[2..]);
         let count_data = format!("0x{}{}", stake_count_selector, addr_padded);
         let count_req = serde_json::json!([{ "to": hex_contract, "data": count_data }, "latest"]);
-        
+
         let count_hex = match call_rpc(client, state, "eth_call", count_req).await {
             Ok(h) => h,
             Err(e) => { warn!("Failed to get stakeCount for {}: {}", addr, e); continue; }
         };
-        
+
         let count = U256::from_hex(count_hex.trim()).to_f64() as u64;
-        
+
+        // FIX: sanity cap on the stake count. If an RPC returns garbage
+        // (truncated/invalid hex), parse_hex_u64 yields 0 or a bogus value;
+        // without a cap we could loop for days at 100ms per iteration.
+        if count > MAX_STAKE_COUNT {
+            warn!("Unrealistic stake count {} for {}, skipping address", count, addr);
+            continue;
+        }
+
         for i in 0..count {
             let idx_hex = format!("{:064x}", i);
             let list_data = format!("0x{}{}{}", stake_lists_selector, addr_padded, idx_hex);
             let list_req = serde_json::json!([{ "to": hex_contract, "data": list_data }, "latest"]);
-            
+
             let res_hex = match call_rpc(client, state, "eth_call", list_req).await {
                 Ok(h) => h,
                 Err(e) => { warn!("Failed to get stakeLists for {} index {}: {}", addr, i, e); continue; }
             };
-            
+
             let res_str = res_hex.trim().strip_prefix("0x").unwrap_or(res_hex.trim());
-            
-            if res_str.len() >= 448 {
+
+            // FIX: the HEX StakeList struct has 6 fields, each ABI-padded to
+            // 32 bytes -> 6 * 64 = 384 hex chars. The old check required 448
+            // chars (7 slots), which never matches, so wallet miners were
+            // silently never imported. The fields we read end at index 320,
+            // but the full struct is 384 chars.
+            if res_str.len() >= 384 {
                 let stake_shares = U256::from_hex(&res_str[128..192]).to_f64();
                 let locked_day = U256::from_hex(&res_str[192..256]).to_f64() as u64;
                 let staked_days = U256::from_hex(&res_str[256..320]).to_f64() as u64;
-                
+
                 let t_shares = stake_shares / 1e12;
                 let start_ts = hex_day_zero + (locked_day as i64 * 86400);
                 let end_ts = hex_day_zero + ((locked_day + staked_days) as i64 * 86400);
-                
+
                 let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
                     .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
                 let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
                     .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
 
-                all_miners.push(Miner { 
-                    id: None, 
-                    address: addr.to_string(), 
-                    start_date, 
-                    end_date, 
-                    t_shares, 
-                    status: None 
+                all_miners.push(Miner {
+                    id: None,
+                    address: addr.to_string(),
+                    start_date,
+                    end_date,
+                    t_shares,
+                    status: None
                 });
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
     Ok(all_miners)
+}
+
+// =============================================
+// MINER MERGE HELPERS
+// =============================================
+// FIX: the wallet updater contained two ~60-line copies of the same
+// merge/diff logic that had already drifted apart (one copy logged on
+// change, the other didn't). Centralized here so both call sites behave
+// identically.
+
+fn tracked_address_set(addresses_str: &str) -> HashSet<String> {
+    addresses_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn merge_fetched_miners(current: &[Miner], fetched: Vec<Miner>, tracked: &HashSet<String>) -> Vec<Miner> {
+    let mut preserved = Vec::new();
+
+    for saved in current {
+        let is_in_fetched = fetched.iter().any(|f| {
+            f.start_date == saved.start_date
+                && f.end_date == saved.end_date
+                && (f.t_shares - saved.t_shares).abs() < 0.01
+        });
+
+        if !is_in_fetched {
+            let is_manual = saved.address.is_empty();
+            let addr_still_tracked = is_manual || tracked.contains(&saved.address);
+
+            if addr_still_tracked || saved.status.as_deref() == Some("completed") {
+                preserved.push(saved.clone());
+            }
+        }
+    }
+
+    let mut merged = fetched;
+    merged.extend(preserved);
+    merged
+}
+
+fn miners_equivalent(a: &[Miner], b: &[Miner]) -> bool {
+    fn norm(miners: &[Miner]) -> Vec<(String, String, f64, Option<String>)> {
+        let mut v: Vec<(String, String, f64, Option<String>)> = miners
+            .iter()
+            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
+            .collect();
+        v.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        v
+    }
+
+    let na = norm(a);
+    let nb = norm(b);
+
+    na.len() == nb.len()
+        && na.iter().zip(nb.iter()).all(|(x, y)| {
+            x.0 == y.0 && x.1 == y.1 && (x.2 - y.2).abs() <= 0.001 && x.3 == y.3
+        })
+}
+
+/// Fetch balances + miners for the configured addresses, merge, and persist
+/// if anything changed. Returns true if miners were rewritten.
+async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: &str) {
+    match fetch_wallet_balances(client, addresses).await {
+        Ok(balance) => {
+            let new_config = {
+                let mut config = state.config.write().await;
+                config.liquid_hex = balance;
+                let new_config = sanitize_config(config.clone());
+                *config = new_config.clone();
+
+                let mut live_data = state.live_data.write().await;
+                live_data.liquid_hex = new_config.liquid_hex;
+
+                new_config
+            };
+            save_config_to_file(&new_config).await;
+            info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
+        }
+        Err(e) => warn!("Wallet balance fetch failed: {}", e),
+    }
+
+    match fetch_wallet_miners(client, state, addresses).await {
+        Ok(fetched_miners) => {
+            let tracked = tracked_address_set(addresses);
+
+            let mut miners_lock = state.miners.write().await;
+            let current_miners = miners_lock.clone();
+            let merged = merge_fetched_miners(&current_miners, fetched_miners, &tracked);
+
+            if !miners_equivalent(&current_miners, &merged) {
+                info!("Miners changed! Updating active and cleaning up removed addresses.");
+                let (normalized, next_id) = normalize_miners(merged);
+                state.next_miner_id.store(next_id, Ordering::SeqCst);
+                *miners_lock = normalized.clone();
+                drop(miners_lock);
+                save_miners_to_file(&normalized).await;
+            } else {
+                info!("Fetched miners match saved miners. No disk write needed.");
+            }
+        }
+        Err(e) => warn!("Wallet miners fetch failed: {}", e),
+    }
 }
 
 // =============================================
@@ -1568,7 +1723,16 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
                 let known_days: HashSet<u64> =
                     file_data.iter().map(|e| e.current_day).collect();
 
-                let missing_count = (1..day_count)
+                // FIX: respect the configured historical start day here too,
+                // so the missing-day count matches what backfill actually
+                // fetches (the old code scanned from day 1, which made every
+                // restart report "1255 missing days" forever).
+                let start_day = {
+                    let config = state.config.read().await;
+                    sanitize_config(config.clone()).historical_start_day
+                };
+
+                let missing_count = (start_day..day_count)
                     .filter(|day| !known_days.contains(day))
                     .count();
 
@@ -1740,104 +1904,11 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
+        // FIX: the whole fetch/merge/persist block was duplicated inline
+        // (twice, ~120 lines) with subtle drift. Both paths now call the
+        // same refresh_wallet_data() helper.
         if addresses_changed && !addresses.trim().is_empty() {
-            match fetch_wallet_balances(&client, &addresses).await {
-                Ok(balance) => {
-                    let mut config = state.config.write().await;
-                    config.liquid_hex = balance;
-                    let new_config = sanitize_config(config.clone());
-                    *config = new_config.clone();
-                    
-                    let mut live_data = state.live_data.write().await;
-                    live_data.liquid_hex = new_config.liquid_hex;
-                    
-                    drop(config);
-                    drop(live_data);
-                    save_config_to_file(&new_config).await;
-                    let _ = state.config_tx.send(());
-                    info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
-                }
-                Err(e) => warn!("Wallet balance fetch failed: {}", e),
-            }
-
-            match fetch_wallet_miners(&client, &state, &addresses).await {
-                Ok(fetched_miners) => {
-                    let mut miners_lock = state.miners.write().await;
-                    let current_miners = miners_lock.clone();
-                    let mut preserved_miners = Vec::new();
-
-                    let current_addresses_set: HashSet<String> = addresses
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-
-                    for saved in &current_miners {
-                        let is_in_fetched = fetched_miners.iter().any(|f| {
-                            f.start_date == saved.start_date
-                                && f.end_date == saved.end_date
-                                && (f.t_shares - saved.t_shares).abs() < 0.01
-                        });
-
-                        if !is_in_fetched {
-                            let is_manual = saved.address.is_empty();
-                            let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
-                            
-                            if addr_still_tracked {
-                                preserved_miners.push(saved.clone());
-                            } else if saved.status.as_deref() == Some("completed") {
-                                preserved_miners.push(saved.clone());
-                            }
-                        }
-                    }
-
-                    let mut merged_miners = fetched_miners;
-                    merged_miners.extend(preserved_miners);
-
-                    let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
-                        .iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                        .collect();
-                    curr_norm.sort_by(|a, b| {
-                        a.0.cmp(&b.0)
-                            .then(a.1.cmp(&b.1))
-                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                    });
-
-                    let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
-                        .iter()
-                        .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                        .collect();
-                    merge_norm.sort_by(|a, b| {
-                        a.0.cmp(&b.0)
-                            .then(a.1.cmp(&b.1))
-                            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                    });
-
-                    let mut is_different = curr_norm.len() != merge_norm.len();
-                    if !is_different {
-                        for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
-                            if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
-                                is_different = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if is_different {
-                        info!("Miners changed! Updating active and cleaning up removed addresses.");
-                        let (normalized, next_id) = normalize_miners(merged_miners);
-                        state.next_miner_id.store(next_id, Ordering::SeqCst);
-                        *miners_lock = normalized.clone();
-                        drop(miners_lock);
-                        save_miners_to_file(&normalized).await;
-                    } else {
-                        drop(miners_lock);
-                        info!("Fetched miners match saved miners. No disk write needed.");
-                    }
-                }
-                Err(e) => warn!("Wallet miners fetch failed: {}", e),
-            }
+            refresh_wallet_data(&client, &state, &addresses).await;
         }
 
         if addresses.trim().is_empty() {
@@ -1850,99 +1921,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
         tokio::select! {
             _ = &mut sleep => {
-                match fetch_wallet_balances(&client, &addresses).await {
-                    Ok(balance) => {
-                        let mut config = state.config.write().await;
-                        config.liquid_hex = balance;
-                        let new_config = sanitize_config(config.clone());
-                        *config = new_config.clone();
-                        
-                        let mut live_data = state.live_data.write().await;
-                        live_data.liquid_hex = new_config.liquid_hex;
-                        
-                        drop(config);
-                        drop(live_data);
-                        save_config_to_file(&new_config).await;
-                        let _ = state.config_tx.send(());
-                    }
-                    Err(e) => warn!("Wallet balance fetch failed: {}", e),
-                }
-                
-                match fetch_wallet_miners(&client, &state, &addresses).await {
-                    Ok(fetched_miners) => {
-                        let mut miners_lock = state.miners.write().await;
-                        let current_miners = miners_lock.clone();
-                        let mut preserved_miners = Vec::new();
-                        
-                        let current_addresses_set: HashSet<String> = addresses
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect();
-
-                        for saved in &current_miners {
-                            let is_in_fetched = fetched_miners.iter().any(|f| {
-                                f.start_date == saved.start_date
-                                    && f.end_date == saved.end_date
-                                    && (f.t_shares - saved.t_shares).abs() < 0.01
-                            });
-                            if !is_in_fetched {
-                                let is_manual = saved.address.is_empty();
-                                let addr_still_tracked = is_manual || current_addresses_set.contains(&saved.address);
-                                
-                                if addr_still_tracked {
-                                    preserved_miners.push(saved.clone());
-                                } else if saved.status.as_deref() == Some("completed") {
-                                    preserved_miners.push(saved.clone());
-                                }
-                            }
-                        }
-
-                        let mut merged_miners = fetched_miners;
-                        merged_miners.extend(preserved_miners);
-
-                        let mut curr_norm: Vec<(String, String, f64, Option<String>)> = current_miners
-                            .iter()
-                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                            .collect();
-                        curr_norm.sort_by(|a, b| {
-                            a.0.cmp(&b.0)
-                                .then(a.1.cmp(&b.1))
-                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                        });
-
-                        let mut merge_norm: Vec<(String, String, f64, Option<String>)> = merged_miners
-                            .iter()
-                            .map(|m| (m.start_date.clone(), m.end_date.clone(), m.t_shares, m.status.clone()))
-                            .collect();
-                        merge_norm.sort_by(|a, b| {
-                            a.0.cmp(&b.0)
-                                .then(a.1.cmp(&b.1))
-                                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-                        });
-
-                        let mut is_different = curr_norm.len() != merge_norm.len();
-                        if !is_different {
-                            for (c, f) in curr_norm.iter().zip(merge_norm.iter()) {
-                                if c.0 != f.0 || c.1 != f.1 || (c.2 - f.2).abs() > 0.001 || c.3 != f.3 {
-                                    is_different = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if is_different {
-                            let (normalized, next_id) = normalize_miners(merged_miners);
-                            state.next_miner_id.store(next_id, Ordering::SeqCst);
-                            *miners_lock = normalized.clone();
-                            drop(miners_lock);
-                            save_miners_to_file(&normalized).await;
-                        } else {
-                            drop(miners_lock);
-                        }
-                    }
-                    Err(e) => warn!("Wallet miners fetch failed: {}", e),
-                }
+                refresh_wallet_data(&client, &state, &addresses).await;
             }
             result = rx.recv() => {
                 if let Err(_) = result {
@@ -2054,7 +2033,7 @@ async fn handle_post_config(
     {
         let mut config = state.config.write().await;
         *config = new_config.clone();
-        
+
         let mut live_data = state.live_data.write().await;
         live_data.liquid_hex = new_config.liquid_hex;
     }
@@ -2165,19 +2144,11 @@ async fn main() {
 
     tokio::fs::create_dir_all(get_data_dir()).await.expect("Failed to create data dir");
 
+    // FIX: use the Default impl + serde defaults so a config file written by
+    // an older version (missing fields) doesn't silently reset user settings.
     let initial_config = match tokio::fs::read_to_string(config_file_path()).await {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1256,
-            wallet_addresses: String::new(),
-        }),
-        Err(_) => Config {
-            live_data_frequency: 15,
-            liquid_hex: 0.0,
-            historical_start_day: 1256,
-            wallet_addresses: String::new(),
-        },
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Config::default(),
     };
     let initial_config = sanitize_config(initial_config);
 
