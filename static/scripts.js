@@ -624,8 +624,18 @@ window.deleteMiner = deleteMiner;
 
 async function initialLoad() {
     try {
-        const [minersRes, cfgRes, hexData] = await Promise.all([
-            fetch('/api/miners'), fetch('/api/config'), fetchHexJsonWithCache()
+        // FIX: a failure of the hexjson fetch must not kill the whole UI
+        // (miners, live data, settings). Previously a single failed request
+        // in Promise.all left the entire page on the error path.
+        let hexData = [];
+        try {
+            hexData = await fetchHexJsonWithCache();
+        } catch (hexErr) {
+            console.error('HEXJSON fetch failed, continuing without historical data', hexErr);
+        }
+
+        const [minersRes, cfgRes] = await Promise.all([
+            fetch('/api/miners'), fetch('/api/config')
         ]);
         const miners = await minersRes.json();
         const cfg = await cfgRes.json();
@@ -775,7 +785,13 @@ async function initialLoad() {
 // ACTIONS & CONFIG
 // =============================================
 
-document.getElementById('add-miner-btn').addEventListener('click', () => {
+// FIX: previously the click handler was only attached to the button while the
+// form's onsubmit programmatically clicked that same submit button — a
+// click() on a submit button re-triggers form submission, which called
+// click() again: infinite recursion spamming POST /api/add-miner. This is now
+// a plain function called from both entry points, and the button is
+// type="button" so it can never implicitly submit the form.
+function submitAddMiner() {
     const sd = document.getElementById('start-date').value;
     const ed = document.getElementById('end-date').value;
     const ts = parseFloat(document.getElementById('tshares').value);
@@ -786,7 +802,7 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
     if (endDate < startDate) return showNotification('End date must be after start date', 'danger');
     
     const btn = document.getElementById('add-miner-btn');
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
     fetch('/api/add-miner', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ startDate: sd, endDate: ed, tShares: ts })
@@ -799,8 +815,13 @@ document.getElementById('add-miner-btn').addEventListener('click', () => {
             initialLoad();
         } else { showNotification('Error adding miner', 'danger'); }
     }).catch(() => showNotification('Network error', 'danger'))
-    .finally(() => btn.disabled = false);
-});
+    .finally(() => { if (btn) btn.disabled = false; });
+}
+
+window.submitAddMiner = submitAddMiner;
+
+const addMinerBtn = document.getElementById('add-miner-btn');
+if (addMinerBtn) addMinerBtn.addEventListener('click', submitAddMiner);
 
 function debouncedSaveConfig() {
     if (saveInProgress) return;
