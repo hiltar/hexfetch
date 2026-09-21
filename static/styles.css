@@ -434,23 +434,6 @@ a:hover {
     flex: none;
 }
 
-/* Ticker fade mask (right side) */
-.live-ticker-wrap::after {
-    content: "";
-    position: absolute;
-    top: 0; bottom: 0; right: 0;
-    width: 2.5rem;
-    background: linear-gradient(to left, var(--surface) 10%, transparent);
-    pointer-events: none;
-    z-index: 2;
-    opacity: 0;
-    transition: opacity 0.3s;
-}
-
-.live-ticker-wrap.has-overflow::after {
-    opacity: 1;
-}
-
 /* Mobile-only ticker head elements */
 .ticker-title {
     display: inline-flex;
