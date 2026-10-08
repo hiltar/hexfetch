@@ -47,7 +47,6 @@ const BACKFILL_DELAY_MS: u64 = 60;
 const BACKFILL_SAVE_INTERVAL: usize = 500;
 const BACKFILL_CONCURRENCY: usize = 6;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
-// Safety cap: refuse to iterate a stake count above this (garbage RPC data protection)
 const MAX_STAKE_COUNT: u64 = 10_000;
 
 #[derive(RustEmbed)]
@@ -362,8 +361,6 @@ fn repair_historical_values(entries: &mut [HexJsonEntry]) {
 // =============================================
 
 fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
-    // Strictly require DD-MM-YYYY before handing to chrono, which is lenient
-    // about zero-padding (e.g. it accepts "1-1-2021").
     let b = s.as_bytes();
     let digits_ok = b.len() == 10
         && b[2] == b'-'
@@ -974,9 +971,6 @@ async fn fetch_price_dexscreener(client: &Client) -> Result<f64, String> {
         .await
         .map_err(|e| format!("DEXScreener JSON parse failed: {}", e))?;
 
-    // FIX: among PulseChain pairs, prefer the USDC-quoted pair. The first
-    // pulsechain pair in the list can be an illiquid/derivative pool whose
-    // implied USD price is off.
     let pulsechain_pairs: Vec<&serde_json::Value> = resp
         .get("pairs")
         .and_then(|pairs| pairs.as_array())
@@ -1120,10 +1114,6 @@ async fn backfill_hex_json(
 
     let day_count = finder.current_hex_day;
     let current_tshare_rate = finder.current_tshare_rate;
-
-    // FIX: use the configured historical start day instead of a hardcoded
-    // constant. The frontend exposes this as "historicalStartDay"; the
-    // previous code ignored it and always started at day 1256.
     let start_day = {
         let config = state.config.read().await;
         sanitize_config(config.clone()).historical_start_day
@@ -1494,9 +1484,6 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
 
         let count = U256::from_hex(count_hex.trim()).to_f64() as u64;
 
-        // FIX: sanity cap on the stake count. If an RPC returns garbage
-        // (truncated/invalid hex), parse_hex_u64 yields 0 or a bogus value;
-        // without a cap we could loop for days at 100ms per iteration.
         if count > MAX_STAKE_COUNT {
             warn!("Unrealistic stake count {} for {}, skipping address", count, addr);
             continue;
@@ -1514,11 +1501,6 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
 
             let res_str = res_hex.trim().strip_prefix("0x").unwrap_or(res_hex.trim());
 
-            // FIX: the HEX StakeList struct has 6 fields, each ABI-padded to
-            // 32 bytes -> 6 * 64 = 384 hex chars. The old check required 448
-            // chars (7 slots), which never matches, so wallet miners were
-            // silently never imported. The fields we read end at index 320,
-            // but the full struct is 384 chars.
             if res_str.len() >= 384 {
                 let stake_shares = U256::from_hex(&res_str[128..192]).to_f64();
                 let locked_day = U256::from_hex(&res_str[192..256]).to_f64() as u64;
@@ -1551,10 +1533,6 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
 // =============================================
 // MINER MERGE HELPERS
 // =============================================
-// FIX: the wallet updater contained two ~60-line copies of the same
-// merge/diff logic that had already drifted apart (one copy logged on
-// change, the other didn't). Centralized here so both call sites behave
-// identically.
 
 fn tracked_address_set(addresses_str: &str) -> HashSet<String> {
     addresses_str
@@ -1612,8 +1590,6 @@ fn miners_equivalent(a: &[Miner], b: &[Miner]) -> bool {
         })
 }
 
-/// Fetch balances + miners for the configured addresses, merge, and persist
-/// if anything changed. Returns true if miners were rewritten.
 async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: &str) {
     match fetch_wallet_balances(client, addresses).await {
         Ok(balance) => {
@@ -1625,11 +1601,10 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
 
                 let mut live_data = state.live_data.write().await;
                 live_data.liquid_hex = new_config.liquid_hex;
-
                 new_config
             };
             save_config_to_file(&new_config).await;
-            info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
+            // info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
         }
         Err(e) => warn!("Wallet balance fetch failed: {}", e),
     }
@@ -1650,7 +1625,7 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
                 drop(miners_lock);
                 save_miners_to_file(&normalized).await;
             } else {
-                info!("Fetched miners match saved miners. No disk write needed.");
+                // info!("Fetched miners match saved miners. No disk write needed.");
             }
         }
         Err(e) => warn!("Wallet miners fetch failed: {}", e),
@@ -1724,10 +1699,6 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
                 let known_days: HashSet<u64> =
                     file_data.iter().map(|e| e.current_day).collect();
 
-                // FIX: respect the configured historical start day here too,
-                // so the missing-day count matches what backfill actually
-                // fetches (the old code scanned from day 1, which made every
-                // restart report "1255 missing days" forever).
                 let start_day = {
                     let config = state.config.read().await;
                     sanitize_config(config.clone()).historical_start_day
@@ -1905,9 +1876,6 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
-        // FIX: the whole fetch/merge/persist block was duplicated inline
-        // (twice, ~120 lines) with subtle drift. Both paths now call the
-        // same refresh_wallet_data() helper.
         if addresses_changed && !addresses.trim().is_empty() {
             refresh_wallet_data(&client, &state, &addresses).await;
         }
@@ -1917,7 +1885,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
             continue;
         }
 
-        let sleep = tokio::time::sleep(Duration::from_secs(3600));
+        let sleep = tokio::time::sleep(Duration::from_secs(36000));
         tokio::pin!(sleep);
 
         tokio::select! {
@@ -2145,8 +2113,6 @@ async fn main() {
 
     tokio::fs::create_dir_all(get_data_dir()).await.expect("Failed to create data dir");
 
-    // FIX: use the Default impl + serde defaults so a config file written by
-    // an older version (missing fields) doesn't silently reset user settings.
     let initial_config = match tokio::fs::read_to_string(config_file_path()).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => Config::default(),
