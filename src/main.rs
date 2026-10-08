@@ -1451,7 +1451,7 @@ async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f
             }
             Err(e) => warn!("Failed to fetch balance for {}: {}", addr, e),
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
     Ok(total_hex)
 }
@@ -1524,7 +1524,7 @@ async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_s
                     status: None
                 });
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     }
     Ok(all_miners)
