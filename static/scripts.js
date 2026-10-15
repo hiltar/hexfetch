@@ -360,14 +360,14 @@ function renderPortfolioHistoryChartWithData(rawData) {
     } else {
         const options = createBaseChartOptions();
         options.scales.x.title = { display: true, text: 'Day', color: '#9ca3af' };
-        options.scales.y.title = { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' };
+        options.scales.y.title = { display: true, text: 'Portfolio Value', color: '#9ca3af' };
         options.scales.y.ticks.callback = v => '$' + formatWithCommas(Math.round(v));
         options.plugins = options.plugins || {};
         options.plugins.tooltip = {
             callbacks: {
                 label: function(context) {
                     let value = context.parsed.y;
-                    return '$' + formatWithCommas(Math.round(value));
+                    return ' $ ' + formatWithCommas(Math.round(value));
                 }
             }
         };
