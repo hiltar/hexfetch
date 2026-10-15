@@ -340,13 +340,13 @@ function renderPortfolioHistoryChartWithData(rawData) {
     const startLbl = document.getElementById('hist-start-day-label');
     if (startLbl) startLbl.textContent = historicalStartDay;
     const startVal = document.getElementById('hist-start-value');
-    if (startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(2))}`;
+    if (startVal) startVal.textContent = `$${formatWithCommas(start.toFixed(0))}`;
     const currVal = document.getElementById('hist-current-value');
-    if (currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(2))}`;
+    if (currVal) currVal.textContent = `$${formatWithCommas(curr.toFixed(0))}`;
     const athVal = document.getElementById('hist-ath');
-    if (athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(2))}`;
+    if (athVal) athVal.textContent = `$${formatWithCommas(ath.toFixed(0))}`;
     const gEl = document.getElementById('hist-growth');
-    if (gEl) { gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(2))}`; gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; }
+    if (gEl) { gEl.textContent = `${growth >= 0 ? '+' : ''}$${formatWithCommas(growth.toFixed(0))}`; gEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; }
     const pEl = document.getElementById('hist-growth-pct');
     if (pEl) { pEl.textContent = `${growth >= 0 ? '+' : ''}${pct.toFixed(2)}%`; pEl.style.color = growth >= 0 ? 'var(--success)' : 'var(--danger)'; }
     const labels = portfolio.map(d => d.day);
@@ -362,6 +362,15 @@ function renderPortfolioHistoryChartWithData(rawData) {
         options.scales.x.title = { display: true, text: 'Day', color: '#9ca3af' };
         options.scales.y.title = { display: true, text: 'Portfolio Value (USD)', color: '#9ca3af' };
         options.scales.y.ticks.callback = v => '$' + formatWithCommas(Math.round(v));
+        options.plugins = options.plugins || {};
+        options.plugins.tooltip = {
+            callbacks: {
+                label: function(context) {
+                    let value = context.parsed.y;
+                    return '$' + formatWithCommas(Math.round(value));
+                }
+            }
+        };
         chartInstances.historicalValueChart = new Chart(canvas.getContext('2d'), {
             type: 'line',
             data: { labels, datasets: [{ label: 'Portfolio Value', data: values, borderColor: '#00b7eb', backgroundColor: 'rgba(0,183,235,0.15)', borderWidth: 3, tension: 0.25, fill: true, pointRadius: 0, pointHoverRadius: 5, spanGaps: true }] },
