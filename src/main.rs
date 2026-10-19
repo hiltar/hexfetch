@@ -314,17 +314,29 @@ fn is_multiple_of(n: usize, divisor: usize) -> bool {
 }
 
 fn sanitize_config(config: Config) -> Config {
+    let live_data_frequency = config.live_data_frequency.clamp(1, 24 * 60);
+    
     let live_chart_range_minutes = config
         .live_chart_range_minutes
-        .clamp(5, 7 * 24 * 60);
+        .clamp(live_data_frequency.max(5), 7 * 24 * 60);
+
     const MAX_LIVE_CANDLES: u64 = 5000;
-    let min_candle_minutes = (live_chart_range_minutes + MAX_LIVE_CANDLES - 1) / MAX_LIVE_CANDLES;
+
+    let min_candle_by_range =
+        (live_chart_range_minutes + MAX_LIVE_CANDLES - 1) / MAX_LIVE_CANDLES;
+
+    let min_candle_minutes = live_data_frequency
+        .max(min_candle_by_range)
+        .max(1);
+
+    let max_candle_minutes = live_chart_range_minutes.max(min_candle_minutes);
+
     let live_chart_candle_minutes = config
         .live_chart_candle_minutes
-        .clamp(min_candle_minutes.max(1), live_chart_range_minutes.max(1));
+        .clamp(min_candle_minutes, max_candle_minutes);
 
     Config {
-        live_data_frequency: config.live_data_frequency.clamp(1, 24 * 60),
+        live_data_frequency,
         liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 {
             config.liquid_hex
         } else {
