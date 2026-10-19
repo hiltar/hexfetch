@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/styles.css">
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/air-datepicker@3.6.0/air-datepicker.js"></script>
+  <script defer src="https://unpkg.com/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
   <script defer src="/scripts.js"></script>
 <base target="_blank">
 </head>
@@ -153,6 +154,10 @@
   <!-- ================= CHARTS ================= -->
   <section class="tab-content" id="charts" role="tabpanel" aria-labelledby="tab-charts" tabindex="0">
     <div class="charts-grid">
+      <div class="card">
+        <h3>Live Chart</h3>
+        <div id="live-chart-container" class="chart-container"></div>
+      </div>
       <div class="chart-card">
         <h4>HEX Price</h4>
         <span class="chart-metric" id="price-value">$0.0000</span>
@@ -189,6 +194,46 @@
           </div>
         </div>
       </form>
+    </div>
+
+    <div class="card">
+    <h3>Live Chart Settings</h3>
+    <div class="form-row">
+        <div class="form-group">
+            <label for="live-chart-range-minutes">
+                Live Chart Time Range (minutes)
+            </label>
+            <input
+                id="live-chart-range-minutes"
+                class="form-input"
+                type="number"
+                min="5"
+                step="1"
+            />
+            <div class="form-hint">
+                1440 = 24 hours. Points are kept in server RAM only.
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="live-chart-candle-minutes">
+                Minutes Per Candle
+            </label>
+            <input
+                id="live-chart-candle-minutes"
+                class="form-input"
+                type="number"
+                min="1"
+                step="1"
+            />
+            <div class="form-hint">
+                For real candles, this should be close to or larger than live-data frequency.
+            </div>
+        </div>
+    </div>
+    <button id="save-live-chart-settings-btn" class="btn btn-primary">
+        Save Live Chart Settings
+    </button>
     </div>
 
     <div class="card">
@@ -236,11 +281,6 @@
 
     <div class="card">
       <h3>Add New Miner</h3>
-      <!-- FIX: the previous form called add-miner-btn.click() from its own onsubmit
-           while the button was type="submit" inside that same form. A programmatic
-           click() on a submit button triggers form submission, whose handler called
-           click() again -> infinite recursion that spammed POST /api/add-miner.
-           The button is now type="button" and both entry points call submitAddMiner(). -->
       <form onsubmit="event.preventDefault(); if (typeof submitAddMiner === 'function') submitAddMiner();" novalidate>
         <div class="form-row">
           <div class="form-group">
