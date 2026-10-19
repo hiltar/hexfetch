@@ -10,7 +10,7 @@ use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
@@ -95,6 +95,31 @@ pub struct HexJsonEntry {
     pub price_pulse_x: f64,
 }
 
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct LivePricePoint {
+    ts: u64,
+    price: f64,
+}
+
+#[derive(Serialize)]
+struct LiveChartCandle {
+    t: u64,
+    o: f64,
+    h: f64,
+    l: f64,
+    c: f64,
+    n: u32,
+}
+
+#[derive(Serialize)]
+struct LiveChartResponse {
+    range_minutes: u64,
+    interval_minutes: u64,
+    now: u64,
+    candles: Vec<LiveChartCandle>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct LiveData {
     #[serde(rename = "price_Pulsechain")]
@@ -171,6 +196,18 @@ pub struct Config {
 
     #[serde(rename = "walletAddresses", default)]
     pub wallet_addresses: String,
+
+    #[serde(
+        rename = "liveChartRangeMinutes",
+        default = "default_live_chart_range_minutes"
+    )]
+    pub live_chart_range_minutes: u64,
+
+    #[serde(
+        rename = "liveChartCandleMinutes",
+        default = "default_live_chart_candle_minutes"
+    )]
+    pub live_chart_candle_minutes: u64,
 }
 
 impl Default for Config {
@@ -180,6 +217,8 @@ impl Default for Config {
             liquid_hex: 0.0,
             historical_start_day: 1256,
             wallet_addresses: String::new(),
+            live_chart_range_minutes: default_live_chart_range_minutes(),
+            live_chart_candle_minutes: default_live_chart_candle_minutes(),
         }
     }
 }
@@ -203,22 +242,98 @@ struct AppState {
     active_rpc_idx: RwLock<usize>,
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
+    live_chart: RwLock<VecDeque<LivePricePoint>>,
 }
 
 // =============================================
 // HELPERS
 // =============================================
 
+fn unix_now_secs() -> u64 {
+    Utc::now().timestamp().max(0) as u64
+}
+
+async fn prune_live_chart(state: &Arc<AppState>) {
+    let now = unix_now_secs();
+    let range_minutes = {
+        let config = state.config.read().await;
+        sanitize_config(config.clone()).live_chart_range_minutes
+    };
+
+    let cutoff = now.saturating_sub(range_minutes.saturating_mul(60));
+    let mut chart = state.live_chart.write().await;
+
+    while chart.front().map_or(false, |p| p.ts < cutoff) {
+        chart.pop_front();
+    }
+
+    const MAX_LIVE_POINTS: usize = 250_000;
+
+    while chart.len() > MAX_LIVE_POINTS {
+        chart.pop_front();
+    }
+}
+
+async fn record_live_price_point(state: &Arc<AppState>, price: f64) {
+    if !price.is_finite() || price <= 0.0 {
+        return;
+    }
+
+    let now = unix_now_secs();
+    let range_minutes = {
+        let config = state.config.read().await;
+        sanitize_config(config.clone()).live_chart_range_minutes
+    };
+
+    let cutoff = now.saturating_sub(range_minutes.saturating_mul(60));
+    let mut chart = state.live_chart.write().await;
+
+    chart.push_back(LivePricePoint { ts: now, price });
+
+    while chart.front().map_or(false, |p| p.ts < cutoff) {
+        chart.pop_front();
+    }
+
+    const MAX_LIVE_POINTS: usize = 250_000;
+
+    while chart.len() > MAX_LIVE_POINTS {
+        chart.pop_front();
+    }
+}
+
+fn default_live_chart_range_minutes() -> u64 {
+    1440
+}
+
+fn default_live_chart_candle_minutes() -> u64 {
+    15
+}
+
 fn is_multiple_of(n: usize, divisor: usize) -> bool {
     divisor != 0 && n % divisor == 0
 }
 
 fn sanitize_config(config: Config) -> Config {
+    let live_chart_range_minutes = config
+        .live_chart_range_minutes
+        .clamp(5, 7 * 24 * 60);
+    const MAX_LIVE_CANDLES: u64 = 5000;
+    let min_candle_minutes = (live_chart_range_minutes + MAX_LIVE_CANDLES - 1) / MAX_LIVE_CANDLES;
+    let live_chart_candle_minutes = config
+        .live_chart_candle_minutes
+        .clamp(min_candle_minutes.max(1), live_chart_range_minutes.max(1));
+
     Config {
         live_data_frequency: config.live_data_frequency.clamp(1, 24 * 60),
-        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 { config.liquid_hex } else { 0.0 },
+        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 {
+            config.liquid_hex
+        } else {
+            0.0
+        },
         historical_start_day: config.historical_start_day.max(1),
         wallet_addresses: config.wallet_addresses,
+        live_chart_range_minutes,
+        live_chart_candle_minutes,
     }
 }
 
@@ -1641,6 +1756,7 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
 
     match fetch_live_data_with_retry(&client, &state).await {
         Ok(data) => {
+            record_live_price_point(&state, data.price_pulsechain).await;
             *state.live_data.write().await = data;
             info!("Initial live data fetched successfully");
         }
@@ -1662,6 +1778,7 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
             _ = &mut sleep => {
                 match fetch_live_data_with_retry(&client, &state).await {
                     Ok(data) => {
+                        record_live_price_point(&state, data.price_pulsechain).await;
                         *state.live_data.write().await = data;
                     }
                     Err(e) => {
@@ -1905,6 +2022,99 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 // API HANDLERS
 // =============================================
 
+async fn handle_live_chart(
+    State(state): State<Arc<AppState>>,
+) -> Json<LiveChartResponse> {
+    let cfg = {
+        let config = state.config.read().await;
+        sanitize_config(config.clone())
+    };
+
+    let now = unix_now_secs();
+    let interval_minutes = cfg.live_chart_candle_minutes.max(1);
+    let interval_secs = interval_minutes.saturating_mul(60);
+    let range_secs = cfg.live_chart_range_minutes.saturating_mul(60);
+    let cutoff = now.saturating_sub(range_secs);
+    let points = state.live_chart.read().await;
+    let mut idx = 0;
+    while idx < points.len() && points[idx].ts < cutoff {
+        idx += 1;
+    }
+
+    let mut candles = Vec::new();
+
+    if interval_secs > 0 && idx < points.len() {
+        let mut bucket = cutoff.saturating_sub(cutoff % interval_secs);
+        let last_bucket = now.saturating_sub(now % interval_secs);
+        let mut last_close: Option<f64> = None;
+        let max_candles = 5000usize;
+
+        while bucket <= last_bucket && candles.len() < max_candles {
+            let bucket_end = bucket.saturating_add(interval_secs);
+
+            while idx < points.len() && points[idx].ts < bucket {
+                idx += 1;
+            }
+
+            let mut j = idx;
+
+            let mut open = None;
+            let mut high = f64::MIN;
+            let mut low = f64::MAX;
+            let mut close = None;
+            let mut count = 0u32;
+
+            while j < points.len() && points[j].ts < bucket_end {
+                let price = points[j].price;
+
+                if open.is_none() {
+                    open = Some(price);
+                }
+
+                high = high.max(price);
+                low = low.min(price);
+                close = Some(price);
+                count += 1;
+
+                j += 1;
+            }
+
+            if count > 0 {
+                let candle = LiveChartCandle {
+                    t: bucket,
+                    o: open.unwrap(),
+                    h: high,
+                    l: low,
+                    c: close.unwrap(),
+                    n: count,
+                };
+
+                last_close = Some(candle.c);
+                candles.push(candle);
+
+                idx = j;
+            } else if let Some(pc) = last_close {
+                candles.push(LiveChartCandle {
+                    t: bucket,
+                    o: pc,
+                    h: pc,
+                    l: pc,
+                    c: pc,
+                    n: 0,
+                });
+            }
+            bucket = bucket_end;
+        }
+    }
+
+    Json(LiveChartResponse {
+        range_minutes: cfg.live_chart_range_minutes,
+        interval_minutes,
+        now,
+        candles,
+    })
+}
+
 async fn handle_live_data(State(state): State<Arc<AppState>>) -> Json<LiveData> {
     Json(state.live_data.read().await.clone())
 }
@@ -2009,6 +2219,7 @@ async fn handle_post_config(
 
     let _ = state.config_tx.send(());
     save_config_to_file(&new_config).await;
+    prune_live_chart(&state).await;
 
     StatusCode::OK
 }
@@ -2135,6 +2346,7 @@ async fn main() {
         active_rpc_idx: RwLock::new(0),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
+        live_chart: RwLock::new(VecDeque::new()),
     });
 
     let client = Client::builder()
@@ -2150,6 +2362,15 @@ async fn main() {
     tokio::spawn(rpc_health_checker(state.clone(), client.clone()));
     tokio::spawn(wallet_updater(state.clone(), client.clone()));
 
+    let live_chart_janitor_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            prune_live_chart(&live_chart_janitor_state).await;
+        }
+    });
+
     let app = Router::new()
         .route("/api/live-data", get(handle_live_data))
         .route("/api/miners", get(handle_miners))
@@ -2158,6 +2379,7 @@ async fn main() {
         .route("/api/delete-miner", post(handle_delete_miner))
         .route("/api/hexjson", get(handle_hex_json))
         .route("/api/config", get(handle_get_config).post(handle_post_config))
+        .route("/api/live-chart", get(handle_live_chart))
         .fallback(get(|uri: axum::http::Uri| async move {
             let path = uri.path().trim_start_matches('/');
             let path = if path.is_empty() { "index.html" } else { path };
