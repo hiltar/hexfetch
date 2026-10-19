@@ -846,8 +846,6 @@ async function initialLoad() {
         document.getElementById('frequency').value = cfg.liveDataFrequency;
         document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
-        document.getElementById('live-chart-range-minutes').value = cfg.liveChartRangeMinutes ?? 1440;
-        document.getElementById('live-chart-candle-minutes').value = cfg.liveChartCandleMinutes ?? 15;
 
         const liveChartRangeMinutes = Number(cfg.liveChartRangeMinutes ?? 1440);
         const liveChartRangeHoursInput = document.getElementById('live-chart-range-hours');
