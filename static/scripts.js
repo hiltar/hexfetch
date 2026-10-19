@@ -22,6 +22,8 @@ let datepickers = {
     startDate: null,
     endDate: null
 };
+let liveChart = null;
+let liveCandleSeries = null;
 const RING_CIRCUMFERENCE = 2 * Math.PI * 16;
 
 // =============================================
@@ -270,6 +272,82 @@ function initAirDatepickers() {
 // TAB & CHART MANAGEMENT
 // =============================================
 
+function initLiveChart() {
+    const el = document.getElementById('live-chart-container');
+
+    if (!el || typeof LightweightCharts === 'undefined') {
+        return;
+    }
+
+    if (liveChart) {
+        liveChart.remove();
+        liveChart = null;
+        liveCandleSeries = null;
+    }
+
+    liveChart = LightweightCharts.createChart(el, {
+        autoSize: true,
+        layout: {
+            background: { color: '#1a1d23' },
+            textColor: '#e4e6eb',
+        },
+        grid: {
+            vertLines: { color: '#374151' },
+            horzLines: { color: '#374151' },
+        },
+        timeScale: {
+            timeVisible: true,
+            secondsVisible: false,
+        },
+        rightPriceScale: {
+            borderColor: '#374151',
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+        },
+    });
+
+    liveCandleSeries = liveChart.addCandlestickSeries({
+        upColor: '#22c55e',
+        downColor: '#ef4444',
+        borderVisible: false,
+        wickUpColor: '#22c55e',
+        wickDownColor: '#ef4444',
+    });
+}
+
+async function loadLiveChart() {
+    if (!liveCandleSeries) {
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/live-chart');
+
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        const candles = data.candles.map(c => ({
+            time: c.t,
+            open: c.o,
+            high: c.h,
+            low: c.l,
+            close: c.c,
+        }));
+
+        liveCandleSeries.setData(candles);
+
+        if (liveChart) {
+            liveChart.timeScale().fitContent();
+        }
+    } catch (err) {
+        console.error('Failed to load live chart', err);
+    }
+}
+
 function renderAllCharts() {
     if (!window.Chart || !window.HEXJSON_CACHE || window.HEXJSON_CACHE.length === 0) return;
     renderChartsWithData(window.HEXJSON_CACHE);
@@ -421,6 +499,9 @@ async function fetchLiveDataAndRender() {
         const data = await res.json();
         if (!isValidLiveData(data)) throw new Error('Live data invalid or zero price');
         updateLiveDataUI(data);
+        if (document.getElementById('charts')?.classList.contains('active')) {
+            loadLiveChart().catch(() => {});
+        }
         hasConnectedOnce = true;
         setConnectionStatus('online');
     } catch (e) {
@@ -752,6 +833,8 @@ async function initialLoad() {
         document.getElementById('frequency').value = cfg.liveDataFrequency;
         document.getElementById('liquid-hex').value = cfg.liquidHEX || '';
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
+        document.getElementById('live-chart-range-minutes').value = cfg.liveChartRangeMinutes ?? 1440;
+        document.getElementById('live-chart-candle-minutes').value = cfg.liveChartCandleMinutes ?? 15;
         
         const walletAddrEl = document.getElementById('wallet-addresses');
         if (walletAddrEl) walletAddrEl.value = cfg.walletAddresses || '';
@@ -794,12 +877,6 @@ async function initialLoad() {
 // ACTIONS & CONFIG
 // =============================================
 
-// FIX: previously the click handler was only attached to the button while the
-// form's onsubmit programmatically clicked that same submit button — a
-// click() on a submit button re-triggers form submission, which called
-// click() again: infinite recursion spamming POST /api/add-miner. This is now
-// a plain function called from both entry points, and the button is
-// type="button" so it can never implicitly submit the form.
 function submitAddMiner() {
     const sd = document.getElementById('start-date').value;
     const ed = document.getElementById('end-date').value;
@@ -848,7 +925,9 @@ function debouncedSaveConfig() {
             liveDataFrequency: freq,
             liquidHEX: liquid,
             historicalStartDay: hist,
-            walletAddresses: walletAddrs
+            walletAddresses: walletAddrs,
+            liveChartRangeMinutes,
+            liveChartCandleMinutes,
         })
     })
     .then(r => {
@@ -907,7 +986,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetTab = document.getElementById(btn.dataset.tab);
         targetTab.classList.add('active');
         
-        if (btn.dataset.tab === 'charts') renderAllCharts();
+        if (btn.dataset.tab === 'charts') {
+            renderAllCharts();
+            initLiveChart();
+            loadLiveChart();
+        }
         else if (btn.dataset.tab === 'profile') {
             if (window.HEXJSON_CACHE && window.HEXJSON_CACHE.length > 0) renderPortfolioHistoryChartWithData(window.HEXJSON_CACHE);
         }
@@ -930,6 +1013,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('show-completed-btn')?.addEventListener('click', showCompletedMiners);
+    document.getElementById('save-live-chart-settings-btn')?.addEventListener('click', () => {
+        debouncedSaveConfig();
+    });
     document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => {
         btn.addEventListener('click', () => { const d = btn.closest('dialog'); if (d) d.close(); });
     });
