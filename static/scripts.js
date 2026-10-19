@@ -305,6 +305,9 @@ function initLiveChart() {
         crosshair: {
             mode: LightweightCharts.CrosshairMode.Normal,
         },
+        watermark: {
+            visible: false,
+        },
     });
 
     const candleOptions = {
@@ -314,18 +317,24 @@ function initLiveChart() {
         wickUpColor: '#22c55e',
         wickDownColor: '#ef4444',
         priceFormat: {
-            type: 'price',
-            precision: 8,
-            minMove: 0.00000001
+            type: 'custom',
+            minMove: 0.00000001,
+            formatter: (price) => {
+                if (price === 0) return '0.00';
+                const abs = Math.abs(price);
+                
+                if (abs >= 1) return price.toFixed(2);
+                if (abs >= 0.01) return price.toFixed(4);
+                if (abs >= 0.0001) return price.toFixed(6);
+                return price.toFixed(8);
+            }
         }
     };
 
     // Support both Lightweight Charts v4 and v5 APIs
     if (typeof liveChart.addSeries === 'function' && LightweightCharts.CandlestickSeries) {
-        // v5 API
         liveCandleSeries = liveChart.addSeries(LightweightCharts.CandlestickSeries, candleOptions);
     } else if (typeof liveChart.addCandlestickSeries === 'function') {
-        // v4 API
         liveCandleSeries = liveChart.addCandlestickSeries(candleOptions);
     } else {
         console.error('Unsupported Lightweight Charts version');
