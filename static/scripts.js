@@ -313,6 +313,11 @@ function initLiveChart() {
         borderVisible: false,
         wickUpColor: '#22c55e',
         wickDownColor: '#ef4444',
+        priceFormat: {
+            type: 'price',
+            precision: 5,
+            minMove: 0.00001
+        }
     });
 }
 
@@ -714,9 +719,6 @@ window.deleteMiner = deleteMiner;
 
 async function initialLoad() {
     try {
-        // FIX: a failure of the hexjson fetch must not kill the whole UI
-        // (miners, live data, settings). Previously a single failed request
-        // in Promise.all left the entire page on the error path.
         let hexData = [];
         try {
             hexData = await fetchHexJsonWithCache();
@@ -835,6 +837,20 @@ async function initialLoad() {
         document.getElementById('hist-start-day').value = cfg.historicalStartDay || 1260;
         document.getElementById('live-chart-range-minutes').value = cfg.liveChartRangeMinutes ?? 1440;
         document.getElementById('live-chart-candle-minutes').value = cfg.liveChartCandleMinutes ?? 15;
+
+        const liveChartRangeMinutes = Number(cfg.liveChartRangeMinutes ?? 1440);
+        const liveChartRangeHoursInput = document.getElementById('live-chart-range-hours');
+        if (liveChartRangeHoursInput) {
+            liveChartRangeHoursInput.value = String(
+            Math.round((liveChartRangeMinutes / 60) * 100) / 100
+            );
+        }
+
+const liveChartCandleMinutesInput = document.getElementById('live-chart-candle-minutes');
+
+if (liveChartCandleMinutesInput) {
+    liveChartCandleMinutesInput.value = cfg.liveChartCandleMinutes ?? cfg.liveDataFrequency ?? 15;
+}
         
         const walletAddrEl = document.getElementById('wallet-addresses');
         if (walletAddrEl) walletAddrEl.value = cfg.walletAddresses || '';
@@ -911,12 +927,30 @@ if (addMinerBtn) addMinerBtn.addEventListener('click', submitAddMiner);
 
 function debouncedSaveConfig() {
     if (saveInProgress) return;
+
     saveInProgress = true;
-    
+
     const freq = parseInt(document.getElementById('frequency').value) || 15;
     const liquid = parseFloat(document.getElementById('liquid-hex').value) || 0;
     const hist = parseInt(document.getElementById('hist-start-day').value) || 1260;
     const walletAddrs = document.getElementById('wallet-addresses')?.value || '';
+
+    // Live chart range is shown in hours, but saved in minutes.
+    const liveChartRangeHours = parseFloat(
+        document.getElementById('live-chart-range-hours')?.value
+    );
+
+    let liveChartRangeMinutes = Number.isFinite(liveChartRangeHours) && liveChartRangeHours > 0
+        ? Math.round(liveChartRangeHours * 60)
+        : 1440;
+
+    let liveChartCandleMinutes = parseInt(
+        document.getElementById('live-chart-candle-minutes')?.value
+    ) || freq;
+
+    if (liveChartCandleMinutes < freq) {
+        liveChartCandleMinutes = freq;
+    }
 
     fetch('/api/config', {
         method: 'POST',
@@ -927,7 +961,7 @@ function debouncedSaveConfig() {
             historicalStartDay: hist,
             walletAddresses: walletAddrs,
             liveChartRangeMinutes,
-            liveChartCandleMinutes,
+            liveChartCandleMinutes
         })
     })
     .then(r => {
