@@ -307,7 +307,7 @@ function initLiveChart() {
         },
     });
 
-    liveCandleSeries = liveChart.addCandlestickSeries({
+    const candleOptions = {
         upColor: '#22c55e',
         downColor: '#ef4444',
         borderVisible: false,
@@ -315,10 +315,21 @@ function initLiveChart() {
         wickDownColor: '#ef4444',
         priceFormat: {
             type: 'price',
-            precision: 5,
-            minMove: 0.00001
+            precision: 8,
+            minMove: 0.00000001
         }
-    });
+    };
+
+    // Support both Lightweight Charts v4 and v5 APIs
+    if (typeof liveChart.addSeries === 'function' && LightweightCharts.CandlestickSeries) {
+        // v5 API
+        liveCandleSeries = liveChart.addSeries(LightweightCharts.CandlestickSeries, candleOptions);
+    } else if (typeof liveChart.addCandlestickSeries === 'function') {
+        // v4 API
+        liveCandleSeries = liveChart.addCandlestickSeries(candleOptions);
+    } else {
+        console.error('Unsupported Lightweight Charts version');
+    }
 }
 
 async function loadLiveChart() {
@@ -841,16 +852,13 @@ async function initialLoad() {
         const liveChartRangeMinutes = Number(cfg.liveChartRangeMinutes ?? 1440);
         const liveChartRangeHoursInput = document.getElementById('live-chart-range-hours');
         if (liveChartRangeHoursInput) {
-            liveChartRangeHoursInput.value = String(
-            Math.round((liveChartRangeMinutes / 60) * 100) / 100
-            );
+            liveChartRangeHoursInput.value = String(Math.round((liveChartRangeMinutes / 60) * 100) / 100);
         }
 
-const liveChartCandleMinutesInput = document.getElementById('live-chart-candle-minutes');
-
-if (liveChartCandleMinutesInput) {
-    liveChartCandleMinutesInput.value = cfg.liveChartCandleMinutes ?? cfg.liveDataFrequency ?? 15;
-}
+        const liveChartCandleMinutesInput = document.getElementById('live-chart-candle-minutes');
+        if (liveChartCandleMinutesInput) {
+            liveChartCandleMinutesInput.value = cfg.liveChartCandleMinutes ?? cfg.liveDataFrequency ?? 15;
+        }
         
         const walletAddrEl = document.getElementById('wallet-addresses');
         if (walletAddrEl) walletAddrEl.value = cfg.walletAddresses || '';
