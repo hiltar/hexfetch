@@ -1054,6 +1054,22 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => { const d = btn.closest('dialog'); if (d) d.close(); });
     });
 
+    const frequencyInput = document.getElementById('frequency');
+    const candleInput = document.getElementById('live-chart-candle-minutes');
+    
+    if (frequencyInput && candleInput) {
+        candleInput.addEventListener('input', () => {
+            candleInput.dataset.userEdited = '1';
+        });
+        frequencyInput.addEventListener('change', () => {
+            const freq = parseInt(frequencyInput.value) || 15;
+            const currentCandle = parseInt(candleInput.value) || 0;
+            if (!candleInput.dataset.userEdited || currentCandle < freq) {
+                candleInput.value = String(freq);
+            }
+        });
+    }
+
     const timerRing = document.querySelector('.refresh-timer');
     if (timerRing) {
         timerRing.style.cursor = 'pointer';
