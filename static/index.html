@@ -198,26 +198,27 @@
 
     <div class="card">
     <h3>Live Chart Settings</h3>
+
     <div class="form-row">
         <div class="form-group">
-            <label for="live-chart-range-minutes">
-                Live Chart Time Range (minutes)
+            <label for="live-chart-range-hours">
+                Live Chart Time Range
             </label>
             <input
-                id="live-chart-range-minutes"
+                id="live-chart-range-hours"
                 class="form-input"
                 type="number"
-                min="5"
+                min="1"
                 step="1"
             />
             <div class="form-hint">
-                1440 = 24 hours. Points are kept in server RAM only.
+                Hours
             </div>
         </div>
 
         <div class="form-group">
             <label for="live-chart-candle-minutes">
-                Minutes Per Candle
+                Candle Width
             </label>
             <input
                 id="live-chart-candle-minutes"
@@ -227,10 +228,11 @@
                 step="1"
             />
             <div class="form-hint">
-                For real candles, this should be close to or larger than live-data frequency.
+                Example: live-data frequency 1 minute can be displayed as 15-minute candles.
             </div>
         </div>
     </div>
+
     <button id="save-live-chart-settings-btn" class="btn btn-primary">
         Save Live Chart Settings
     </button>
