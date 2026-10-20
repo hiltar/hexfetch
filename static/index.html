@@ -155,9 +155,38 @@
   <section class="tab-content" id="charts" role="tabpanel" aria-labelledby="tab-charts" tabindex="0">
     <div class="charts-grid">
       <div class="card">
+      <div class="card-head-row">
         <h3>Live Chart</h3>
-        <div id="live-chart-container" class="chart-container"></div>
+        <div class="live-chart-controls">
+            <div class="chart-type-toggle" role="group" aria-label="Chart type">
+                <button class="chart-type-btn active" data-type="candles" type="button">Candles</button>
+                <button class="chart-type-btn" data-type="line" type="button">Line</button>
+                <button class="chart-type-btn" data-type="area" type="button">Area</button>
+            </div>
+            <div class="live-chart-timeframes" role="group" aria-label="Timeframe">
+                <button class="timeframe-btn" data-minutes="60" type="button">1H</button>
+                <button class="timeframe-btn" data-minutes="360" type="button">6H</button>
+                <button class="timeframe-btn active" data-minutes="1440" type="button">24H</button>
+                <button class="timeframe-btn" data-minutes="4320" type="button">3D</button>
+                <button class="timeframe-btn" data-minutes="10080" type="button">7D</button>
+            </div>
+        </div>
+    </div>
+
+      <div class="live-chart-stats">
+        <div class="lc-stat"><span class="lc-stat-label">Price</span><span class="lc-stat-value" id="lc-stat-price">–</span></div>
+        <div class="lc-stat"><span class="lc-stat-label">Change</span><span class="lc-stat-value" id="lc-stat-change">–</span></div>
+        <div class="lc-stat"><span class="lc-stat-label">High</span><span class="lc-stat-value" id="lc-stat-high">–</span></div>
+        <div class="lc-stat"><span class="lc-stat-label">Low</span><span class="lc-stat-value" id="lc-stat-low">–</span></div>
+        <div class="lc-stat"><span class="lc-stat-label">Candles</span><span class="lc-stat-value" id="lc-stat-count">–</span></div>
       </div>
+
+      <div class="live-chart-frame">
+        <div id="live-chart-legend" class="live-chart-legend"></div>
+        <div id="live-chart-container" class="live-chart-canvas"></div>
+      </div>
+      </div>
+      
       <div class="chart-card">
         <h4>HEX Price</h4>
         <span class="chart-metric" id="price-value">$0.0000</span>
