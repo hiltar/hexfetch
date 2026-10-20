@@ -436,7 +436,7 @@ function updateLiveStats(visible) {
     if (!visible || visible.length === 0) {
         priceEl.textContent = '–';
         changeEl.textContent = '–'; changeEl.classList.remove('up', 'down');
-        highEl.textContent = '–'; lowEl.textContent = '–'; countEl.textContent = '0';
+        highEl.textContent = '–'; lowEl.textContent = '–';
         return;
     }
 
@@ -454,7 +454,6 @@ function updateLiveStats(visible) {
     changeEl.classList.toggle('down', chg < 0);
     highEl.textContent = dynamicPriceFormatter(high);
     lowEl.textContent = dynamicPriceFormatter(low);
-    countEl.textContent = String(visible.length);
 }
 
 function formatLegendTime(time) {
