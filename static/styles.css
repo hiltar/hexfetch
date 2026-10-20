@@ -1567,6 +1567,101 @@ textarea.form-input {
     }
 }
 
+/* ============ Live Chart controls, stats & legend ============ */
+.live-chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+.chart-type-toggle,
+.live-chart-timeframes {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.18rem;
+}
+.chart-type-btn,
+.timeframe-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.3rem 0.65rem;
+    min-height: 32px;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+    white-space: nowrap;
+}
+.chart-type-btn:hover,
+.timeframe-btn:hover { color: var(--text); }
+.chart-type-btn.active,
+.timeframe-btn.active {
+    background: var(--primary);
+    color: var(--primary-contrast);
+}
+
+.live-chart-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    padding: 0.6rem 0.1rem;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+.lc-stat { display: flex; flex-direction: column; gap: 0.12rem; min-width: 0; }
+.lc-stat-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+.lc-stat-value { font-size: 0.95rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lc-stat-value.up { color: var(--success-text); }
+.lc-stat-value.down { color: var(--danger-text); }
+
+.live-chart-frame {
+    position: relative;
+    height: clamp(260px, 45vh, 420px);
+    margin-top: 0.25rem;
+}
+.live-chart-canvas { position: absolute; inset: 0; }
+
+.live-chart-legend {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+    background: rgba(26, 29, 35, 0.85);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    max-width: calc(100% - 16px);
+    backdrop-filter: blur(2px);
+}
+.live-chart-legend .lcl-time { color: var(--text-muted); font-weight: 600; }
+.live-chart-legend .lcl-item { color: var(--text); white-space: nowrap; }
+.live-chart-legend .lcl-item b { color: var(--text-muted); font-weight: 600; margin-right: 3px; }
+.live-chart-legend .lcl-change.up { color: var(--success-text); }
+.live-chart-legend .lcl-change.down { color: var(--danger-text); }
+
+@media (max-width: 640px) {
+    .live-chart-frame { height: 280px; }
+}
+
 @media (max-width: 640px) {
     /* Mobile: Row 1 = Brand, Row 2 = Ticker (Side hidden) */
     .header-bar {
