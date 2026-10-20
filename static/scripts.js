@@ -24,6 +24,13 @@ let datepickers = {
 };
 let liveChart = null;
 let liveCandleSeries = null;
+let liveChartType = 'candles';
+let liveTimeframeMinutes = 1440;
+let liveCandlesAll = [];
+let liveLastRendered = [];
+let liveChartHasRendered = false;
+let liveServerNow = 0;
+
 const RING_CIRCUMFERENCE = 2 * Math.PI * 16;
 
 // =============================================
@@ -269,109 +276,245 @@ function initAirDatepickers() {
 }
 
 // =============================================
-// TAB & CHART MANAGEMENT
+// LIVE CHART (candles / line / area, timeframes, legend, stats)
 // =============================================
+
+function dynamicPriceFormatter(price) {
+    if (price === 0) return '0.00';
+    const abs = Math.abs(price);
+    if (abs >= 1) return price.toFixed(2);
+    if (abs >= 0.01) return price.toFixed(4);
+    if (abs >= 0.0001) return price.toFixed(6);
+    return price.toFixed(8);
+}
 
 function initLiveChart() {
     const el = document.getElementById('live-chart-container');
-
-    if (!el || typeof LightweightCharts === 'undefined') {
-        return;
-    }
-
-    if (liveChart) {
-        liveChart.remove();
-        liveChart = null;
-        liveCandleSeries = null;
-    }
+    if (!el || typeof LightweightCharts === 'undefined') return;
+    if (liveChart) return;
 
     liveChart = LightweightCharts.createChart(el, {
         autoSize: true,
-        layout: {
-            background: { color: '#1a1d23' },
-            textColor: '#e4e6eb',
-        },
-        grid: {
-            vertLines: { color: '#374151' },
-            horzLines: { color: '#374151' },
-        },
-        timeScale: {
-            timeVisible: true,
-            secondsVisible: false,
-        },
-        rightPriceScale: {
-            borderColor: '#374151',
-        },
-        crosshair: {
-            mode: LightweightCharts.CrosshairMode.Normal,
-        },
-        watermark: {
-            visible: false,
-        },
+        layout: { background: { color: '#1a1d23' }, textColor: '#e4e6eb' },
+        grid: { vertLines: { color: '#374151' }, horzLines: { color: '#374151' } },
+        timeScale: { timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: '#374151' },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        watermark: { visible: false },
     });
 
-    const candleOptions = {
-        upColor: '#22c55e',
-        downColor: '#ef4444',
-        borderVisible: false,
-        wickUpColor: '#22c55e',
-        wickDownColor: '#ef4444',
-        priceFormat: {
-            type: 'custom',
-            minMove: 0.00000001,
-            formatter: (price) => {
-                if (price === 0) return '0.00';
-                const abs = Math.abs(price);
-                
-                if (abs >= 1) return price.toFixed(2);
-                if (abs >= 0.01) return price.toFixed(4);
-                if (abs >= 0.0001) return price.toFixed(6);
-                return price.toFixed(8);
-            }
-        }
-    };
+    createLiveSeries();
+    subscribeLiveChartCrosshair();
+}
 
-    // Support both Lightweight Charts v4 and v5 APIs
-    if (typeof liveChart.addSeries === 'function' && LightweightCharts.CandlestickSeries) {
-        liveCandleSeries = liveChart.addSeries(LightweightCharts.CandlestickSeries, candleOptions);
-    } else if (typeof liveChart.addCandlestickSeries === 'function') {
-        liveCandleSeries = liveChart.addCandlestickSeries(candleOptions);
+function addLiveSeriesCompat(kind, opts) {
+    if (typeof liveChart.addSeries === 'function') {
+        const map = {
+            candlestick: LightweightCharts.CandlestickSeries,
+            line: LightweightCharts.LineSeries,
+            area: LightweightCharts.AreaSeries,
+        };
+        if (map[kind]) {
+            try { return liveChart.addSeries(map[kind], opts); } catch (e) {}
+        }
+    }
+    if (kind === 'candlestick' && typeof liveChart.addCandlestickSeries === 'function') return liveChart.addCandlestickSeries(opts);
+    if (kind === 'line' && typeof liveChart.addLineSeries === 'function') return liveChart.addLineSeries(opts);
+    if (kind === 'area' && typeof liveChart.addAreaSeries === 'function') return liveChart.addAreaSeries(opts);
+    console.error('Unsupported Lightweight Charts series type:', kind);
+    return null;
+}
+
+function createLiveSeries() {
+    if (!liveChart) return;
+    if (liveCandleSeries) {
+        try { liveChart.removeSeries(liveCandleSeries); } catch (e) {}
+        liveCandleSeries = null;
+    }
+    const priceFormat = { type: 'custom', minMove: 0.00000001, formatter: dynamicPriceFormatter };
+
+    if (liveChartType === 'line') {
+        liveCandleSeries = addLiveSeriesCompat('line', { color: '#00b7eb', lineWidth: 2, priceFormat, crosshairMarkerVisible: true });
+    } else if (liveChartType === 'area') {
+        liveCandleSeries = addLiveSeriesCompat('area', { lineColor: '#00b7eb', topColor: 'rgba(0,183,235,0.35)', bottomColor: 'rgba(0,183,235,0.02)', lineWidth: 2, priceFormat });
     } else {
-        console.error('Unsupported Lightweight Charts version');
+        liveCandleSeries = addLiveSeriesCompat('candlestick', { upColor: '#22c55e', downColor: '#ef4444', borderVisible: false, wickUpColor: '#22c55e', wickDownColor: '#ef4444', priceFormat });
     }
 }
 
 async function loadLiveChart() {
-    if (!liveCandleSeries) {
-        return;
-    }
-
+    if (!liveCandleSeries) return;
     try {
         const res = await fetch('/api/live-chart');
-
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
-        }
-
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-
-        const candles = data.candles.map(c => ({
-            time: c.t,
-            open: c.o,
-            high: c.h,
-            low: c.l,
-            close: c.c,
-        }));
-
-        liveCandleSeries.setData(candles);
-
-        if (liveChart) {
-            liveChart.timeScale().fitContent();
-        }
+        liveServerNow = Number(data.now) || Math.floor(Date.now() / 1000);
+        liveCandlesAll = (data.candles || []).map(c => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c }));
+        const fit = !liveChartHasRendered;
+        liveChartHasRendered = true;
+        renderLiveChartView({ fit });
     } catch (err) {
         console.error('Failed to load live chart', err);
     }
 }
+
+function filterCandlesByTimeframe(candles) {
+    if (!Array.isArray(candles) || candles.length === 0) return [];
+    const ref = liveServerNow || Math.floor(Date.now() / 1000);
+    const cutoff = ref - liveTimeframeMinutes * 60;
+    return candles.filter(c => c.time >= cutoff);
+}
+
+function candleEquals(a, b) {
+    return a.time === b.time && a.open === b.open && a.high === b.high && a.low === b.low && a.close === b.close;
+}
+
+function canIncrementalUpdate(next, prev) {
+    if (!prev || prev.length === 0) return false;
+    if (next.length === prev.length) {
+        for (let i = 0; i < prev.length - 1; i++) if (!candleEquals(next[i], prev[i])) return false;
+        return true;
+    }
+    if (next.length === prev.length + 1) {
+        for (let i = 0; i < prev.length; i++) if (!candleEquals(next[i], prev[i])) return false;
+        return true;
+    }
+    return false;
+}
+
+function mapCandleForType(c) {
+    if (liveChartType === 'candles') return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+    return { time: c.time, value: c.close };
+}
+
+function renderLiveChartView({ fit = false } = {}) {
+    if (!liveCandleSeries || !liveChart) return;
+    const visible = filterCandlesByTimeframe(liveCandlesAll);
+
+    updateLiveStats(visible);
+    setLegendToLatest(visible);
+
+    if (!fit && canIncrementalUpdate(visible, liveLastRendered)) {
+        liveCandleSeries.update(mapCandleForType(visible[visible.length - 1]));
+    } else {
+        const prevRange = fit ? null : liveChart.timeScale().getVisibleLogicalRange();
+        liveCandleSeries.setData(visible.map(mapCandleForType));
+        if (fit) {
+            liveChart.timeScale().fitContent();
+        } else if (prevRange) {
+            try { liveChart.timeScale().setVisibleLogicalRange(prevRange); } catch (e) {}
+        }
+    }
+    liveLastRendered = visible;
+}
+
+function switchChartType(type) {
+    if (!type || type === liveChartType) return;
+    liveChartType = type;
+    document.querySelectorAll('.chart-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+    if (!liveChart) return;
+    createLiveSeries();
+    liveLastRendered = [];
+    renderLiveChartView({ fit: false });
+}
+
+function setTimeframe(minutes) {
+    if (!minutes || minutes === liveTimeframeMinutes) return;
+    liveTimeframeMinutes = minutes;
+    document.querySelectorAll('.timeframe-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.minutes) === minutes));
+    liveLastRendered = [];
+    renderLiveChartView({ fit: true });
+}
+
+function updateLiveStats(visible) {
+    const priceEl = document.getElementById('lc-stat-price');
+    const changeEl = document.getElementById('lc-stat-change');
+    const highEl = document.getElementById('lc-stat-high');
+    const lowEl = document.getElementById('lc-stat-low');
+    const countEl = document.getElementById('lc-stat-count');
+    if (!priceEl) return;
+
+    if (!visible || visible.length === 0) {
+        priceEl.textContent = '–';
+        changeEl.textContent = '–'; changeEl.classList.remove('up', 'down');
+        highEl.textContent = '–'; lowEl.textContent = '–'; countEl.textContent = '0';
+        return;
+    }
+
+    const first = visible[0];
+    const last = visible[visible.length - 1];
+    const price = last.close;
+    const chg = first.open > 0 ? ((price - first.open) / first.open) * 100 : 0;
+
+    let high = -Infinity, low = Infinity;
+    for (const c of visible) { if (c.high > high) high = c.high; if (c.low < low) low = c.low; }
+
+    priceEl.textContent = dynamicPriceFormatter(price);
+    changeEl.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+    changeEl.classList.toggle('up', chg >= 0);
+    changeEl.classList.toggle('down', chg < 0);
+    highEl.textContent = dynamicPriceFormatter(high);
+    lowEl.textContent = dynamicPriceFormatter(low);
+    countEl.textContent = String(visible.length);
+}
+
+function formatLegendTime(time) {
+    const d = new Date(time * 1000);
+    const now = new Date();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    if (d.toDateString() === now.toDateString()) return `${hh}:${mm}`;
+    return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${hh}:${mm}`;
+}
+
+function renderLegend(legend, d, time) {
+    let html = `<span class="lcl-time">${formatLegendTime(time)}</span>`;
+    if (liveChartType === 'candles' && typeof d.open === 'number') {
+        const o = d.open, h = d.high, l = d.low, c = d.close;
+        const chg = o !== 0 ? ((c - o) / o) * 100 : 0;
+        const cls = chg >= 0 ? 'up' : 'down';
+        html += `<span class="lcl-item"><b>O</b>${dynamicPriceFormatter(o)}</span>`
+              + `<span class="lcl-item"><b>H</b>${dynamicPriceFormatter(h)}</span>`
+              + `<span class="lcl-item"><b>L</b>${dynamicPriceFormatter(l)}</span>`
+              + `<span class="lcl-item"><b>C</b>${dynamicPriceFormatter(c)}</span>`
+              + `<span class="lcl-item lcl-change ${cls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>`;
+    } else {
+        const v = typeof d.value === 'number' ? d.value : d.close;
+        html += `<span class="lcl-item">${dynamicPriceFormatter(v)}</span>`;
+    }
+    legend.innerHTML = html;
+}
+
+function setLegendToLatest(visible) {
+    const legend = document.getElementById('live-chart-legend');
+    if (!legend) return;
+    if (!visible || visible.length === 0) {
+        legend.innerHTML = '<span class="lcl-time">Waiting for data…</span>';
+        return;
+    }
+    const last = visible[visible.length - 1];
+    const d = liveChartType === 'candles' ? last : { value: last.close };
+    renderLegend(legend, d, last.time);
+}
+
+function subscribeLiveChartCrosshair() {
+    if (!liveChart) return;
+    liveChart.subscribeCrosshairMove(param => {
+        const legend = document.getElementById('live-chart-legend');
+        if (!legend) return;
+        if (!param || !param.time || !param.seriesData || param.seriesData.size === 0) {
+            setLegendToLatest(liveLastRendered);
+            return;
+        }
+        const d = param.seriesData.get(liveCandleSeries);
+        if (!d) { setLegendToLatest(liveLastRendered); return; }
+        renderLegend(legend, d, param.time);
+    });
+}
+
+// =============================================
+// TAB & CHART MANAGEMENT
+// =============================================
 
 function renderAllCharts() {
     if (!window.Chart || !window.HEXJSON_CACHE || window.HEXJSON_CACHE.length === 0) return;
@@ -1067,6 +1210,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.querySelectorAll('.modal-close-btn, .btn-close').forEach(btn => {
         btn.addEventListener('click', () => { const d = btn.closest('dialog'); if (d) d.close(); });
+    });
+    document.querySelectorAll('.chart-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchChartType(btn.dataset.type));
+    });
+    document.querySelectorAll('.timeframe-btn').forEach(btn => {
+    btn.addEventListener('click', () => setTimeframe(Number(btn.dataset.minutes)));
     });
 
     const timerRing = document.querySelector('.refresh-timer');
