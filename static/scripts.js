@@ -431,7 +431,6 @@ function updateLiveStats(visible) {
     const changeEl = document.getElementById('lc-stat-change');
     const highEl = document.getElementById('lc-stat-high');
     const lowEl = document.getElementById('lc-stat-low');
-    const countEl = document.getElementById('lc-stat-count');
     if (!priceEl) return;
 
     if (!visible || visible.length === 0) {
