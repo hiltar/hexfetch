@@ -26,7 +26,10 @@ use tracing::{error, info, warn};
 const RPC_ENDPOINTS: &[&str] = &[
     "https://rpc.pulsechain.com",
     "https://rpc-pulsechain.g4mm4.io",
+    "https://rpc.libertyswap.finance",
     "https://pulsechain-rpc.publicnode.com",
+    "https://rpc.pulsechainstats.com",
+    "https://rpc.hairylabs.io",
     "https://rpc.pulsechainrpc.com",
 ];
 const HEX_CONTRACT: &str = "0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39";
