@@ -305,7 +305,7 @@ async fn record_live_price_point(state: &Arc<AppState>, price: f64) {
 }
 
 fn default_live_chart_range_minutes() -> u64 {
-    1440
+    10080
 }
 
 fn default_live_chart_candle_minutes() -> u64 {
