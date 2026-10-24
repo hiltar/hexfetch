@@ -216,12 +216,12 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            live_data_frequency: 15,
+            live_data_frequency: 1,
             liquid_hex: 0.0,
             historical_start_day: 1256,
             wallet_addresses: String::new(),
-            live_chart_range_minutes: default_live_chart_range_minutes(),
-            live_chart_candle_minutes: default_live_chart_candle_minutes(),
+            live_chart_range_minutes: 10080,
+            live_chart_candle_minutes: 15,
         }
     }
 }
@@ -302,14 +302,6 @@ async fn record_live_price_point(state: &Arc<AppState>, price: f64) {
     while chart.len() > MAX_LIVE_POINTS {
         chart.pop_front();
     }
-}
-
-fn default_live_chart_range_minutes() -> u64 {
-    10080
-}
-
-fn default_live_chart_candle_minutes() -> u64 {
-    15
 }
 
 fn is_multiple_of(n: usize, divisor: usize) -> bool {
