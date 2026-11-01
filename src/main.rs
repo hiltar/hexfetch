@@ -1508,30 +1508,62 @@ async fn fetch_live_data(
     client: &Client,
     state: &Arc<AppState>,
 ) -> Result<LiveData, String> {
-    let price = match fetch_price(client, state).await {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("Price fetch failed in live data loop: {}. Using 0.0", e);
-            0.0
+    let start_idx = *state.active_rpc_idx.read().await;
+    let batch = serde_json::json!([
+        {
+            "jsonrpc": "2.0", "method": "eth_call", "id": 1,
+            "params": [{"to": USDC_HEX_PAIR, "data": GET_RESERVES_SELECTOR}, "latest"]
+        },
+        {
+            "jsonrpc": "2.0", "method": "eth_gasPrice", "id": 2, "params": []
+        },
+        {
+            "jsonrpc": "2.0", "method": "eth_call", "id": 3,
+            "params": [{"to": HEX_CONTRACT, "data": GLOBALS_SELECTOR}, "latest"]
         }
+    ]);
+
+    let resp: Vec<serde_json::Value> = client
+        .post(RPC_ENDPOINTS[start_idx])
+        .json(&batch)
+        .send().await
+        .map_err(|e| format!("batch request failed: {e}"))?
+        .json().await
+        .map_err(|e| format!("batch parse failed: {e}"))?;
+
+    let mut reserves = None;
+    let mut gas_price = None;
+    let mut globals = None;
+    for item in resp {
+        let id = item["id"].as_u64().unwrap_or(0);
+        let result = item["result"].as_str().unwrap_or("");
+        match id {
+            1 => reserves = Some(result.to_string()),
+            2 => gas_price = Some(result.to_string()),
+            3 => globals = Some(result.to_string()),
+            _ => {}
+        }
+    }
+
+    let price = match reserves {
+        Some(r) => parse_price_from_reserves(&r)?,
+        None => fetch_price(client, state).await.unwrap_or(0.0),
+    };
+    let beat = gas_price
+        .and_then(|g| U256::from_hex(&g).ok())
+        .map(|u| u.to_f64() / 1e9)
+        .unwrap_or(0.0);
+    let (tshare_rate, daily_data_count, penalties) = match globals {
+        Some(g) => parse_globals_from_hex(&g)?,
+        None => read_globals(client, state, None).await?,
     };
 
-    let gas_price_hex = call_rpc(client, state, "eth_gasPrice", serde_json::json!([])).await?;
-    let gas_price_wei = U256::from_hex(&gas_price_hex)
-        .map_err(|e| format!("eth_gasPrice parse failed: {e}"))?;
-    let beat = gas_price_wei.to_f64() / 1e9;
-
-    let (tshare_rate, daily_data_count, penalties) = read_globals(client, state, None).await?;
-
     let mut payout_per_tshare = 0.0;
-
     if daily_data_count > 0 {
-        let day_to_query = daily_data_count - 1;
-
-        if let Ok((payout_hearts, shares)) =
-            read_daily_data(client, state, day_to_query, None).await
+        if let Ok((payout, shares)) =
+            read_daily_data(client, state, daily_data_count - 1, None).await
         {
-            payout_per_tshare = calc_payout_per_tshare(payout_hearts, shares);
+            payout_per_tshare = calc_payout_per_tshare(payout, shares);
         }
     }
 
