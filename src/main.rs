@@ -1870,7 +1870,8 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
                 state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
                 *miners_lock = normalized;
                 drop(miners_lock);
-                save_miners_to_file(&normalized).await;
+                let snapshot = state.miners.read().await.clone();
+                save_miners_to_file(&snapshot).await;
             }
         }
         Err(e) => warn!("Wallet miners fetch failed: {}", e),
