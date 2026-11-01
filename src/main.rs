@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use chrono::{Datelike, Days, NaiveDate, NaiveTime, Utc};
-use futures::stream::{self, StreamExt};
+use futures_util::stream::{self, StreamExt};
 use reqwest::Client;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Deserializer, Serialize};
