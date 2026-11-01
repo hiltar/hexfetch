@@ -264,6 +264,39 @@ struct AppState {
 // HELPERS
 // =============================================
 
+fn parse_price_from_reserves(r_str: &str) -> Result<f64, String> {
+    let s = r_str.strip_prefix("0x").unwrap_or(r_str);
+    if s.len() < 128 {
+        return Err(format!("getReserves too short ({} chars)", s.len()));
+    }
+    let reserve_usdc = U256::from_hex(&s[0..64])
+        .map_err(|e| format!("USDC reserve: {e}"))?.to_f64();
+    let reserve_hex = U256::from_hex(&s[64..128])
+        .map_err(|e| format!("HEX reserve: {e}"))?.to_f64();
+    if reserve_usdc == 0.0 || reserve_hex == 0.0 {
+        return Err("zero reserves".into());
+    }
+    let price = (reserve_usdc / reserve_hex) * 100.0;
+    if price <= 0.0 || !price.is_finite() {
+        return Err("invalid price".into());
+    }
+    Ok(price)
+}
+
+fn parse_globals_from_hex(g: &str) -> Result<(f64, u64, f64), String> {
+    let s = g.strip_prefix("0x").unwrap_or(g);
+    if s.len() < 320 {
+        return Err(format!("globals too short ({} chars)", s.len()));
+    }
+    let share_rate = U256::from_hex(&s[128..192])
+        .map_err(|e| format!("shareRate: {e}"))?.to_f64() / 10.0;
+    let penalties = U256::from_hex(&s[192..256])
+        .map_err(|e| format!("penalties: {e}"))?.to_f64() / 1e8;
+    let day_count = U256::from_hex(&s[256..320])
+        .map_err(|e| format!("dailyDataCount: {e}"))?.to_f64() as u64;
+    Ok((share_rate, day_count, penalties))
+}
+
 fn unix_now_secs() -> u64 {
     Utc::now().timestamp().max(0) as u64
 }
