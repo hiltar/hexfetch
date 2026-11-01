@@ -1544,14 +1544,16 @@ async fn fetch_live_data_with_retry(
 // FETCH WALLET DATA
 // =============================================
 
-async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f64, String> {
+async fn fetch_wallet_balances(client: Client, addresses_str: String) -> Result<f64, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
 
-    if addresses.is_empty() { return Ok(0.0); }
+    if addresses.is_empty() {
+        return Ok(0.0);
+    }
 
     let hex_contract_lower = HEX_CONTRACT.trim().to_lowercase();
 
@@ -1564,10 +1566,14 @@ async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f
                     "https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances",
                     addr
                 );
-                let resp = client.get(&url).send().await
+                let resp = client
+                    .get(&url)
+                    .send()
+                    .await
                     .map_err(|e| format!("{addr}: request failed: {e}"))?;
 
-                if let Some(retry_after) = resp.headers()
+                if let Some(retry_after) = resp
+                    .headers()
                     .get("retry-after")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| s.parse::<u64>().ok())
@@ -1579,17 +1585,21 @@ async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f
                     return Err(format!("{addr}: HTTP {}", resp.status()));
                 }
 
-                let balances: Vec<serde_json::Value> = resp.json().await
+                let balances: Vec<serde_json::Value> = resp
+                    .json()
+                    .await
                     .map_err(|e| format!("{addr}: JSON parse failed: {e}"))?;
 
                 let mut total = 0.0;
                 for b in balances {
                     let token = b.get("token").unwrap_or(&serde_json::Value::Null);
-                    let is_hex = token.get("address")
+                    let is_hex = token
+                        .get("address")
                         .and_then(|a| a.as_str())
                         .map(|a| a.to_lowercase() == hex_contract_lower)
                         .unwrap_or(false)
-                        || token.get("symbol")
+                        || token
+                            .get("symbol")
                             .and_then(|s| s.as_str())
                             .map(|s| s == "HEX")
                             .unwrap_or(false);
@@ -1680,9 +1690,9 @@ async fn fetch_stakes_batched(
 }
 
 async fn fetch_wallet_miners(
-    client: &Client,
-    state: &Arc<AppState>,
-    addresses_str: &str,
+    client: Client,
+    state: Arc<AppState>,
+    addresses_str: String,
 ) -> Result<Vec<Miner>, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
@@ -1690,38 +1700,56 @@ async fn fetch_wallet_miners(
         .filter(|s| !s.is_empty())
         .collect();
 
-    if addresses.is_empty() { return Ok(Vec::new()); }
+    if addresses.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let mut all_miners = Vec::new();
 
     for addr in addresses {
-        if !addr.starts_with("0x") || addr.len() != 42 { continue; }
+        if !addr.starts_with("0x") || addr.len() != 42 {
+            continue;
+        }
         let addr_padded = format!("000000000000000000000000{}", &addr[2..]);
         let count_data = format!("0x{}{}", STAKE_COUNT_SELECTOR, addr_padded);
         let count_req = serde_json::json!([{ "to": HEX_CONTRACT, "data": count_data }, "latest"]);
-        let count_hex = match call_rpc(client, state, "eth_call", count_req).await {
+        let count_hex = match call_rpc(&client, &state, "eth_call", count_req).await {
             Ok(h) => h,
-            Err(e) => { warn!("Failed to get stakeCount for {}: {}", addr, e); continue; }
+            Err(e) => {
+                warn!("Failed to get stakeCount for {}: {}", addr, e);
+                continue;
+            }
         };
 
         let count = match U256::from_hex(count_hex.trim()) {
             Ok(v) => v.to_f64() as u64,
-            Err(e) => { warn!("stakeCount parse failed for {}: {}", addr, e); continue; }
+            Err(e) => {
+                warn!("stakeCount parse failed for {}: {}", addr, e);
+                continue;
+            }
         };
 
         if count > MAX_STAKE_COUNT {
-            warn!("Unrealistic stake count {} for {}, skipping address", count, addr);
+            warn!(
+                "Unrealistic stake count {} for {}, skipping address",
+                count, addr
+            );
             continue;
         }
 
-        let stakes = match fetch_stakes_batched(client, state, addr, count).await {
+        let stakes = match fetch_stakes_batched(&client, &state, addr, count).await {
             Ok(v) => v,
-            Err(e) => { warn!("Batch stake fetch failed for {}: {}", addr, e); continue; }
+            Err(e) => {
+                warn!("Batch stake fetch failed for {}: {}", addr, e);
+                continue;
+            }
         };
 
         for (idx, res_hex) in stakes {
             let res_str = res_hex.trim().strip_prefix("0x").unwrap_or(res_hex.trim());
-            if res_str.len() < 384 { continue; }
+            if res_str.len() < 384 {
+                continue;
+            }
 
             let (stake_shares_raw, locked_day_raw, staked_days_raw) = match (
                 U256::from_hex(&res_str[128..192]),
@@ -1735,11 +1763,11 @@ async fn fetch_wallet_miners(
                 }
             };
 
-            let t_shares    = stake_shares_raw.to_f64() / 1e12;
-            let locked_day  = locked_day_raw.to_f64() as u64;
+            let t_shares = stake_shares_raw.to_f64() / 1e12;
+            let locked_day = locked_day_raw.to_f64() as u64;
             let staked_days = staked_days_raw.to_f64() as u64;
             let start_ts = HEX_DAY_ZERO_UNIX + (locked_day as i64 * 86_400);
-            let end_ts   = HEX_DAY_ZERO_UNIX + ((locked_day + staked_days) as i64 * 86_400);
+            let end_ts = HEX_DAY_ZERO_UNIX + ((locked_day + staked_days) as i64 * 86_400);
 
             let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
                 .unwrap_or(chrono::DateTime::UNIX_EPOCH)
@@ -1839,8 +1867,8 @@ fn miners_equivalent(a: &[Miner], b: &[Miner]) -> bool {
 
 async fn refresh_wallet_data(client: Client, state: Arc<AppState>, addresses: String) {
     let (balance_res, miners_res) = tokio::join!(
-        fetch_wallet_balances(&client, &addresses),
-        fetch_wallet_miners(&client, &state, &addresses),
+        fetch_wallet_balances(client.clone(), addresses.clone()),
+        fetch_wallet_miners(client.clone(), state.clone(), addresses.clone()),
     );
 
     match balance_res {
@@ -1867,7 +1895,7 @@ async fn refresh_wallet_data(client: Client, state: Arc<AppState>, addresses: St
                 info!("Miners changed! Updating active and cleaning up removed addresses.");
                 let (normalized, next_id) = normalize_miners(merged);
                 state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
-                *miners_lock = normalized.clone();   // ← clone: keep local for disk save
+                *miners_lock = normalized.clone();
                 drop(miners_lock);
                 save_miners_to_file(&normalized).await;
             }
@@ -2119,7 +2147,11 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
     let mut current_addresses: String = String::new();
 
     loop {
-        let addresses: String = state.config.read().await.wallet_addresses.to_string();
+        let addresses: String = {
+            let guard = state.config.read().await;
+            guard.wallet_addresses.to_string()
+        };
+
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
