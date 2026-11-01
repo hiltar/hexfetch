@@ -41,7 +41,6 @@ const DEFAULT_SECONDS_PER_BLOCK: f64 = 2.0;
 const BLOCK_TIME_SAMPLE_BLOCKS: u64 = 100_000;
 const HISTORICAL_QUERY_OFFSET_SECS: u64 = 3700;
 const HISTORICAL_TIMESTAMP_TOLERANCE_SECS: u64 = 30;
-const HEX_DAY_ZERO_UNIX_OVERRIDE: Option<u64> = None;
 const GLOBALS_SELECTOR: &str = "0xc3124525";
 const DAILY_DATA_SELECTOR: &str = "0x90de6871";
 const HEARTS_PER_HEX: f64 = 1e8;
@@ -51,6 +50,10 @@ const BACKFILL_SAVE_INTERVAL: usize = 500;
 const BACKFILL_CONCURRENCY: usize = 6;
 const DAILY_RECORD_SETTLE_DELAY_SECS: u64 = 120;
 const MAX_STAKE_COUNT: u64 = 10_000;
+const STAKE_COUNT_SELECTOR: &str = "33060d90";
+const STAKE_LISTS_SELECTOR: &str = "2607443b";
+const HEX_DAY_ZERO_UNIX: i64 = 1_575_331_200;
+const MAX_LIVE_POINTS: usize = 12_000;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -121,6 +124,13 @@ struct LiveChartResponse {
     interval_minutes: u64,
     now: u64,
     candles: Vec<LiveChartCandle>,
+}
+
+struct CachedLiveChart {
+    version: u64,
+    range_minutes: u64,
+    interval_minutes: u64,
+    response: Arc<LiveChartResponse>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -197,8 +207,8 @@ pub struct Config {
     #[serde(rename = "historicalStartDay")]
     pub historical_start_day: u64,
 
-    #[serde(rename = "walletAddresses", default)]
-    pub wallet_addresses: String,
+    #[serde(rename = "walletAddresses")]
+    pub wallet_addresses: Arc<str>,
 
     #[serde(
         rename = "liveChartRangeMinutes",
@@ -219,7 +229,7 @@ impl Default for Config {
             live_data_frequency: 1,
             liquid_hex: 0.0,
             historical_start_day: 1256,
-            wallet_addresses: String::new(),
+            wallet_addresses: Arc::from(""),
             live_chart_range_minutes: default_live_chart_range_minutes(),
             live_chart_candle_minutes: default_live_chart_candle_minutes(),
         }
@@ -237,15 +247,17 @@ struct HexJsonQuery {
 // =============================================
 
 struct AppState {
-    live_data: RwLock<LiveData>,
-    hex_json: RwLock<Arc<Vec<HexJsonEntry>>>,
-    miners: RwLock<Vec<Miner>>,
     config: RwLock<Config>,
+    live_data: RwLock<LiveData>,
+    hex_json: RwLock<Arc<[HexJsonEntry]>>,
+    miners: RwLock<Vec<Miner>>,
     config_tx: broadcast::Sender<()>,
     active_rpc_idx: RwLock<usize>,
     hex_json_version: AtomicU64,
     next_miner_id: AtomicU64,
     live_chart: RwLock<VecDeque<LivePricePoint>>,
+    live_chart_cache: RwLock<Option<CachedLiveChart>>,
+    live_chart_version: AtomicU64,
 }
 
 // =============================================
@@ -258,19 +270,13 @@ fn unix_now_secs() -> u64 {
 
 async fn prune_live_chart(state: &Arc<AppState>) {
     let now = unix_now_secs();
-    let range_minutes = {
-        let config = state.config.read().await;
-        sanitize_config(config.clone()).live_chart_range_minutes
-    };
-
+    let range_minutes = state.config.read().await.live_chart_range_minutes;
     let cutoff = now.saturating_sub(range_minutes.saturating_mul(60));
     let mut chart = state.live_chart.write().await;
 
     while chart.front().map_or(false, |p| p.ts < cutoff) {
         chart.pop_front();
     }
-
-    const MAX_LIVE_POINTS: usize = 250_000;
 
     while chart.len() > MAX_LIVE_POINTS {
         chart.pop_front();
@@ -278,30 +284,22 @@ async fn prune_live_chart(state: &Arc<AppState>) {
 }
 
 async fn record_live_price_point(state: &Arc<AppState>, price: f64) {
-    if !price.is_finite() || price <= 0.0 {
-        return;
-    }
+    if !price.is_finite() || price <= 0.0 { return; }
 
     let now = unix_now_secs();
-    let range_minutes = {
-        let config = state.config.read().await;
-        sanitize_config(config.clone()).live_chart_range_minutes
-    };
-
+    let range_minutes = state.config.read().await.live_chart_range_minutes;
     let cutoff = now.saturating_sub(range_minutes.saturating_mul(60));
+
     let mut chart = state.live_chart.write().await;
-
     chart.push_back(LivePricePoint { ts: now, price });
-
-    while chart.front().map_or(false, |p| p.ts < cutoff) {
+    while chart.front().is_some_and(|p| p.ts < cutoff) {
         chart.pop_front();
     }
-
-    const MAX_LIVE_POINTS: usize = 250_000;
-
     while chart.len() > MAX_LIVE_POINTS {
         chart.pop_front();
     }
+    drop(chart);
+    state.live_chart_version.fetch_add(1, Ordering::Relaxed);
 }
 
 
@@ -313,44 +311,25 @@ fn default_live_chart_candle_minutes() -> u64 {
     15
 }
 
-fn is_multiple_of(n: usize, divisor: usize) -> bool {
-    divisor != 0 && n % divisor == 0
-}
-
-fn sanitize_config(config: Config) -> Config {
-    let live_data_frequency = config.live_data_frequency.clamp(1, 24 * 60);
-    
-    let live_chart_range_minutes = config
+fn sanitize_config(mut config: Config) -> Config {
+    config.live_data_frequency = config.live_data_frequency.clamp(1, 24 * 60);
+    config.live_chart_range_minutes = config
         .live_chart_range_minutes
-        .clamp(live_data_frequency.max(5), 7 * 24 * 60);
+        .clamp(config.live_data_frequency.max(5), 7 * 24 * 60);
 
     const MAX_LIVE_CANDLES: u64 = 5000;
-
     let min_candle_by_range =
-        (live_chart_range_minutes + MAX_LIVE_CANDLES - 1) / MAX_LIVE_CANDLES;
+        config.live_chart_range_minutes.div_ceil(MAX_LIVE_CANDLES);
+    let min_candle_minutes = config.live_data_frequency.max(min_candle_by_range).max(1);
+    let max_candle_minutes = config.live_chart_range_minutes.max(min_candle_minutes);
+    config.live_chart_candle_minutes =
+        config.live_chart_candle_minutes.clamp(min_candle_minutes, max_candle_minutes);
 
-    let min_candle_minutes = live_data_frequency
-        .max(min_candle_by_range)
-        .max(1);
-
-    let max_candle_minutes = live_chart_range_minutes.max(min_candle_minutes);
-
-    let live_chart_candle_minutes = config
-        .live_chart_candle_minutes
-        .clamp(min_candle_minutes, max_candle_minutes);
-
-    Config {
-        live_data_frequency,
-        liquid_hex: if config.liquid_hex.is_finite() && config.liquid_hex >= 0.0 {
-            config.liquid_hex
-        } else {
-            0.0
-        },
-        historical_start_day: config.historical_start_day.max(1),
-        wallet_addresses: config.wallet_addresses,
-        live_chart_range_minutes,
-        live_chart_candle_minutes,
+    if !config.liquid_hex.is_finite() || config.liquid_hex < 0.0 {
+        config.liquid_hex = 0.0;
     }
+    config.historical_start_day = config.historical_start_day.max(1);
+    config
 }
 
 fn normalize_miners(mut miners: Vec<Miner>) -> (Vec<Miner>, u64) {
@@ -384,26 +363,30 @@ fn is_valid_daily_entry(entry: &HexJsonEntry) -> bool {
         || entry.tshare_rate_hex > 0.0
 }
 
-fn parse_hex_u64(s: &str) -> u64 {
-    let s = s.trim();
-    let s = s
+fn parse_hex_u64(s: &str) -> Result<u64, HexParseError> {
+    let trimmed = s.trim();
+    let stripped = trimmed
         .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .unwrap_or(s);
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
 
-    if s.is_empty() {
-        return 0;
+    if stripped.is_empty() {
+        return Err(HexParseError::Empty);
+    }
+    if stripped.len() > 16 {
+        return Err(HexParseError::TooLong(stripped.len()));
     }
 
-    u64::from_str_radix(s, 16).unwrap_or(0)
+    u64::from_str_radix(stripped, 16)
+        .map_err(|_| HexParseError::InvalidChar(stripped.chars().next().unwrap_or('\0'), s.into()))
 }
 
-fn parse_timestamp_from_block(value: &serde_json::Value) -> u64 {
-    value
+fn parse_timestamp_from_block(value: &serde_json::Value) -> Result<u64, HexParseError> {
+    let s = value
         .get("timestamp")
         .and_then(|v| v.as_str())
-        .map(parse_hex_u64)
-        .unwrap_or(0)
+        .ok_or(HexParseError::Empty)?;
+    parse_hex_u64(s)
 }
 
 fn block_param(block_number: Option<u64>) -> serde_json::Value {
@@ -415,12 +398,8 @@ fn block_param(block_number: Option<u64>) -> serde_json::Value {
 
 async fn get_block_number(client: &Client, state: &Arc<AppState>) -> Result<u64, String> {
     let value = call_rpc_value(client, state, "eth_blockNumber", serde_json::json!([])).await?;
-
-    let s = value
-        .as_str()
-        .ok_or("eth_blockNumber result was not a string")?;
-
-    Ok(parse_hex_u64(s))
+    let s = value.as_str().ok_or("eth_blockNumber result was not a string")?;
+    parse_hex_u64(s).map_err(|e| format!("eth_blockNumber parse failed: {e}"))
 }
 
 async fn get_block_timestamp(
@@ -440,13 +419,12 @@ async fn get_block_timestamp(
         return Err(format!("Block {} not found", block_number));
     }
 
-    let timestamp = parse_timestamp_from_block(&value);
-
-    if timestamp == 0 {
-        return Err(format!("Block {} had invalid timestamp", block_number));
+    let ts = parse_timestamp_from_block(&value)
+        .map_err(|e| format!("Block {} timestamp parse failed: {e}", block_number))?;
+    if ts == 0 {
+        return Err(format!("Block {} returned zero timestamp", block_number));
     }
-
-    Ok(timestamp)
+    Ok(ts)
 }
 
 fn repair_historical_values(entries: &mut [HexJsonEntry]) {
@@ -543,62 +521,51 @@ fn get_mime_type(path: &str) -> &'static str {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct U256([u64; 4]);
 
-impl U256 {
-    const ZERO: Self = Self([0; 4]);
-
-    fn from_hex(s: &str) -> Self {
-        let s = s.strip_prefix("0x").unwrap_or(s);
-        let mut limbs = [0u64; 4];
-
-        if s.is_empty() {
-            return Self::ZERO;
-        }
-
-        let mut limb_idx = 0;
-        let mut shift = 0;
-
-        for c in s.chars().rev() {
-            let val = match c {
-                '0'..='9' => c as u64 - '0' as u64,
-                'a'..='f' => c as u64 - 'a' as u64 + 10,
-                'A'..='F' => c as u64 - 'A' as u64 + 10,
-                _ => continue,
-            };
-
-            if limb_idx < 4 {
-                limbs[limb_idx] |= val << shift;
-            }
-
-            shift += 4;
-
-            if shift == 64 {
-                shift = 0;
-                limb_idx += 1;
-            }
-        }
-
-        Self(limbs)
-    }
-
-    fn to_f64(self) -> f64 {
-        let mut result: f64 = 0.0;
-
-        for (i, limb) in self.0.iter().enumerate() {
-            if *limb != 0 {
-                result += (*limb as f64) * (2.0_f64).powi(64 * i as i32);
-            }
-        }
-
-        result
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum HexParseError {
+    #[error("empty hex string")]
+    Empty,
+    #[error("invalid hex character: {0:?} in {1:?}")]
+    InvalidChar(char, String),
+    #[error("hex string too long ({} chars, max 64)", 0)]
+    TooLong(usize),
 }
 
-impl std::fmt::LowerHex for U256 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for i in (0..4).rev() {
-            write!(f, "{:016x}", self.0[i])?;
+impl U256 {
+    const ZERO: Self = Self([0; 4]);
+    pub fn from_hex(s: &str) -> Result<Self, HexParseError> {
+        let s = s.trim();
+        let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+        if s.len() > 64 {
+            return Err(HexParseError::TooLong(s.len()));
         }
-        Ok(())
+        if s.is_empty() {
+            return Err(HexParseError::Empty);
+        }
+
+        let mut limbs = [0u64; 4];
+        for (i, c) in s.chars().rev().enumerate() {
+            let val = match c {
+                '0'..='9' => c as u64 - b'0' as u64,
+                'a'..='f' => c as u64 - b'a' as u64 + 10,
+                'A'..='F' => c as u64 - b'A' as u64 + 10,
+                _ => return Err(HexParseError::InvalidChar(c, s.to_string())),
+            };
+            let limb = i / 16;
+            let shift = (i % 16) * 4;
+            limbs[limb] |= val << shift;
+        }
+        Ok(Self(limbs))
+    }
+
+    pub fn to_f64(self) -> f64 {
+        let mut result: f64 = 0.0;
+        for (i, limb) in self.0.iter().enumerate() {
+            if *limb != 0 {
+                result += (*limb as f64) * 2.0_f64.powi(64 * i as i32);
+            }
+        }
+        result
     }
 }
 
@@ -705,6 +672,40 @@ async fn save_miners_to_file(miners: &[Miner]) {
     }
 }
 
+async fn handle_static(uri: axum::http::Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    if path.split('/').any(|seg| seg == ".." || seg == ".") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Some(content) = Assets::get(path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mime = get_mime_type(path);
+    let cache = if path == "index.html" {
+        "no-cache"
+    } else if path.ends_with(".js") || path.ends_with(".css") || path.ends_with(".webp") || path.ends_with(".ico") {
+        "public, max-age=300"
+    } else {
+        "public, max-age=3600"
+    };
+    
+    let body = match content.data {
+        std::borrow::Cow::Borrowed(b) => axum::body::Body::from(b),
+        std::borrow::Cow::Owned(v) => axum::body::Body::from(v),
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, cache)
+        .body(body)
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 // =============================================
 // RPC LOGIC
 // =============================================
@@ -780,11 +781,15 @@ async fn call_rpc(
     params: serde_json::Value,
 ) -> Result<String, String> {
     let value = call_rpc_value(client, state, method, params).await?;
+    let s = value.as_str().ok_or("RPC result was not a string")?;
 
-    value
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "RPC result was not a string".to_string())
+    if !s.starts_with("0x") {
+        return Err(format!(
+            "RPC result does not start with 0x (first 60 chars: {:?})",
+            &s.chars().take(60).collect::<String>()
+        ));
+    }
+    Ok(s.to_string())
 }
 
 // =============================================
@@ -808,9 +813,12 @@ async fn read_globals(
         return Err(format!("globals() too short ({} chars)", g_str.len()));
     }
 
-    let share_rate_raw = U256::from_hex(&g_str[128..192]);
-    let penalty_raw = U256::from_hex(&g_str[192..256]);
-    let daily_data_count = U256::from_hex(&g_str[256..320]);
+    let share_rate_raw = U256::from_hex(&g_str[128..192])
+    .map_err(|e| format!("globals().shareRate parse failed: {e}"))?;
+    let penalty_raw = U256::from_hex(&g_str[192..256])
+    .map_err(|e| format!("globals().penalty parse failed: {e}"))?;
+    let daily_data_count = U256::from_hex(&g_str[256..320])
+    .map_err(|e| format!("globals().dailyDataCount parse failed: {e}"))?;
 
     let tshare_rate = if share_rate_raw > U256::ZERO {
         share_rate_raw.to_f64() / 10.0
@@ -844,9 +852,10 @@ async fn read_daily_data(
         return Err(format!("dailyData({}) too short ({} chars)", day, d_str.len()));
     }
 
-    let day_payout = U256::from_hex(&d_str[0..64]);
-    let day_shares = U256::from_hex(&d_str[64..128]);
-
+    let day_payout = U256::from_hex(&d_str[0..64])
+        .map_err(|e| format!("dailyData({}).dayPayout parse failed: {e}", day))?;
+    let day_shares = U256::from_hex(&d_str[64..128])
+        .map_err(|e| format!("dailyData({}).dayShares parse failed: {e}", day))?;
     Ok((day_payout.to_f64(), day_shares.to_f64()))
 }
 
@@ -899,6 +908,7 @@ impl BlockFinder {
         let current_day_start = latest_timestamp - (latest_timestamp % 86400);
         let derived_day_zero = current_day_start
             .saturating_sub(current_hex_day.saturating_mul(86400));
+        let day_zero_timestamp = derived_day_zero;
 
         let mut finder = Self {
             latest_block,
@@ -906,7 +916,7 @@ impl BlockFinder {
             current_hex_day,
             current_tshare_rate,
             seconds_per_block,
-            day_zero_timestamp: HEX_DAY_ZERO_UNIX_OVERRIDE.unwrap_or(derived_day_zero),
+            day_zero_timestamp,
         };
 
         finder.calibrate(client, state).await;
@@ -915,13 +925,7 @@ impl BlockFinder {
     }
 
     async fn calibrate(&mut self, client: &Client, state: &Arc<AppState>) {
-        if HEX_DAY_ZERO_UNIX_OVERRIDE.is_some() {
-            return;
-        }
-
-        if self.current_hex_day < 3 {
-            return;
-        }
+        if self.current_hex_day < 3 { return; }
 
         let test_day = self.current_hex_day.saturating_sub(2);
 
@@ -1072,8 +1076,10 @@ async fn fetch_price_rpc_at_block(
         return Err(format!("getReserves() too short ({} chars)", r_str.len()));
     }
 
-    let reserve_usdc = U256::from_hex(&r_str[0..64]).to_f64();
-    let reserve_hex = U256::from_hex(&r_str[64..128]).to_f64();
+    let reserve_usdc = U256::from_hex(&r_str[0..64])
+    .map_err(|e| format!("USDC reserve parse failed: {e}"))?.to_f64();
+    let reserve_hex = U256::from_hex(&r_str[64..128])
+    .map_err(|e| format!("HEX reserve parse failed: {e}"))?.to_f64();
 
     if reserve_usdc == 0.0 || reserve_hex == 0.0 {
         return Err("Invalid reserves (zero)".to_string());
@@ -1194,12 +1200,27 @@ async fn fetch_price(client: &Client, state: &Arc<AppState>) -> Result<f64, Stri
 // =============================================
 
 async fn store_daily_entry(state: &Arc<AppState>, entry: HexJsonEntry) -> bool {
-    let mut hex_json = state.hex_json.write().await;
+    let current = {
+        let guard = state.hex_json.read().await;
+        if guard.iter().any(|e| e.current_day == entry.current_day) {
+            info!("Day {} already recorded. Skipping.", entry.current_day);
+            return false;
+        }
+        Arc::clone(&*guard)
+    };
 
-    if hex_json.iter().any(|e| e.current_day == entry.current_day) {
-        info!("Day {} already recorded. Skipping.", entry.current_day);
-        return false;
-    }
+    let mut new_data: Vec<HexJsonEntry> = Vec::with_capacity(current.len() + 1);
+    new_data.extend(current.iter().cloned());
+    new_data.push(entry.clone());
+    new_data.sort_by_key(|e| e.current_day);
+    let new_arc: Arc<[HexJsonEntry]> = Arc::from(new_data);
+    
+    let snapshot = {
+        let mut guard = state.hex_json.write().await;
+        *guard = Arc::clone(&new_arc);
+        new_arc
+    };
+    state.hex_json_version.fetch_add(1, Ordering::Relaxed);
 
     info!(
         "Recorded day {}: payout={:.2} HEX, payout/tshare={:.4}, tshareRate={:.1}, price=${:.8}",
@@ -1210,17 +1231,7 @@ async fn store_daily_entry(state: &Arc<AppState>, entry: HexJsonEntry) -> bool {
         entry.price_pulse_x
     );
 
-    let mut new_data = (**hex_json).clone();
-    new_data.push(entry);
-    new_data.sort_by_key(|e| e.current_day);
-
-    *hex_json = Arc::new(new_data);
-    state.hex_json_version.fetch_add(1, Ordering::Relaxed);
-
-    let data_clone = hex_json.clone();
-    drop(hex_json);
-
-    save_hex_json_to_file(&data_clone).await;
+    save_hex_json_to_file(&snapshot).await;
     true
 }
 
@@ -1245,10 +1256,7 @@ async fn backfill_hex_json(
 
     let day_count = finder.current_hex_day;
     let current_tshare_rate = finder.current_tshare_rate;
-    let start_day = {
-        let config = state.config.read().await;
-        sanitize_config(config.clone()).historical_start_day
-    };
+    let start_day = state.config.read().await.historical_start_day;
 
     info!(
         "Backfill start day: {}, current day count: {}",
@@ -1293,7 +1301,6 @@ async fn backfill_hex_json(
     let mut fetched = 0usize;
     let mut consecutive_errors = 0u32;
     let max_consecutive_errors = 50u32;
-
     let mut results_stream = stream::iter(missing_days)
         .map(|day| {
             let client = client.clone();
@@ -1381,7 +1388,7 @@ async fn backfill_hex_json(
                     break;
                 }
 
-                if consecutive_errors <= 3 || is_multiple_of(consecutive_errors as usize, 20) {
+                if consecutive_errors <= 3 || (consecutive_errors as usize).is_multiple_of(20) {
                     warn!("Backfill: error reading day {}: {}", day, e);
                 }
             }
@@ -1389,7 +1396,7 @@ async fn backfill_hex_json(
 
         fetched += 1;
 
-        if is_multiple_of(fetched, 100) || fetched == total_to_fetch {
+        if fetched.is_multiple_of(100) || fetched == total_to_fetch {
             info!(
                 "Backfill progress: {}/{} days ({:.1}%)",
                 fetched,
@@ -1398,7 +1405,7 @@ async fn backfill_hex_json(
             );
         }
 
-        if is_multiple_of(fetched, BACKFILL_SAVE_INTERVAL) {
+        if fetched.is_multiple_of(BACKFILL_SAVE_INTERVAL) {
             let mut partial: Vec<HexJsonEntry> = by_day.values().cloned().collect();
             repair_historical_values(&mut partial);
             save_hex_json_to_file(&partial).await;
@@ -1472,7 +1479,8 @@ async fn fetch_live_data(
     };
 
     let gas_price_hex = call_rpc(client, state, "eth_gasPrice", serde_json::json!([])).await?;
-    let gas_price_wei = U256::from_hex(&gas_price_hex);
+    let gas_price_wei = U256::from_hex(&gas_price_hex)
+        .map_err(|e| format!("eth_gasPrice parse failed: {e}"))?;
     let beat = gas_price_wei.to_f64() / 1e9;
 
     let (tshare_rate, daily_data_count, penalties) = read_globals(client, state, None).await?;
@@ -1539,125 +1547,220 @@ async fn fetch_live_data_with_retry(
 async fn fetch_wallet_balances(client: &Client, addresses_str: &str) -> Result<f64, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
 
     if addresses.is_empty() { return Ok(0.0); }
 
-    let mut total_hex = 0.0;
     let hex_contract_lower = HEX_CONTRACT.trim().to_lowercase();
 
-    for addr in addresses {
-        let url = format!("https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances", addr);
+    let results: Vec<Result<f64, String>> = stream::iter(addresses)
+        .map(|addr| {
+            let client = client.clone();
+            let hex_contract_lower = hex_contract_lower.clone();
+            async move {
+                let url = format!(
+                    "https://api.scan.pulsechain.com/api/v2/addresses/{}/token-balances",
+                    addr
+                );
+                let resp = client.get(&url).send().await
+                    .map_err(|e| format!("{addr}: request failed: {e}"))?;
 
-        match client.get(&url).send().await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    if let Ok(balances) = resp.json::<Vec<serde_json::Value>>().await {
-                        for b in balances {
-                            if let Some(token) = b.get("token") {
-                                let is_hex = token.get("address")
-                                    .and_then(|a| a.as_str())
-                                    .map(|a| a.to_lowercase() == hex_contract_lower)
-                                    .unwrap_or(false) ||
-                                    token.get("symbol")
-                                    .and_then(|s| s.as_str())
-                                    .map(|s| s == "HEX")
-                                    .unwrap_or(false);
+                if let Some(retry_after) = resp.headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                }
 
-                                if is_hex {
-                                    if let Some(value_str) = b.get("value").and_then(|v| v.as_str()) {
-                                        if let Ok(val) = value_str.parse::<f64>() {
-                                            total_hex += val / 1e8;
-                                        }
-                                    }
-                                }
+                if !resp.status().is_success() {
+                    return Err(format!("{addr}: HTTP {}", resp.status()));
+                }
+
+                let balances: Vec<serde_json::Value> = resp.json().await
+                    .map_err(|e| format!("{addr}: JSON parse failed: {e}"))?;
+
+                let mut total = 0.0;
+                for b in balances {
+                    let token = b.get("token").unwrap_or(&serde_json::Value::Null);
+                    let is_hex = token.get("address")
+                        .and_then(|a| a.as_str())
+                        .map(|a| a.to_lowercase() == hex_contract_lower)
+                        .unwrap_or(false)
+                        || token.get("symbol")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s == "HEX")
+                            .unwrap_or(false);
+
+                    if is_hex {
+                        if let Some(value_str) = b.get("value").and_then(|v| v.as_str()) {
+                            if let Ok(val) = value_str.parse::<f64>() {
+                                total += val / HEARTS_PER_HEX;
                             }
                         }
                     }
-                } else {
-                    warn!("Blockscout API returned {} for {}", resp.status(), addr);
                 }
+                Ok(total)
             }
-            Err(e) => warn!("Failed to fetch balance for {}: {}", addr, e),
+        })
+        .buffer_unordered(3)
+        .collect()
+        .await;
+
+    let mut total_hex = 0.0;
+    let mut errors = Vec::new();
+    for r in results {
+        match r {
+            Ok(v) => total_hex += v,
+            Err(e) => errors.push(e),
         }
-        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+    if !errors.is_empty() {
+        warn!("Some wallet balance fetches failed: {errors:?}");
     }
     Ok(total_hex)
 }
 
-async fn fetch_wallet_miners(client: &Client, state: &Arc<AppState>, addresses_str: &str) -> Result<Vec<Miner>, String> {
+async fn fetch_stakes_batched(
+    client: &Client,
+    state: &Arc<AppState>,
+    address: &str,
+    count: u64,
+) -> Result<Vec<(u64, String)>, String> {
+    if count == 0 { return Ok(vec![]); }
+    let addr_padded = format!("000000000000000000000000{}", &address[2..]);
+    let requests: Vec<serde_json::Value> = (0..count)
+        .map(|i| {
+            let idx_hex = format!("{:064x}", i);
+            let data = format!("0x{}{}{}", STAKE_LISTS_SELECTOR, addr_padded, idx_hex);
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "eth_call",
+                "params": [{"to": HEX_CONTRACT, "data": data}, "latest"],
+                "id": i,
+            })
+        })
+        .collect();
+
+    let start_idx = *state.active_rpc_idx.read().await;
+    let mut last_err = String::new();
+    for i in 0..RPC_ENDPOINTS.len() {
+        let idx = (start_idx + i) % RPC_ENDPOINTS.len();
+        let url = RPC_ENDPOINTS[idx];
+        match client.post(url).json(&requests).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<Vec<serde_json::Value>>().await {
+                    Ok(results) => {
+                        let mut out = Vec::with_capacity(results.len());
+                        for r in results {
+                            let id = r.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                            if let Some(err) = r.get("error") {
+                                warn!("Batch item {} error: {:?}", id, err);
+                                continue;
+                            }
+                            if let Some(result) = r.get("result").and_then(|v| v.as_str()) {
+                                out.push((id, result.to_string()));
+                            }
+                        }
+                        if idx != start_idx {
+                            *state.active_rpc_idx.write().await = idx;
+                        }
+                        return Ok(out);
+                    }
+                    Err(e) => last_err = format!("{url}: JSON batch parse failed: {e}"),
+                }
+            }
+            Ok(resp) => last_err = format!("{url}: HTTP {}", resp.status()),
+            Err(e) => last_err = format!("{url}: {e}"),
+        }
+    }
+    Err(format!("All endpoints failed for batch stake fetch. Last: {last_err}"))
+}
+
+async fn fetch_wallet_miners(
+    client: &Client,
+    state: &Arc<AppState>,
+    addresses_str: &str,
+) -> Result<Vec<Miner>, String> {
     let addresses: Vec<&str> = addresses_str
         .split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
 
     if addresses.is_empty() { return Ok(Vec::new()); }
 
     let mut all_miners = Vec::new();
-    let hex_contract = HEX_CONTRACT.trim();
-    let stake_count_selector = "33060d90";
-    let stake_lists_selector = "2607443b";
-    let hex_day_zero = 1575331200i64;
 
     for addr in addresses {
         if !addr.starts_with("0x") || addr.len() != 42 { continue; }
         let addr_padded = format!("000000000000000000000000{}", &addr[2..]);
-        let count_data = format!("0x{}{}", stake_count_selector, addr_padded);
-        let count_req = serde_json::json!([{ "to": hex_contract, "data": count_data }, "latest"]);
-
+        let count_data = format!("0x{}{}", STAKE_COUNT_SELECTOR, addr_padded);
+        let count_req = serde_json::json!([{ "to": HEX_CONTRACT, "data": count_data }, "latest"]);
         let count_hex = match call_rpc(client, state, "eth_call", count_req).await {
             Ok(h) => h,
             Err(e) => { warn!("Failed to get stakeCount for {}: {}", addr, e); continue; }
         };
 
-        let count = U256::from_hex(count_hex.trim()).to_f64() as u64;
+        let count = match U256::from_hex(count_hex.trim()) {
+            Ok(v) => v.to_f64() as u64,
+            Err(e) => { warn!("stakeCount parse failed for {}: {}", addr, e); continue; }
+        };
 
         if count > MAX_STAKE_COUNT {
             warn!("Unrealistic stake count {} for {}, skipping address", count, addr);
             continue;
         }
 
-        for i in 0..count {
-            let idx_hex = format!("{:064x}", i);
-            let list_data = format!("0x{}{}{}", stake_lists_selector, addr_padded, idx_hex);
-            let list_req = serde_json::json!([{ "to": hex_contract, "data": list_data }, "latest"]);
+        let stakes = match fetch_stakes_batched(client, state, addr, count).await {
+            Ok(v) => v,
+            Err(e) => { warn!("Batch stake fetch failed for {}: {}", addr, e); continue; }
+        };
 
-            let res_hex = match call_rpc(client, state, "eth_call", list_req).await {
-                Ok(h) => h,
-                Err(e) => { warn!("Failed to get stakeLists for {} index {}: {}", addr, i, e); continue; }
+        for (idx, res_hex) in stakes {
+            let res_str = res_hex.trim().strip_prefix("0x").unwrap_or(res_hex.trim());
+            if res_str.len() < 384 { continue; }
+
+            let (stake_shares_raw, locked_day_raw, staked_days_raw) = match (
+                U256::from_hex(&res_str[128..192]),
+                U256::from_hex(&res_str[192..256]),
+                U256::from_hex(&res_str[256..320]),
+            ) {
+                (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+                _ => {
+                    warn!("stake field parse failed for {} index {}", addr, idx);
+                    continue;
+                }
             };
 
-            let res_str = res_hex.trim().strip_prefix("0x").unwrap_or(res_hex.trim());
+            let t_shares    = stake_shares_raw.to_f64() / 1e12;
+            let locked_day  = locked_day_raw.to_f64() as u64;
+            let staked_days = staked_days_raw.to_f64() as u64;
+            let start_ts = HEX_DAY_ZERO_UNIX + (locked_day as i64 * 86_400);
+            let end_ts   = HEX_DAY_ZERO_UNIX + ((locked_day + staked_days) as i64 * 86_400);
 
-            if res_str.len() >= 384 {
-                let stake_shares = U256::from_hex(&res_str[128..192]).to_f64();
-                let locked_day = U256::from_hex(&res_str[192..256]).to_f64() as u64;
-                let staked_days = U256::from_hex(&res_str[256..320]).to_f64() as u64;
+            let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+                .format("%d-%m-%Y")
+                .to_string();
+            let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+                .format("%d-%m-%Y")
+                .to_string();
 
-                let t_shares = stake_shares / 1e12;
-                let start_ts = hex_day_zero + (locked_day as i64 * 86400);
-                let end_ts = hex_day_zero + ((locked_day + staked_days) as i64 * 86400);
-
-                let start_date = chrono::DateTime::from_timestamp(start_ts, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
-                let end_date = chrono::DateTime::from_timestamp(end_ts, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH).format("%d-%m-%Y").to_string();
-
-                all_miners.push(Miner {
-                    id: None,
-                    address: addr.to_string(),
-                    start_date,
-                    end_date,
-                    t_shares,
-                    status: None
-                });
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            all_miners.push(Miner {
+                id: None,
+                address: addr.to_string(),
+                start_date,
+                end_date,
+                t_shares,
+                status: None,
+            });
         }
     }
+
     Ok(all_miners)
 }
 
@@ -1673,29 +1776,42 @@ fn tracked_address_set(addresses_str: &str) -> HashSet<String> {
         .collect()
 }
 
-fn merge_fetched_miners(current: &[Miner], fetched: Vec<Miner>, tracked: &HashSet<String>) -> Vec<Miner> {
-    let mut preserved = Vec::new();
-
-    for saved in current {
-        let is_in_fetched = fetched.iter().any(|f| {
-            f.start_date == saved.start_date
-                && f.end_date == saved.end_date
-                && (f.t_shares - saved.t_shares).abs() < 0.01
-        });
-
-        if !is_in_fetched {
-            let is_manual = saved.address.is_empty();
-            let addr_still_tracked = is_manual || tracked.contains(&saved.address);
-
-            if addr_still_tracked || saved.status.as_deref() == Some("completed") {
-                preserved.push(saved.clone());
-            }
-        }
+fn merge_fetched_miners(
+    current: &[Miner],
+    fetched: Vec<Miner>,
+    tracked: &HashSet<String>,
+) -> Vec<Miner> {
+    fn same_stake(a: &Miner, b: &Miner) -> bool {
+        a.start_date == b.start_date
+            && a.end_date == b.end_date
+            && (a.t_shares - b.t_shares).abs() < 0.01
     }
+    let mut updated_fetched: Vec<Miner> = fetched
+        .into_iter()
+        .map(|mut f| {
+            if let Some(saved) = current.iter().find(|s| same_stake(s, &f)) {
+                f.status = saved.status.clone();
+            }
+            f
+        })
+        .collect();
 
-    let mut merged = fetched;
-    merged.extend(preserved);
-    merged
+    let preserved: Vec<Miner> = current
+        .iter()
+        .filter(|saved| {
+            !updated_fetched.iter().any(|f| same_stake(f, saved))
+        })
+        .filter(|saved| {
+            let is_manual = saved.address.is_empty();
+            is_manual
+                || tracked.contains(&saved.address)
+                || saved.status.as_deref() == Some("completed")
+        })
+        .cloned()
+        .collect();
+
+    updated_fetched.extend(preserved);
+    updated_fetched
 }
 
 fn miners_equivalent(a: &[Miner], b: &[Miner]) -> bool {
@@ -1722,28 +1838,28 @@ fn miners_equivalent(a: &[Miner], b: &[Miner]) -> bool {
 }
 
 async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: &str) {
-    match fetch_wallet_balances(client, addresses).await {
+    let (balance_res, miners_res) = tokio::join!(
+        fetch_wallet_balances(client, addresses),
+        fetch_wallet_miners(client, state, addresses),
+    );
+    match balance_res {
         Ok(balance) => {
             let new_config = {
                 let mut config = state.config.write().await;
                 config.liquid_hex = balance;
-                let new_config = sanitize_config(config.clone());
-                *config = new_config.clone();
-
-                let mut live_data = state.live_data.write().await;
-                live_data.liquid_hex = new_config.liquid_hex;
-                new_config
+                let sanitized = sanitize_config(config.clone());
+                *config = sanitized.clone();
+                sanitized
             };
+            state.live_data.write().await.liquid_hex = new_config.liquid_hex;
             save_config_to_file(&new_config).await;
-            // info!("Wallet balance updated config liquid_hex: {:.8} HEX", balance);
         }
         Err(e) => warn!("Wallet balance fetch failed: {}", e),
     }
 
-    match fetch_wallet_miners(client, state, addresses).await {
+    match miners_res {
         Ok(fetched_miners) => {
             let tracked = tracked_address_set(addresses);
-
             let mut miners_lock = state.miners.write().await;
             let current_miners = miners_lock.clone();
             let merged = merge_fetched_miners(&current_miners, fetched_miners, &tracked);
@@ -1751,12 +1867,10 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
             if !miners_equivalent(&current_miners, &merged) {
                 info!("Miners changed! Updating active and cleaning up removed addresses.");
                 let (normalized, next_id) = normalize_miners(merged);
-                state.next_miner_id.store(next_id, Ordering::SeqCst);
-                *miners_lock = normalized.clone();
+                state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
+                *miners_lock = normalized;
                 drop(miners_lock);
                 save_miners_to_file(&normalized).await;
-            } else {
-                // info!("Fetched miners match saved miners. No disk write needed.");
             }
         }
         Err(e) => warn!("Wallet miners fetch failed: {}", e),
@@ -1769,6 +1883,13 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
 
 async fn live_data_updater(state: Arc<AppState>, client: Client) {
     let mut rx = state.config_tx.subscribe();
+    let read_freq = |state: &Arc<AppState>| {
+        let s = state.clone();
+        async move {
+            let cfg = s.config.read().await;
+            cfg.live_data_frequency.max(1)
+        }
+    };
 
     match fetch_live_data_with_retry(&client, &state).await {
         Ok(data) => {
@@ -1776,41 +1897,36 @@ async fn live_data_updater(state: Arc<AppState>, client: Client) {
             *state.live_data.write().await = data;
             info!("Initial live data fetched successfully");
         }
-        Err(e) => {
-            error!("Initial live data fetch failed: {}", e);
-        }
+        Err(e) => error!("Initial live data fetch failed: {}", e),
     }
 
     loop {
-        let freq = {
-            let config = state.config.read().await.clone();
-            sanitize_config(config).live_data_frequency
-        };
-
-        let sleep = tokio::time::sleep(Duration::from_secs(freq * 60));
+        let freq = read_freq(&state).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(freq * 60);
+        let sleep = tokio::time::sleep_until(deadline);
         tokio::pin!(sleep);
-
         tokio::select! {
             _ = &mut sleep => {
-                match fetch_live_data_with_retry(&client, &state).await {
-                    Ok(data) => {
-                        record_live_price_point(&state, data.price_pulsechain).await;
-                        *state.live_data.write().await = data;
-                    }
-                    Err(e) => {
-                        error!("Background live data fetch failed: {}", e);
-                    }
+                if let Ok(data) = fetch_live_data_with_retry(&client, &state).await {
+                    record_live_price_point(&state, data.price_pulsechain).await;
+                    *state.live_data.write().await = data;
                 }
             }
             result = rx.recv() => {
                 match result {
-                    Ok(_) => {
+                    Ok(()) => {
+                        info!("Config change detected, refreshing live data immediately");
+                        if let Ok(data) = fetch_live_data_with_retry(&client, &state).await {
+                            record_live_price_point(&state, data.price_pulsechain).await;
+                            *state.live_data.write().await = data;
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!("Config receiver lagged by {}", n);
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         warn!("Config receiver closed unexpectedly");
+                        return;
                     }
                 }
             }
@@ -1865,10 +1981,13 @@ async fn hex_json_updater(state: Arc<AppState>, client: Client) {
     };
 
     {
+        let new_arc: Arc<[HexJsonEntry]> = Arc::from(initial_data);
+        let len = new_arc.len();
         let mut hex_json = state.hex_json.write().await;
-        *hex_json = Arc::new(initial_data);
+        *hex_json = new_arc;
         state.hex_json_version.fetch_add(1, Ordering::Relaxed);
-        info!("HEXJSON loaded into memory: {} entries", hex_json.len());
+        drop(hex_json);
+        info!("HEXJSON loaded into memory: {} entries", len);
     }
 
     loop {
@@ -1998,14 +2117,10 @@ async fn rpc_health_checker(state: Arc<AppState>, client: Client) {
 
 async fn wallet_updater(state: Arc<AppState>, client: Client) {
     let mut rx = state.config_tx.subscribe();
-    let mut current_addresses = String::new();
+    let mut current_addresses: String = String::new();
 
     loop {
-        let addresses = {
-            let config = state.config.read().await.clone();
-            sanitize_config(config).wallet_addresses
-        };
-
+        let addresses: String = state.config.read().await.wallet_addresses.to_string();
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
@@ -2026,7 +2141,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
                 refresh_wallet_data(&client, &state, &addresses).await;
             }
             result = rx.recv() => {
-                if let Err(_) = result {
+                if result.is_err() {
                     warn!("Config receiver closed/lagged in wallet updater");
                 }
             }
@@ -2038,42 +2153,33 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 // API HANDLERS
 // =============================================
 
-async fn handle_live_chart(
-    State(state): State<Arc<AppState>>,
-) -> Json<LiveChartResponse> {
-    let cfg = {
-        let config = state.config.read().await;
-        sanitize_config(config.clone())
-    };
-
+async fn build_live_chart_response(state: &AppState, cfg: &Config) -> LiveChartResponse {
     let now = unix_now_secs();
     let interval_minutes = cfg.live_chart_candle_minutes.max(1);
     let interval_secs = interval_minutes.saturating_mul(60);
     let range_secs = cfg.live_chart_range_minutes.saturating_mul(60);
     let cutoff = now.saturating_sub(range_secs);
     let points = state.live_chart.read().await;
-    let mut idx = 0;
-    while idx < points.len() && points[idx].ts < cutoff {
-        idx += 1;
-    }
+    let start_idx = match points.binary_search_by(|p| p.ts.cmp(&cutoff)) {
+        Ok(i) => i,
+        Err(i) => i,
+    };
 
-    let mut candles = Vec::new();
-
-    if interval_secs > 0 && idx < points.len() {
+    let mut candles: Vec<LiveChartCandle> = Vec::new();
+    if interval_secs > 0 && start_idx < points.len() {
         let mut bucket = cutoff.saturating_sub(cutoff % interval_secs);
         let last_bucket = now.saturating_sub(now % interval_secs);
         let mut last_close: Option<f64> = None;
         let max_candles = 5000usize;
+        let mut cursor = start_idx;
 
         while bucket <= last_bucket && candles.len() < max_candles {
             let bucket_end = bucket.saturating_add(interval_secs);
 
-            while idx < points.len() && points[idx].ts < bucket {
-                idx += 1;
+            while cursor < points.len() && points[cursor].ts < bucket {
+                cursor += 1;
             }
-
-            let mut j = idx;
-
+            let mut j = cursor;
             let mut open = None;
             let mut high = f64::MIN;
             let mut low = f64::MAX;
@@ -2082,16 +2188,11 @@ async fn handle_live_chart(
 
             while j < points.len() && points[j].ts < bucket_end {
                 let price = points[j].price;
-
-                if open.is_none() {
-                    open = Some(price);
-                }
-
+                if open.is_none() { open = Some(price); }
                 high = high.max(price);
                 low = low.min(price);
                 close = Some(price);
                 count += 1;
-
                 j += 1;
             }
 
@@ -2104,31 +2205,50 @@ async fn handle_live_chart(
                     c: close.unwrap(),
                     n: count,
                 };
-
                 last_close = Some(candle.c);
                 candles.push(candle);
-
-                idx = j;
+                cursor = j;
             } else if let Some(pc) = last_close {
-                candles.push(LiveChartCandle {
-                    t: bucket,
-                    o: pc,
-                    h: pc,
-                    l: pc,
-                    c: pc,
-                    n: 0,
-                });
+                candles.push(LiveChartCandle { t: bucket, o: pc, h: pc, l: pc, c: pc, n: 0 });
             }
+
             bucket = bucket_end;
         }
     }
 
-    Json(LiveChartResponse {
+    LiveChartResponse {
         range_minutes: cfg.live_chart_range_minutes,
         interval_minutes,
         now,
         candles,
-    })
+    }
+}
+
+async fn handle_live_chart(State(state): State<Arc<AppState>>) -> Json<Arc<LiveChartResponse>> {
+    let version = state.live_chart_version.load(Ordering::Relaxed);
+    let cfg = state.config.read().await.clone();
+    
+    {
+        let cache = state.live_chart_cache.read().await;
+        if let Some(c) = cache.as_ref() {
+            if c.version == version
+                && c.range_minutes == cfg.live_chart_range_minutes
+                && c.interval_minutes == cfg.live_chart_candle_minutes
+            {
+                return Json(Arc::clone(&c.response));
+            }
+        }
+    }
+
+    let response = Arc::new(build_live_chart_response(&state, &cfg).await);
+    let cached = CachedLiveChart {
+        version,
+        range_minutes: cfg.live_chart_range_minutes,
+        interval_minutes: cfg.live_chart_candle_minutes,
+        response: Arc::clone(&response),
+    };
+    *state.live_chart_cache.write().await = Some(cached);
+    Json(response)
 }
 
 async fn handle_live_data(State(state): State<Arc<AppState>>) -> Json<LiveData> {
@@ -2144,21 +2264,25 @@ async fn handle_hex_json(
     Query(query): Query<HexJsonQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let data = state.hex_json.read().await.clone();
+    let data = Arc::clone(&*state.hex_json.read().await);
     let version = state.hex_json_version.load(Ordering::Relaxed);
 
     let full_request = query.from.is_none() && query.limit.is_none();
 
+    let limit_token: String = match query.limit {
+        Some(n) => n.to_string(),
+        None => "all".to_string(),
+    };
+
+    let from_token: String = match query.from {
+        Some(n) => n.to_string(),
+        None => "start".to_string(),
+    };
+
     let etag = if full_request {
         format!("\"hexjson-full-{}-{}\"", data.len(), version)
     } else {
-        format!(
-            "\"hexjson-filter-{}-{}-{}-{}\"",
-            query.from.unwrap_or(0),
-            query.limit.unwrap_or(usize::MAX),
-            data.len(),
-            version
-        )
+        format!("\"hexjson-filter-{}-{}-{}-{}\"", from_token, limit_token, data.len(), version)
     };
 
     if let Some(if_none_match) = headers
@@ -2188,19 +2312,23 @@ async fn handle_hex_json(
     }
 
     let mut response = if full_request {
-        Json(data).into_response()
+    Json(data).into_response()
     } else {
         let from = query.from.unwrap_or(0);
-        let limit = query.limit.unwrap_or(usize::MAX);
-
-        let filtered: Vec<HexJsonEntry> = data
-            .iter()
-            .filter(|entry| entry.current_day >= from)
-            .take(limit)
-            .cloned()
-            .collect();
-
-        Json(filtered).into_response()
+        let filtered: Vec<HexJsonEntry> = match query.limit {
+            Some(limit) => data
+                .iter()
+                .filter(|e| e.current_day >= from)
+                .take(limit)
+                .cloned()
+                .collect(),
+            None => data
+                .iter()
+                .filter(|e| e.current_day >= from)
+                .cloned()
+                .collect(),
+        };
+        Json(filtered).into_response()      // ← must wrap in Json + into_response()
     };
 
     if let Ok(etag_value) = header::HeaderValue::from_str(&etag) {
@@ -2224,19 +2352,14 @@ async fn handle_post_config(
     Json(new_config): Json<Config>,
 ) -> impl IntoResponse {
     let new_config = sanitize_config(new_config);
+    let liquid_hex = new_config.liquid_hex;
 
-    {
-        let mut config = state.config.write().await;
-        *config = new_config.clone();
-
-        let mut live_data = state.live_data.write().await;
-        live_data.liquid_hex = new_config.liquid_hex;
-    }
+    *state.config.write().await = new_config.clone();
+    state.live_data.write().await.liquid_hex = liquid_hex;
 
     let _ = state.config_tx.send(());
     save_config_to_file(&new_config).await;
     prune_live_chart(&state).await;
-
     StatusCode::OK
 }
 
@@ -2259,7 +2382,7 @@ async fn handle_add_miner(
         return StatusCode::BAD_REQUEST;
     }
 
-    let id = state.next_miner_id.fetch_add(1, Ordering::SeqCst);
+    let id = state.next_miner_id.fetch_add(1, Ordering::Relaxed);
 
     let miner = Miner {
         id: Some(id),
@@ -2354,15 +2477,17 @@ async fn main() {
     let (config_tx, _) = broadcast::channel(16);
 
     let state = Arc::new(AppState {
-        live_data: RwLock::new(LiveData::default()),
-        hex_json: RwLock::new(Arc::new(Vec::new())),
-        miners: RwLock::new(initial_miners),
         config: RwLock::new(initial_config),
+        live_data: RwLock::new(LiveData::default()),
+        hex_json: RwLock::new(Arc::<[HexJsonEntry]>::from(Vec::new())),
+        miners: RwLock::new(initial_miners),
         config_tx,
         active_rpc_idx: RwLock::new(0),
         hex_json_version: AtomicU64::new(1),
         next_miner_id: AtomicU64::new(next_miner_id),
         live_chart: RwLock::new(VecDeque::new()),
+        live_chart_cache: RwLock::new(None),
+        live_chart_version: AtomicU64::new(0),
     });
 
     let client = Client::builder()
@@ -2396,20 +2521,7 @@ async fn main() {
         .route("/api/hexjson", get(handle_hex_json))
         .route("/api/config", get(handle_get_config).post(handle_post_config))
         .route("/api/live-chart", get(handle_live_chart))
-        .fallback(get(|uri: axum::http::Uri| async move {
-            let path = uri.path().trim_start_matches('/');
-            let path = if path.is_empty() { "index.html" } else { path };
-            if path.contains("..") { return Err(StatusCode::NOT_FOUND); }
-            match Assets::get(path) {
-                Some(content) => {
-                    let mime = get_mime_type(path);
-                    Ok::<_, StatusCode>(axum::response::Response::builder()
-                        .header("Content-Type", mime)
-                        .body(axum::body::Body::from(content.data.into_owned())).unwrap())
-                }
-                None => Err(StatusCode::NOT_FOUND),
-            }
-        }))
+        .fallback(get(handle_static))
         .layer(CompressionLayer::new())
         .with_state(state);
 
