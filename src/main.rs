@@ -686,9 +686,9 @@ async fn load_hex_json_from_file() -> Vec<HexJsonEntry> {
     }
 }
 
-async fn save_config_to_file(config: &Config) {
+async fn save_config_to_file(config: Config) {
     let path = config_file_path();
-    match serde_json::to_string_pretty(config) {
+    match serde_json::to_string_pretty(&config) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
                 error!("Failed to save config to {}: {}", path.display(), e);
@@ -698,9 +698,9 @@ async fn save_config_to_file(config: &Config) {
     }
 }
 
-async fn save_miners_to_file(miners: &[Miner]) {
+async fn save_miners_to_file(miners: Vec<Miner>) {
     let path = miners_file_path();
-    match serde_json::to_string_pretty(miners) {
+    match serde_json::to_string_pretty(&miners) {
         Ok(json) => {
             if let Err(e) = tokio::fs::write(&path, json).await {
                 error!("Failed to save miners to {}: {}", path.display(), e);
@@ -1583,9 +1583,9 @@ async fn fetch_live_data_with_retry(
 // =============================================
 
 async fn fetch_wallet_balances(client: Client, addresses_str: String) -> Result<f64, String> {
-    let addresses: Vec<&str> = addresses_str
+    let addresses: Vec<String> = addresses_str
         .split(',')
-        .map(str::trim)
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -1672,12 +1672,15 @@ async fn fetch_wallet_balances(client: Client, addresses_str: String) -> Result<
 }
 
 async fn fetch_stakes_batched(
-    client: &Client,
-    state: &Arc<AppState>,
-    address: &str,
+    client: Client,
+    state: Arc<AppState>,
+    address: String,
     count: u64,
 ) -> Result<Vec<(u64, String)>, String> {
-    if count == 0 { return Ok(vec![]); }
+    if count == 0 {
+        return Ok(vec![]);
+    }
+
     let addr_padded = format!("000000000000000000000000{}", &address[2..]);
     let requests: Vec<serde_json::Value> = (0..count)
         .map(|i| {
@@ -1732,9 +1735,9 @@ async fn fetch_wallet_miners(
     state: Arc<AppState>,
     addresses_str: String,
 ) -> Result<Vec<Miner>, String> {
-    let addresses: Vec<&str> = addresses_str
+    let addresses: Vec<String> = addresses_str
         .split(',')
-        .map(str::trim)
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -1750,7 +1753,8 @@ async fn fetch_wallet_miners(
         }
         let addr_padded = format!("000000000000000000000000{}", &addr[2..]);
         let count_data = format!("0x{}{}", STAKE_COUNT_SELECTOR, addr_padded);
-        let count_req = serde_json::json!([{ "to": HEX_CONTRACT, "data": count_data }, "latest"]);
+        let count_req =
+            serde_json::json!([{ "to": HEX_CONTRACT, "data": count_data }, "latest"]);
         let count_hex = match call_rpc(&client, &state, "eth_call", count_req).await {
             Ok(h) => h,
             Err(e) => {
@@ -1775,7 +1779,14 @@ async fn fetch_wallet_miners(
             continue;
         }
 
-        let stakes = match fetch_stakes_batched(&client, &state, addr, count).await {
+        let stakes = match fetch_stakes_batched(
+            client.clone(),
+            state.clone(),
+            addr.clone(),
+            count,
+        )
+        .await
+        {
             Ok(v) => v,
             Err(e) => {
                 warn!("Batch stake fetch failed for {}: {}", addr, e);
@@ -1826,7 +1837,6 @@ async fn fetch_wallet_miners(
             });
         }
     }
-
     Ok(all_miners)
 }
 
@@ -2406,7 +2416,7 @@ async fn handle_post_config(
     state.live_data.write().await.liquid_hex = liquid_hex;
 
     let _ = state.config_tx.send(());
-    save_config_to_file(&new_config).await;
+    save_config_to_file(new_config).await;
     prune_live_chart(&state).await;
     StatusCode::OK
 }
@@ -2447,7 +2457,7 @@ async fn handle_add_miner(
     let miners_clone = miners.clone();
     drop(miners);
 
-    save_miners_to_file(&miners_clone).await;
+    save_miners_to_file(miners_clone).await;
 
     StatusCode::CREATED
 }
@@ -2470,7 +2480,7 @@ async fn handle_end_miner(
     let miners_clone = miners.clone();
     drop(miners);
 
-    save_miners_to_file(&miners_clone).await;
+    save_miners_to_file(miners_clone).await;
 
     StatusCode::OK
 }
@@ -2491,7 +2501,7 @@ async fn handle_delete_miner(
     let miners_clone = miners.clone();
     drop(miners);
 
-    save_miners_to_file(&miners_clone).await;
+    save_miners_to_file(miners_clone).await;
 
     StatusCode::OK
 }
