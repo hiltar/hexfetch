@@ -466,6 +466,44 @@ fn repair_historical_values(entries: &mut [HexJsonEntry]) {
 }
 
 // =============================================
+// ISOLATED RWLOCK ACCESSORS
+// =============================================
+
+async fn read_wallet_addresses(state: Arc<AppState>) -> String {
+    state.config.read().await.wallet_addresses.to_string()
+}
+
+async fn apply_wallet_balance(state: Arc<AppState>, balance: f64) -> Config {
+    let new_config = {
+        let mut config = state.config.write().await;
+        config.liquid_hex = balance;
+        config.clone()
+    };
+    state.live_data.write().await.liquid_hex = new_config.liquid_hex;
+    new_config
+}
+
+async fn apply_wallet_miners(
+    state: Arc<AppState>,
+    addresses: String,
+    fetched_miners: Vec<Miner>,
+) {
+    let tracked = tracked_address_set(&addresses);
+    let mut miners_lock = state.miners.write().await;
+    let current_miners = miners_lock.clone();
+    let merged = merge_fetched_miners(&current_miners, fetched_miners, &tracked);
+
+    if !miners_equivalent(&current_miners, &merged) {
+        info!("Miners changed! Updating active and cleaning up removed addresses.");
+        let (normalized, next_id) = normalize_miners(merged);
+        state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
+        *miners_lock = normalized.clone();
+        drop(miners_lock);
+        save_miners_to_file(&normalized).await;
+    }
+}
+
+// =============================================
 // DATE PARSER
 // =============================================
 
@@ -1873,12 +1911,7 @@ async fn refresh_wallet_data(client: Client, state: Arc<AppState>, addresses: St
 
     match balance_res {
         Ok(balance) => {
-            let new_config = {
-                let mut config = state.config.write().await;
-                config.liquid_hex = balance;
-                config.clone()
-            };
-            state.live_data.write().await.liquid_hex = new_config.liquid_hex;
+            let new_config = apply_wallet_balance(state.clone(), balance).await;
             save_config_to_file(&new_config).await;
         }
         Err(e) => warn!("Wallet balance fetch failed: {}", e),
@@ -1886,19 +1919,7 @@ async fn refresh_wallet_data(client: Client, state: Arc<AppState>, addresses: St
 
     match miners_res {
         Ok(fetched_miners) => {
-            let tracked = tracked_address_set(&addresses);
-            let mut miners_lock = state.miners.write().await;
-            let current_miners = miners_lock.clone();
-            let merged = merge_fetched_miners(&current_miners, fetched_miners, &tracked);
-
-            if !miners_equivalent(&current_miners, &merged) {
-                info!("Miners changed! Updating active and cleaning up removed addresses.");
-                let (normalized, next_id) = normalize_miners(merged);
-                state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
-                *miners_lock = normalized.clone();
-                drop(miners_lock);
-                save_miners_to_file(&normalized).await;
-            }
+            apply_wallet_miners(state, addresses, fetched_miners).await;
         }
         Err(e) => warn!("Wallet miners fetch failed: {}", e),
     }
@@ -2147,11 +2168,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
     let mut current_addresses: String = String::new();
 
     loop {
-        let addresses: String = {
-            let guard = state.config.read().await;
-            guard.wallet_addresses.to_string()
-        };
-
+        let addresses = read_wallet_addresses(state.clone()).await;
         let addresses_changed = addresses != current_addresses;
         current_addresses = addresses.clone();
 
