@@ -499,7 +499,7 @@ async fn apply_wallet_miners(
         state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
         *miners_lock = normalized.clone();
         drop(miners_lock);
-        save_miners_to_file(&normalized).await;
+        save_miners_to_file(normalized).await;
     }
 }
 
@@ -1922,7 +1922,7 @@ async fn refresh_wallet_data(client: Client, state: Arc<AppState>, addresses: St
     match balance_res {
         Ok(balance) => {
             let new_config = apply_wallet_balance(state.clone(), balance).await;
-            save_config_to_file(&new_config).await;
+            save_config_to_file(new_config).await;
         }
         Err(e) => warn!("Wallet balance fetch failed: {}", e),
     }
