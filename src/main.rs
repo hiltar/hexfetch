@@ -1837,19 +1837,18 @@ fn miners_equivalent(a: &[Miner], b: &[Miner]) -> bool {
         })
 }
 
-async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: &str) {
+async fn refresh_wallet_data(client: Client, state: Arc<AppState>, addresses: String) {
     let (balance_res, miners_res) = tokio::join!(
-        fetch_wallet_balances(client, addresses),
-        fetch_wallet_miners(client, state, addresses),
+        fetch_wallet_balances(&client, &addresses),
+        fetch_wallet_miners(&client, &state, &addresses),
     );
+
     match balance_res {
         Ok(balance) => {
             let new_config = {
                 let mut config = state.config.write().await;
                 config.liquid_hex = balance;
-                let sanitized = sanitize_config(config.clone());
-                *config = sanitized.clone();
-                sanitized
+                config.clone()
             };
             state.live_data.write().await.liquid_hex = new_config.liquid_hex;
             save_config_to_file(&new_config).await;
@@ -1859,7 +1858,7 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
 
     match miners_res {
         Ok(fetched_miners) => {
-            let tracked = tracked_address_set(addresses);
+            let tracked = tracked_address_set(&addresses);
             let mut miners_lock = state.miners.write().await;
             let current_miners = miners_lock.clone();
             let merged = merge_fetched_miners(&current_miners, fetched_miners, &tracked);
@@ -1868,10 +1867,9 @@ async fn refresh_wallet_data(client: &Client, state: &Arc<AppState>, addresses: 
                 info!("Miners changed! Updating active and cleaning up removed addresses.");
                 let (normalized, next_id) = normalize_miners(merged);
                 state.next_miner_id.fetch_max(next_id, Ordering::Relaxed);
-                *miners_lock = normalized;
+                *miners_lock = normalized.clone();   // ← clone: keep local for disk save
                 drop(miners_lock);
-                let snapshot = state.miners.read().await.clone();
-                save_miners_to_file(&snapshot).await;
+                save_miners_to_file(&normalized).await;
             }
         }
         Err(e) => warn!("Wallet miners fetch failed: {}", e),
@@ -2126,7 +2124,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
         current_addresses = addresses.clone();
 
         if addresses_changed && !addresses.trim().is_empty() {
-            refresh_wallet_data(&client, &state, &addresses).await;
+            refresh_wallet_data(client.clone(), state.clone(), addresses.clone()).await;
         }
 
         if addresses.trim().is_empty() {
@@ -2139,7 +2137,7 @@ async fn wallet_updater(state: Arc<AppState>, client: Client) {
 
         tokio::select! {
             _ = &mut sleep => {
-                refresh_wallet_data(&client, &state, &addresses).await;
+                refresh_wallet_data(client.clone(), state.clone(), addresses.clone()).await;
             }
             result = rx.recv() => {
                 if result.is_err() {
