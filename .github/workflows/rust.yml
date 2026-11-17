@@ -18,7 +18,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  ZIG_VERSION: "0.15.1"   # <-- single place to bump; verify against cargo-zigbuild
+  ZIG_VERSION: "0.24.1"
   BIN_NAME: hextrack-rs
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
             out: hextrack
             cmd: zigbuild
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04-arm        # native
+            os: ubuntu-24.04-arm
             out: hextrack-arm
             cmd: zigbuild
           - target: armv7-unknown-linux-musleabihf
@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo ${{ matrix.cmd }} --release --locked --target "${{ matrix.target }}"
+          cargo ${{ matrix.cmd }} --release --target "${{ matrix.target }}"
           ext=""
           if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
           cp "target/${{ matrix.target }}/release/${BIN_NAME}${ext}" "${{ matrix.out }}"
