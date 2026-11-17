@@ -4,40 +4,16 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = [
-    "rt-multi-thread",
-    "macros",
-    "time",
-    "sync",
-    "fs",
-    "net",
-    "signal"
-] }
-
-axum = { version = "0.7", default-features = false, features = [
-    "http1",
-    "json",
-    "tokio",
-    "query"
-] }
-
-tower-http = { version = "0.6", features = [
-    "compression-gzip"
-] }
-
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-    "gzip"
-] }
-
-chrono = { version = "0.4", default-features = false, features = [
-    "clock"
-] }
-
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
-rust-embed = "8.12"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "net", "signal", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+axum = { version = "0.7", features = ["http1", "json", "query", "tokio"] }
+tower-http = { version = "0.6", features = ["compression-gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "http2", "charset"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+rust-embed = "8"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
