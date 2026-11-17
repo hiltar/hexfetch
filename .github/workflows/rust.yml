@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --locked --target "${{ matrix.target }}"
+          cargo build --release --target "${{ matrix.target }}"
           ext=""
           if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
           cp "target/${{ matrix.target }}/release/${BIN_NAME}${ext}" "${{ matrix.out }}"
