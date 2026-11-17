@@ -18,8 +18,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  ZIG_VERSION: "0.24.1"
   BIN_NAME: hextrack-rs
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
 
 jobs:
   build:
@@ -33,19 +34,12 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
             out: hextrack
-            cmd: zigbuild
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
             out: hextrack-arm
-            cmd: zigbuild
-          - target: armv7-unknown-linux-musleabihf
-            os: ubuntu-24.04-arm
-            out: hextrack-armv7
-            cmd: zigbuild
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             out: hextrack.exe
-            cmd: build
 
     steps:
       - uses: actions/checkout@v5
@@ -61,23 +55,15 @@ jobs:
           key: ${{ matrix.target }}
           save-if: ${{ github.event_name != 'pull_request' }}
 
-      - name: Setup Zig
-        if: matrix.cmd == 'zigbuild'
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Install cargo-zigbuild
-        if: matrix.cmd == 'zigbuild'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
 
       - name: Build
         shell: bash
         run: |
           set -euo pipefail
-          cargo ${{ matrix.cmd }} --release --target "${{ matrix.target }}"
+          cargo build --release --locked --target "${{ matrix.target }}"
           ext=""
           if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
           cp "target/${{ matrix.target }}/release/${BIN_NAME}${ext}" "${{ matrix.out }}"
