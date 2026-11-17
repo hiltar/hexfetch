@@ -350,9 +350,7 @@ a:hover {
 }
 
 /* ============ Live data ticker ============ */
-.ticker-head {
-    display: none; /* mobile only */
-}
+.ticker-head { display: none; } /* mobile only */
 
 .live-ticker {
     display: flex;
@@ -1554,17 +1552,13 @@ textarea.form-input {
 
 /* ============ Responsive ============ */
 @media (max-width: 1023px) {
-    /* Tablet: Row 1 = Brand + Side, Row 2 = Ticker */
-    .header-bar {
-        grid-template-columns: 1fr auto;
-        grid-template-areas:
-            "brand side"
-            "ticker ticker";
-    }
-    .header-side { margin-left: 0; }
-    .chart-container {
-        height: clamp(240px, 40vh, 380px);
-    }
+  /* Tablet: row 1 = brand + side, row 2 = ticker */
+  .header-bar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "brand side" "ticker ticker";
+  }
+  .header-side { margin-left: 0; }
+  .chart-container { height: clamp(240px, 40vh, 380px); }
 }
 
 /* ============ Live Chart controls, stats & legend ============ */
@@ -1767,6 +1761,19 @@ textarea.form-input {
 .ticker-title[data-status="offline"] .live-pulse {
     background: var(--danger);
     animation: statusBlink 1.2s infinite;
+}
+
+.refresh-timer { background: none; border: none; padding: 0; color: inherit; cursor: pointer; }
+.refresh-timer:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 50%; }
+.miner-source-tag {
+  font-family: var(--mono-font); font-size: 0.75rem; color: var(--text-muted);
+  padding: 0.3rem 0.55rem; border: 1px dashed var(--border); border-radius: var(--radius-pill);
+}
+.timeframe-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.status-panel {
+  font-family: var(--mono-font); font-size: 0.78rem; color: var(--text-muted);
+  background: var(--surface-hover); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.6rem 0.75rem; overflow-wrap: anywhere;
 }
 
 /* ============ Reduced motion ============ */
