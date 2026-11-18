@@ -1620,14 +1620,12 @@ async fn main() {
         let code = rpc_call(&state, "eth_getCode", serde_json::json!([MULTICALL3, "latest"])).await;
         let has = code.ok().and_then(|v| v.as_str().map(|s| strip0x(s).len() > 2)).unwrap_or(false);
         state.multicall.store(has, Ordering::Relaxed);
-        info!("Multicall3: {}", if has { "available (single-call snapshots)" } else { "absent (pinned-block batches)" });
         if let Ok(Some(t0)) = eth_calls(&state, None, &[call(USDC_HEX_PAIR, calldata(SEL_TOKEN0, &[]))])
             .await.map(|mut v| v.pop().flatten())
         {
             if let Ok(w) = word(&t0, 0) {
                 let is_hex = strip0x(w).to_lowercase().ends_with(strip0x(HEX_CONTRACT));
                 state.hex_is_token0.store(is_hex, Ordering::Relaxed);
-                info!("Pair token0 is {}", if is_hex { "HEX" } else { "USDC" });
             }
         }
     }
@@ -1661,7 +1659,7 @@ async fn main() {
     let addr: SocketAddr = std::env::var("HEXTRACK_BIND")
         .ok().and_then(|s| s.parse().ok())
         .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 5555)));
-    info!("⬢ HEXTRACK {} on {addr} (data: {}) ⬢", env!("CARGO_PKG_VERSION"), data_dir().display());
+    info!("⬢ HEXTRACK {} -> {addr} ⬢", env!("CARGO_PKG_VERSION"), data_dir().display());
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).with_graceful_shutdown({
         let sd = shutdown.clone();
