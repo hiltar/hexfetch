@@ -1341,7 +1341,8 @@ async fn chart_janitor(state: Arc<AppState>) {
             _ = state.shutdown.cancelled() => break,
             _ = tokio::time::sleep(Duration::from_secs(60)) => {}
         }
-        prune_live_chart(&state).await;
+        let mut pts = state.live_chart.write().await;
+        compact_series(&mut pts, unix_now());
     }
 }
 async fn status_broadcaster(state: Arc<AppState>) {
