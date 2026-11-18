@@ -1659,7 +1659,7 @@ async fn main() {
     let addr: SocketAddr = std::env::var("HEXTRACK_BIND")
         .ok().and_then(|s| s.parse().ok())
         .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 5555)));
-    info!("⬢ HEXTRACK {} -> {addr} ⬢", env!("CARGO_PKG_VERSION"), data_dir().display());
+    info!("⬢ HEXTRACK v{} -> {addr} ⬢", env!("CARGO_PKG_VERSION"));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).with_graceful_shutdown({
         let sd = shutdown.clone();
