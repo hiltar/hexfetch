@@ -282,7 +282,7 @@ function applyLive(d) {
   setText('price', usd(price, 5));
   setText('tshare-price', usd(Number(d.tsharePrice_Pulsechain) || 0, 2));
   setText('tshare-rate', `${fmt(Math.floor(Number(d.tshareRateHEX_Pulsechain) || 0), 0)} HEX`);
-  setText('payout', `${fmt(Number(d.payoutPerTshare_Pulsechain) || 0, 4)} HEX`);
+  setText('payout', `${fmt(Number(d.payoutPerTshare_Pulsechain) || 0, 2)} HEX`);
   setText('penalties', `${fmt(Math.floor(Number(d.penaltiesHEX_Pulsechain) || 0), 0)} HEX`);
   setText('beat', fmt(Math.floor(Number(d.beat) || 0), 0));
 
@@ -701,7 +701,7 @@ function renderMiners() {
       if (m.address) {
         const tag = document.createElement('span');
         tag.className = 'miner-source-tag';
-        tag.textContent = `on-chain ${m.address.slice(0, 6)}…${m.address.slice(-4)}`;
+        tag.textContent = `${m.address.slice(0, 6)}…${m.address.slice(-4)}`;
         foot.appendChild(tag);
       } else if (p.matured) {
         const end = document.createElement('button');
@@ -1228,9 +1228,9 @@ function renderStatus(s) {
     : '';
   const rpc = String(s.active_rpc || '').replace(/^https?:\/\//, '');
   el.textContent =
-    `v${s.version} • up ${Math.round((s.uptime_secs || 0) / 60)}m • ${s.multicall ? 'multicall' : 'batch'} • `
-    + `rpc ${rpc} • history ${s.hexjson_days} days (to ${s.hexjson_last_day}) • `
-    + `samples ${s.live_points} @${s.sample_secs}s • miners ${s.miners_active}/${s.miners_completed}${bf}`;
+    `v${s.version} • up ${Math.round((s.uptime_secs || 0) / 60)}m • `
+    + `${rpc} • ${s.hexjson_days} days • `
+    + `• miners ${s.miners_active}/${s.miners_completed}${bf}`;
 }
 
 async function loadStatus() {
