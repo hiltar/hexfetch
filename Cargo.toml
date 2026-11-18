@@ -1,6 +1,6 @@
 [package]
 name = "hextrack-rs"
-version = "1.0.0"
+version = "v1.2.3"
 edition = "2021"
 
 [dependencies]
