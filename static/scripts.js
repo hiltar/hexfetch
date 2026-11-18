@@ -1228,7 +1228,7 @@ function renderStatus(s) {
     : '';
   const rpc = String(s.active_rpc || '').replace(/^https?:\/\//, '');
   el.textContent =
-    `v${s.version} • up ${Math.round((s.uptime_secs || 0) / 60)}m • `
+    `v${s.version} • uptime ${Math.round((s.uptime_secs || 0) / 60)}m • `
     + `${rpc} • ${s.hexjson_days} days • `
     + `• miners ${s.miners_active}/${s.miners_completed}${bf}`;
 }
