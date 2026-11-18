@@ -73,7 +73,6 @@ const COARSE_SECS: u64 = 60;
 const MAX_RETENTION_SECS: u64 = 7 * 24 * 3600;
 const MAX_POINTS: usize = 20_000;
 const MAX_CANDLES: usize = 5_000;
-const LIVE_PERSIST_SECS: u64 = 300;
 const WALLET_REFRESH_SECS: u64 = 3_600;
 const DAILY_RETRY_SECS: u64 = 900;
 const MAX_STAKE_COUNT: u64 = 500;
@@ -321,7 +320,7 @@ enum AppEvent {
 // PERSISTENCE
 // ============================================================
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Kind { Config, Miners, HexJson, LiveChart }
+enum Kind { Config, Miners, HexJson }
 struct WriteJob { kind: Kind, version: u64, path: PathBuf, bytes: Vec<u8> }
 #[derive(Clone)]
 struct Persister { tx: mpsc::UnboundedSender<WriteJob> }
@@ -341,7 +340,6 @@ fn data_dir() -> &'static Path {
 fn hexjson_path() -> PathBuf { data_dir().join("hexjson.json") }
 fn config_path() -> PathBuf { data_dir().join("config.json") }
 fn miners_path() -> PathBuf { data_dir().join("miners.json") }
-fn livechart_path() -> PathBuf { data_dir().join("livechart.json") }
 
 async fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
@@ -803,28 +801,6 @@ fn compact_series(pts: &mut VecDeque<LivePricePoint>, now: u64) {
         for p in kept.into_iter().rev() { pts.push_front(p); }
     }
     while pts.len() > MAX_POINTS { pts.pop_front(); }
-}
-async fn persist_live_chart(state: &Arc<AppState>) {
-    let pts = state.live_chart.read().await;
-    let v: Vec<(u64, f64)> = pts.iter().map(|p| (p.ts, p.price)).collect();
-    drop(pts);
-    if let Ok(bytes) = serde_json::to_vec(&v) {
-        state.persister.submit(Kind::LiveChart, unix_now(), livechart_path(), bytes);
-    }
-}
-async fn load_live_chart(state: &Arc<AppState>) {
-    let Ok(txt) = tokio::fs::read_to_string(livechart_path()).await else { return };
-    let Ok(v) = serde_json::from_str::<Vec<(u64, f64)>>(&txt) else {
-        warn!("livechart.json unreadable, starting empty"); return;
-    };
-    let mut pts = state.live_chart.write().await;
-    let mut last = 0u64;
-    for (ts, price) in v {
-        if ts > last && price > 0.0 && price.is_finite() { pts.push_back(LivePricePoint { ts, price }); last = ts; }
-    }
-    compact_series(&mut pts, unix_now());
-    info!("Restored {} live price points", pts.len());
-    state.live_chart_version.fetch_add(1, Ordering::Relaxed);
 }
 async fn build_live_chart(state: &AppState, range_min: u64, interval_min: u64) -> LiveChartResponse {
     let now = unix_now();
@@ -1316,7 +1292,6 @@ async fn hex_json_updater(state: Arc<AppState>) {
             Err(e) => warn!("hexjson.json corrupt ({e}); rebuilding"),
         }
     }
-    load_live_chart(&state).await;
     catch_up_hexjson(&state).await;
     let mut retry_at: Option<tokio::time::Instant> = None;
     loop {
@@ -1361,16 +1336,13 @@ async fn wallet_updater(state: Arc<AppState>) {
     }
 }
 async fn chart_janitor(state: Arc<AppState>) {
-    let mut last_persist = Instant::now();
     loop {
-        tokio::select! { _ = state.shutdown.cancelled() => break, _ = tokio::time::sleep(Duration::from_secs(60)) => {} }
-        { let mut pts = state.live_chart.write().await; compact_series(&mut pts, unix_now()); }
-        if last_persist.elapsed() >= Duration::from_secs(LIVE_PERSIST_SECS) {
-            persist_live_chart(&state).await;
-            last_persist = Instant::now();
+        tokio::select! {
+            _ = state.shutdown.cancelled() => break,
+            _ = tokio::time::sleep(Duration::from_secs(60)) => {}
         }
+        prune_live_chart(&state).await;
     }
-    persist_live_chart(&state).await;
 }
 async fn status_broadcaster(state: Arc<AppState>) {
     loop {
@@ -1696,7 +1668,6 @@ async fn main() {
     }).await.unwrap();
 
     for t in tasks { let _ = tokio::time::timeout(Duration::from_secs(5), t).await; }
-    persist_live_chart(&state).await;
     drop(state);
     let _ = tokio::time::timeout(Duration::from_secs(10), writer).await;
     info!("Shutdown complete");
