@@ -1220,17 +1220,33 @@ Object.assign(window, { switchChartType, setTimeframe });
 // ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
+function formatUptime(secs) {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  return h ? `${d}d ${h}h` : `${d}d`;
+}
+
 function renderStatus(s) {
   const el = $('status-panel');
   if (!el || !s) return;
-  const bf = s.backfill?.running
-    ? ` • backfill ${s.backfill.phase} ${s.backfill.done}/${s.backfill.total}`
-    : '';
-  const rpc = String(s.active_rpc || '').replace(/^https?:\/\//, '');
-  el.textContent =
-    `v${s.version} • uptime ${Math.round((s.uptime_secs || 0) / 60)}m • `
-    + `${rpc} • ${s.hexjson_days} days • `
-    + `• miners ${s.miners_active}/${s.miners_completed}${bf}`;
+  const parts = [
+    `v${s.version || '—'}`,
+    `uptime ${formatUptime(s.uptime_secs)}`,
+    `${String(s.active_rpc || '—').replace(/^https?:\/\//, '')}`,
+    `day ${fmt(s.hexjson_days || 0, 0)}`,
+    `miners ${s.miners_active ?? 0}/${s.miners_completed ?? 0}`
+  ];
+  if (s.backfill?.running) {
+    parts.push(`backfill ${s.backfill.phase} ${s.backfill.done}/${s.backfill.total}`);
+  }
+  el.textContent = parts.join(' • ');
 }
 
 async function loadStatus() {
