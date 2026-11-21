@@ -786,20 +786,28 @@ async fn record_live_price_point(state: &Arc<AppState>, price: f64) {
     state.emit(AppEvent::Chart { version: state.live_chart_version.load(Ordering::Relaxed) });
 }
 fn compact_series(pts: &mut VecDeque<LivePricePoint>, now: u64) {
-    while pts.front().is_some_and(|p| p.ts < now.saturating_sub(MAX_RETENTION_SECS)) { pts.pop_front(); }
+    while pts.front().is_some_and(|p| p.ts < now.saturating_sub(MAX_RETENTION_SECS)) {
+        pts.pop_front();
+    }
+    if pts.len() < 2 { return; }
+    pts.make_contiguous().sort_by_key(|p| p.ts);
     let cutoff = now.saturating_sub(RAW_WINDOW_SECS);
     let idx = pts.binary_search_by(|p| p.ts.cmp(&cutoff)).unwrap_or_else(|i| i);
     if idx > 1 {
-        let mut kept = Vec::new();
+        let mut kept: Vec<LivePricePoint> = Vec::with_capacity(idx / 4 + 1);
         let mut last_bucket = u64::MAX;
         for i in (0..idx).rev() {
             let p = pts[i];
             let b = p.ts / COARSE_SECS;
             if b != last_bucket { kept.push(p); last_bucket = b; }
         }
-        pts.drain(..idx);
-        for p in kept.into_iter().rev() { pts.push_front(p); }
+        kept.reverse();
+        let tail: Vec<LivePricePoint> = pts.drain(idx..).collect();
+        pts.clear();
+        pts.extend(kept);
+        pts.extend(tail);
     }
+
     while pts.len() > MAX_POINTS { pts.pop_front(); }
 }
 async fn build_live_chart(state: &AppState, range_min: u64, interval_min: u64) -> LiveChartResponse {
